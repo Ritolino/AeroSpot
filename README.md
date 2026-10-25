@@ -18,7 +18,7 @@ A native, ultra-lightweight, privacy-first productivity suite for **Windows 11**
 | :--- | :--- | :--- | :--- |
 | **🪟 Windows 11** | Portable Standalone (.zip) | x64 (Intel / AMD) | [**Download AeroSpot v1.0.0 (.zip)**](https://github.com/Ritolino/AeroSpot/releases/download/v1.0.0/AeroSpot-v1.0.0-win-x64-portable.zip) |
 
-*Simply download the `.zip`, extract it to any folder on your PC, and launch `AeroSpot.Host.exe`.*
+*Simply download the `.zip`, extract it to any folder on your PC, and launch `AeroSpot.exe`.*
 
 ---
 
