@@ -132,6 +132,16 @@ Per l'architettura completa di compilazione e i benchmark, consulta [docs/BUILDI
 
 ---
 
+💡 Informazioni sul Progetto & Disclaimer
+Questo progetto è stato ideato, progettato e collaudato da Gabriele Clemente (@Ritolino).
+> **Trasparenza:** Non sono un ingegnere del software o un designer UI/UX professionista — sono un appassionato di tecnologia! Questa applicazione è stata architettata, scritta e rifinita attraverso pair programming uomo-AI utilizzando Google Antigravity potenziato da Gemini 3.8.
+>
+> Il mio contributo principale è stato l'ideazione del concetto iniziale, il testing iterativo, il design UI/UX, la definizione delle funzionalità e la validazione sul campo su hardware Windows (inclusa l'architettura multi-processo Host/Worker, gli hook Win32 a basso livello, il playback audio/video DirectShow & MediaElement, il rendering 3D DirectX 11 con SharpDX, l'indicizzazione SQLite full-text search e la localizzazione bilingue completa).
+>
+> Per questo motivo, suggerimenti, code review e Pull Request per migliorare il codice, ottimizzare le dipendenze o perfezionare l'architettura software sono calorosamente benvenuti e apprezzati!
+
+---
+
 ## 📄 Licenza
 
 Questo progetto è distribuito sotto licenza **MIT** — consulta il file [LICENSE](LICENSE) per tutti i dettagli.
