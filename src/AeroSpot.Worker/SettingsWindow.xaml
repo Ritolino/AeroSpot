@@ -1,0 +1,777 @@
+<Window x:Class="AeroSpot.Worker.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:AeroSpot.Worker"
+        xmlns:loc="clr-namespace:AeroSpot.Worker.Localization"
+        Title="Impostazioni AeroSpot"
+        Width="680" Height="730"
+        WindowStartupLocation="CenterScreen"
+        WindowStyle="None" AllowsTransparency="True"
+        Background="Transparent" ShowInTaskbar="True" Topmost="True"
+        ResizeMode="NoResize">
+
+    <Window.Resources>
+        <!-- Converters -->
+        <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+        <local:InverseBooleanToVisibilityConverter x:Key="InverseBoolToVisibility" />
+
+        <!-- Stile unificato Tasto Info 'i' Vettoriale Blu (P1, P3: perfettamente centrato otticamente e geometricamente) -->
+        <Style x:Key="InfoCircleButtonStyle" TargetType="{x:Type Button}">
+            <Setter Property="OverridesDefaultStyle" Value="True"/>
+            <Setter Property="Width" Value="20"/>
+            <Setter Property="Height" Value="20"/>
+            <Setter Property="Background" Value="#1E293B"/>
+            <Setter Property="Foreground" Value="#38BDF8"/>
+            <Setter Property="BorderBrush" Value="#0284C7"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Margin" Value="0,0,8,0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type Button}">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="10">
+                            <!-- Lettera 'i' disegnata vettorialmente: centrata al millesimo di pixel, immune a baseline di font o DPI -->
+                            <Path x:Name="Glyph" Width="9" Height="9" Stretch="Uniform" Fill="{TemplateBinding Foreground}" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                  Data="M 4.5,1.5 C 5.3,1.5 6,2.2 6,3 C 6,3.8 5.3,4.5 4.5,4.5 C 3.7,4.5 3,3.8 3,3 C 3,2.2 3.7,1.5 4.5,1.5 Z M 3.5,6 L 5.5,6 L 5.5,12 L 3.5,12 Z"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#0284C7"/>
+                                <Setter TargetName="Glyph" Property="Fill" Value="#FFFFFF"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#0369A1"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Stile ComboBox Dark con Popup Scuro e Testo ad Alto Contrasto -->
+        <ControlTemplate x:Key="ComboBoxToggleButtonTemplate" TargetType="{x:Type ToggleButton}">
+            <Border x:Name="TemplateRoot" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="6">
+                <Border x:Name="SplitBorder" Width="26" HorizontalAlignment="Right" Margin="0">
+                    <Path x:Name="Arrow" HorizontalAlignment="Center" VerticalAlignment="Center" Fill="#94A3B8" Data="M 0 0 L 5 5 L 10 0 Z"/>
+                </Border>
+            </Border>
+            <ControlTemplate.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter TargetName="TemplateRoot" Property="BorderBrush" Value="#38BDF8"/>
+                    <Setter TargetName="Arrow" Property="Fill" Value="#FFFFFF"/>
+                </Trigger>
+            </ControlTemplate.Triggers>
+        </ControlTemplate>
+
+        <Style TargetType="{x:Type ComboBoxItem}">
+            <Setter Property="SnapsToDevicePixels" Value="True"/>
+            <Setter Property="Padding" Value="10,8"/>
+            <Setter Property="Foreground" Value="#F8FAFC"/>
+            <Setter Property="Background" Value="#1E232B"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type ComboBoxItem}">
+                        <Border x:Name="Bd" Padding="{TemplateBinding Padding}" Background="{TemplateBinding Background}" BorderThickness="0" CornerRadius="4" Margin="2,1">
+                            <ContentPresenter HorizontalAlignment="Left" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#2D3748"/>
+                                <Setter Property="Foreground" Value="#38BDF8"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#0284C7"/>
+                                <Setter Property="Foreground" Value="#FFFFFF"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="DarkComboBoxStyle" TargetType="{x:Type ComboBox}">
+            <Setter Property="SnapsToDevicePixels" Value="True"/>
+            <Setter Property="OverridesDefaultStyle" Value="True"/>
+            <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Auto"/>
+            <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Auto"/>
+            <Setter Property="ScrollViewer.CanContentScroll" Value="True"/>
+            <Setter Property="Foreground" Value="#F8FAFC"/>
+            <Setter Property="Background" Value="#1E232B"/>
+            <Setter Property="BorderBrush" Value="#475569"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type ComboBox}">
+                        <Grid x:Name="MainGrid">
+                            <ToggleButton x:Name="ToggleButton" 
+                                          Template="{StaticResource ComboBoxToggleButtonTemplate}" 
+                                          Background="{TemplateBinding Background}" 
+                                          BorderBrush="{TemplateBinding BorderBrush}" 
+                                          BorderThickness="{TemplateBinding BorderThickness}" 
+                                          Focusable="False" 
+                                          IsChecked="{Binding Path=IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}" 
+                                          ClickMode="Press"/>
+                            <ContentPresenter x:Name="ContentSite" 
+                                              IsHitTestVisible="False" 
+                                              Content="{TemplateBinding SelectionBoxItem}" 
+                                              ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}" 
+                                              ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}" 
+                                              Margin="12,3,28,3" 
+                                              VerticalAlignment="Center" 
+                                              HorizontalAlignment="Left"/>
+                            <Popup x:Name="PART_Popup" 
+                                   AllowsTransparency="True" 
+                                   IsOpen="{TemplateBinding IsDropDownOpen}" 
+                                   Placement="Bottom" 
+                                   PopupAnimation="Slide" 
+                                   Focusable="False">
+                                <Grid x:Name="DropDown" 
+                                      SnapsToDevicePixels="True" 
+                                      MinWidth="{TemplateBinding ActualWidth}" 
+                                      MaxHeight="{TemplateBinding MaxDropDownHeight}">
+                                    <Border x:Name="DropDownBorder" 
+                                            Background="#16191E" 
+                                            BorderBrush="#475569" 
+                                            BorderThickness="1" 
+                                            CornerRadius="6" 
+                                            Margin="0,4,0,0" 
+                                            Padding="4">
+                                        <Border.Effect>
+                                            <DropShadowEffect BlurRadius="12" ShadowDepth="4" Direction="270" Color="#000000" Opacity="0.5"/>
+                                        </Border.Effect>
+                                        <ScrollViewer SnapsToDevicePixels="True">
+                                            <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Cycle"/>
+                                        </ScrollViewer>
+                                    </Border>
+                                </Grid>
+                            </Popup>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Barra di Scorrimento Sottile e Scura (macOS / Fluent dark gray) -->
+        <Style x:Key="SlimDarkScrollBarThumb" TargetType="{x:Type Thumb}">
+            <Setter Property="OverridesDefaultStyle" Value="True"/>
+            <Setter Property="IsTabStop" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type Thumb}">
+                        <Border Background="#45454A" CornerRadius="3" Margin="1" />
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="#71717A"/>
+                            </Trigger>
+                            <Trigger Property="IsDragging" Value="True">
+                                <Setter Property="Background" Value="#A1A1AA"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="SlimDarkScrollBar" TargetType="{x:Type ScrollBar}">
+            <Setter Property="OverridesDefaultStyle" Value="True"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type ScrollBar}">
+                        <Grid Background="Transparent" SnapsToDevicePixels="True">
+                            <Track x:Name="PART_Track" IsDirectionReversed="True">
+                                <Track.DecreaseRepeatButton>
+                                    <RepeatButton Command="{x:Static ScrollBar.PageUpCommand}" Opacity="0" Focusable="False" />
+                                </Track.DecreaseRepeatButton>
+                                <Track.Thumb>
+                                    <Thumb Style="{StaticResource SlimDarkScrollBarThumb}" />
+                                </Track.Thumb>
+                                <Track.IncreaseRepeatButton>
+                                    <RepeatButton Command="{x:Static ScrollBar.PageDownCommand}" Opacity="0" Focusable="False" />
+                                </Track.IncreaseRepeatButton>
+                            </Track>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="Orientation" Value="Vertical">
+                                <Setter Property="Width" Value="7"/>
+                                <Setter Property="MinWidth" Value="7"/>
+                            </Trigger>
+                            <Trigger Property="Orientation" Value="Horizontal">
+                                <Setter Property="Height" Value="7"/>
+                                <Setter Property="MinHeight" Value="7"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <Border Background="#16191E" BorderBrush="#334155" BorderThickness="1" CornerRadius="12" Padding="24">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="30" ShadowDepth="8" Direction="270" Color="#000000" Opacity="0.6"/>
+        </Border.Effect>
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <!-- Header -->
+            <Grid Grid.Row="0" Margin="0,0,0,16">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- Mini Logo -->
+                <Canvas Grid.Column="0" Width="36" Height="36" Margin="0,0,14,0" VerticalAlignment="Center">
+                    <Path Data="M 4,4 L 26,4 L 4,26 Z M 6,6 L 6,20 L 20,6 Z" Fill="#38BDF8" />
+                    <Path Data="M 32,32 L 10,32 L 32,10 Z M 28,28 L 28,14 L 14,28 Z" Fill="#F8FAFC" />
+                </Canvas>
+
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                    <TextBlock Text="{loc:Loc Settings_Title}" Foreground="#F8FAFC" FontSize="19" FontWeight="Bold"/>
+                    <TextBlock Text="{loc:Loc Settings_Subtitle}" Foreground="#CBD5E1" FontSize="12.5" Margin="0,3,0,0"/>
+                </StackPanel>
+
+                <!-- Close Button -->
+                <Button Grid.Column="2" x:Name="BtnClose" Width="32" Height="32" Background="Transparent" BorderThickness="0"
+                        Foreground="#CBD5E1" FontSize="16" Content="✕" Cursor="Hand" Click="BtnClose_Click"
+                        VerticalAlignment="Top">
+                    <Button.Style>
+                        <Style TargetType="Button">
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="Button">
+                                        <Border Background="{TemplateBinding Background}" CornerRadius="6">
+                                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Border>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                            <Style.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter Property="Background" Value="#334155"/>
+                                    <Setter Property="Foreground" Value="#FFFFFF"/>
+                                </Trigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Button.Style>
+                </Button>
+            </Grid>
+
+            <!-- Scrollable Settings Content -->
+            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Margin="0,0,-8,0" Padding="0,0,8,0">
+                <ScrollViewer.Resources>
+                    <Style TargetType="{x:Type ScrollBar}" BasedOn="{StaticResource SlimDarkScrollBar}" />
+                </ScrollViewer.Resources>
+                <StackPanel>
+                    
+                    <!-- 0. Lingua dell'interfaccia (Language) -->
+                    <Border Background="#1E232B" CornerRadius="8" Padding="16" Margin="0,0,0,14" BorderBrush="#334155" BorderThickness="1">
+                        <StackPanel>
+                            <TextBlock Text="{loc:Loc Settings_Language_Title}" Foreground="#38BDF8" FontSize="15" FontWeight="Bold" Margin="0,0,0,4"/>
+                            <TextBlock Text="{loc:Loc Settings_Language_Desc}" Foreground="#CBD5E1" FontSize="12" Margin="0,0,0,10"/>
+
+                            <ComboBox x:Name="CmbLanguage" Style="{StaticResource DarkComboBoxStyle}" Width="280" HorizontalAlignment="Left" SelectionChanged="CmbLanguage_SelectionChanged">
+                                <ComboBoxItem x:Name="CmbItemAuto" Tag="auto" Content="{loc:Loc Settings_Language_Auto}"/>
+                                <ComboBoxItem x:Name="CmbItemEn" Tag="en" Content="{loc:Loc Settings_Language_En}"/>
+                                <ComboBoxItem x:Name="CmbItemIt" Tag="it" Content="{loc:Loc Settings_Language_It}"/>
+                            </ComboBox>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- 1. Tasti di scelta rapida -->
+                    <Border Background="#1E232B" CornerRadius="8" Padding="16" Margin="0,0,0,14" BorderBrush="#334155" BorderThickness="1">
+                        <StackPanel>
+                            <Grid Margin="0,0,0,10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <!-- Tasto Info 'i' Blu interattivo per la scelta rapida -->
+                                <Button Grid.Column="0" x:Name="BtnToggleShortcutsInfo"
+                                        Style="{StaticResource InfoCircleButtonStyle}"
+                                        ToolTip="{loc:Loc Settings_Shortcuts_Info_Tooltip}"
+                                        Click="BtnToggleShortcutsInfo_Click"/>
+                                <TextBlock Grid.Column="1" Text="{loc:Loc Settings_Shortcuts_Title}" Foreground="#38BDF8" FontSize="15" FontWeight="Bold" VerticalAlignment="Center"/>
+                            </Grid>
+
+                            <!-- SCHEDA INFORMATIVA Tasti Scelta Rapida (interattiva, nascosta di default) -->
+                            <Border x:Name="BorderShortcutsInfo" Visibility="Collapsed" Background="#0F172A" CornerRadius="8" Padding="12" Margin="0,0,0,12" BorderBrush="#0284C7" BorderThickness="1">
+                                <TextBlock Text="{loc:Loc Settings_Shortcuts_Info}"
+                                           Foreground="#CBD5E1" FontSize="12" TextWrapping="Wrap"/>
+                            </Border>
+
+                            <!-- Spotlight Hotkey -->
+                            <Grid Margin="0,4,0,12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="220"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,10,0">
+                                    <TextBlock Text="{loc:Loc Settings_Spotlight_Shortcut}" Foreground="#F8FAFC" FontSize="13.5" FontWeight="SemiBold"/>
+                                    <TextBlock Text="{loc:Loc Settings_Spotlight_Shortcut_Hint}" Foreground="#CBD5E1" FontSize="12" Margin="0,2,0,0"/>
+                                </StackPanel>
+                                <Border Grid.Column="1" Background="#0F172A" BorderBrush="#475569" BorderThickness="1" CornerRadius="6" Height="36" Cursor="Hand" MouseLeftButtonDown="SpotlightBorder_Click">
+                                    <TextBox x:Name="TxtSpotlightHotkey" Background="Transparent" Foreground="#38BDF8" BorderThickness="0"
+                                             FontSize="13.5" FontWeight="Bold" HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+                                             IsReadOnly="True" Cursor="Hand" Text="Alt + Spazio"
+                                             GotFocus="HotkeyBox_GotFocus" LostFocus="HotkeyBox_LostFocus"
+                                             PreviewKeyDown="SpotlightHotkey_PreviewKeyDown" />
+                                </Border>
+                            </Grid>
+
+                            <!-- QuickLook Hotkey -->
+                            <Grid Margin="0,4,0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="220"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,10,0">
+                                    <TextBlock Text="{loc:Loc Settings_QuickLook_Shortcut}" Foreground="#F8FAFC" FontSize="13.5" FontWeight="SemiBold"/>
+                                    <TextBlock Text="{loc:Loc Settings_QuickLook_Shortcut_Hint}" Foreground="#CBD5E1" FontSize="12" Margin="0,2,0,0"/>
+                                </StackPanel>
+                                <Border Grid.Column="1" Background="#0F172A" BorderBrush="#475569" BorderThickness="1" CornerRadius="6" Height="36" Cursor="Hand" MouseLeftButtonDown="QuickLookBorder_Click">
+                                    <TextBox x:Name="TxtQuickLookHotkey" Background="Transparent" Foreground="#38BDF8" BorderThickness="0"
+                                             FontSize="13.5" FontWeight="Bold" HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+                                             IsReadOnly="True" Cursor="Hand" Text="Spazio"
+                                             GotFocus="HotkeyBox_GotFocus" LostFocus="HotkeyBox_LostFocus"
+                                             PreviewKeyDown="QuickLookHotkey_PreviewKeyDown" />
+                                </Border>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- 2. Dischi Inclusi con tasto info interattivo -->
+                    <Border Background="#1E232B" CornerRadius="8" Padding="16" Margin="0,0,0,14" BorderBrush="#334155" BorderThickness="1">
+                        <StackPanel>
+                            <Grid Margin="0,0,0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+
+                                <!-- Tasto Info 'i' Blu interattivo in alto a sinistra -->
+                                <Button Grid.Column="0" x:Name="BtnToggleIndexingInfo"
+                                        Style="{StaticResource InfoCircleButtonStyle}"
+                                        ToolTip="{loc:Loc Settings_Indexing_Info_Tooltip}"
+                                        Click="BtnToggleIndexingInfo_Click"/>
+
+                                <TextBlock Grid.Column="1" Text="{loc:Loc Settings_Drives_Title}" Foreground="#38BDF8" FontSize="15" FontWeight="Bold" VerticalAlignment="Center"/>
+                            </Grid>
+
+                            <TextBlock Text="{loc:Loc Settings_Drives_Desc}" Foreground="#CBD5E1" FontSize="12" Margin="0,0,0,10"/>
+
+                            <!-- SCHEDA INFORMATIVA: Cosa comporta l'indicizzazione (Nascosta di default, compare al click della 'i' blu) -->
+                            <Border x:Name="BorderIndexingInfo" Visibility="Collapsed" Background="#0F172A" CornerRadius="8" Padding="14" Margin="0,0,0,12" BorderBrush="#0284C7" BorderThickness="1">
+                                <StackPanel>
+                                    <TextBlock Text="{loc:Loc Settings_Indexing_Info_Title}" Foreground="#38BDF8" FontSize="13" FontWeight="Bold" Margin="0,0,0,6"/>
+                                    <TextBlock Text="{loc:Loc Settings_Indexing_Info_Ram}" Foreground="#E2E8F0" FontSize="12" Margin="0,2"/>
+                                    <TextBlock Text="{loc:Loc Settings_Indexing_Info_Disk}" Foreground="#E2E8F0" FontSize="12" Margin="0,2"/>
+                                    <TextBlock Text="{loc:Loc Settings_Indexing_Info_Cpu}" Foreground="#E2E8F0" FontSize="12" Margin="0,2"/>
+                                    <TextBlock Text="{loc:Loc Settings_Indexing_Info_Speed}" Foreground="#E2E8F0" FontSize="12" Margin="0,2"/>
+                                </StackPanel>
+                            </Border>
+
+                            <ItemsControl x:Name="ListDrives">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <CheckBox Content="{Binding DisplayName}" IsChecked="{Binding IsIncluded, Mode=TwoWay}"
+                                                  Foreground="#F8FAFC" FontSize="13" Margin="0,5" Cursor="Hand"/>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- 3. Esclusioni -->
+                    <Border Background="#1E232B" CornerRadius="8" Padding="16" Margin="0,0,0,14" BorderBrush="#334155" BorderThickness="1">
+                        <StackPanel>
+                            <TextBlock Text="{loc:Loc Settings_Exclusions_Title}" Foreground="#38BDF8" FontSize="15" FontWeight="Bold" Margin="0,0,0,4"/>
+                            <TextBlock Text="{loc:Loc Settings_Exclusions_Desc}"
+                                       Foreground="#CBD5E1" FontSize="12" Margin="0,0,0,10"/>
+
+                            <ItemsControl x:Name="ListExclusions">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Margin="0,3">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="92"/>
+                                            </Grid.ColumnDefinitions>
+                                            <CheckBox Grid.Column="0" Content="{Binding Name}" IsChecked="{Binding IsExcluded, Mode=TwoWay}"
+                                                      Foreground="#F8FAFC" FontSize="13" VerticalAlignment="Center" Cursor="Hand" Margin="0,0,10,0"/>
+
+                                            <!-- Badge Standard: larghezza 92px fissa che copre l'esatto spazio di Custom + Cestino -->
+                                            <Border Grid.Column="1" Background="#334155" CornerRadius="4" Width="92" Height="24"
+                                                    HorizontalAlignment="Right" VerticalAlignment="Center"
+                                                    Visibility="{Binding IsCustom, Converter={StaticResource InverseBoolToVisibility}}">
+                                                <TextBlock Text="Standard" FontSize="11" Foreground="#94A3B8" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            </Border>
+
+                                            <!-- Badge Custom + Cestino eliminazione: larghezza 92px complessiva (60px + 6px margine + 26px cestino) -->
+                                            <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Width="92"
+                                                        Visibility="{Binding IsCustom, Converter={StaticResource BoolToVisibility}}">
+                                                <Border Background="#1E3A5F" CornerRadius="4" Width="60" Height="24" Margin="0,0,6,0" VerticalAlignment="Center">
+                                                    <TextBlock Text="Custom" FontSize="11.5" Foreground="#38BDF8" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                </Border>
+                                                <Button Content="🗑" Width="26" Height="24" Background="Transparent" Foreground="#EF4444"
+                                                        BorderThickness="0" Cursor="Hand" ToolTip="{loc:Loc Settings_Exclusions_Btn_Delete_Tooltip}"
+                                                        Click="BtnDeleteExclusion_Click">
+                                                    <Button.Style>
+                                                        <Style TargetType="Button">
+                                                            <Setter Property="Template">
+                                                                <Setter.Value>
+                                                                    <ControlTemplate TargetType="Button">
+                                                                        <Border x:Name="Brd" Background="{TemplateBinding Background}" CornerRadius="4">
+                                                                            <TextBlock Text="{TemplateBinding Content}" FontSize="12" Foreground="{TemplateBinding Foreground}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                                        </Border>
+                                                                        <ControlTemplate.Triggers>
+                                                                            <Trigger Property="IsMouseOver" Value="True">
+                                                                                <Setter TargetName="Brd" Property="Background" Value="#33EF4444"/>
+                                                                            </Trigger>
+                                                                        </ControlTemplate.Triggers>
+                                                                    </ControlTemplate>
+                                                                </Setter.Value>
+                                                            </Setter>
+                                                        </Style>
+                                                    </Button.Style>
+                                                </Button>
+                                            </StackPanel>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+
+                            <!-- Aggiungi esclusione personalizzata con Placeholder visivo -->
+                            <Grid Margin="0,12,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Grid Grid.Column="0">
+                                    <TextBox x:Name="TxtCustomExclusion" Height="34" Background="#0F172A" Foreground="#FFFFFF"
+                                             BorderBrush="#475569" Padding="10,0" FontSize="12.5"
+                                             VerticalContentAlignment="Center"/>
+                                    <TextBlock Text="{loc:Loc Settings_Exclusions_Placeholder}"
+                                               FontSize="12" Foreground="#64748B" Margin="11,0,0,0"
+                                               VerticalAlignment="Center" IsHitTestVisible="False">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding Text, ElementName=TxtCustomExclusion}" Value="">
+                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </Grid>
+                                <Button Grid.Column="1" x:Name="BtnAddExclusion" Content="{loc:Loc Settings_Exclusions_Btn_Add}" Margin="8,0,0,0" Height="34" Padding="16,0"
+                                         Background="#334155" Foreground="#FFFFFF" FontWeight="SemiBold" BorderThickness="0" Cursor="Hand" Click="BtnAddExclusion_Click"
+                                         VerticalContentAlignment="Center" HorizontalContentAlignment="Center">
+                                    <Button.Style>
+                                        <Style TargetType="Button">
+                                            <Setter Property="Template">
+                                                <Setter.Value>
+                                                    <ControlTemplate TargetType="Button">
+                                                        <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                                                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                        </Border>
+                                                    </ControlTemplate>
+                                                </Setter.Value>
+                                            </Setter>
+                                            <Style.Triggers>
+                                                <Trigger Property="IsMouseOver" Value="True">
+                                                    <Setter Property="Background" Value="#475569"/>
+                                                </Trigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                </Button>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- 4. Sistema e Prestazioni (Avvio & Risparmio Memoria) -->
+                    <Border Background="#1E232B" CornerRadius="8" Padding="16" BorderBrush="#334155" BorderThickness="1" Margin="0,12,0,0">
+                        <StackPanel>
+                            <Grid Margin="0,0,0,8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <Button Grid.Column="0" x:Name="BtnToggleSystemInfo"
+                                        Style="{StaticResource InfoCircleButtonStyle}"
+                                        ToolTip="{loc:Loc Settings_System_Info_Tooltip}"
+                                        Click="BtnToggleSystemInfo_Click"/>
+                                <TextBlock Grid.Column="1" Text="{loc:Loc Settings_System_Title}" Foreground="#38BDF8" FontSize="15" FontWeight="Bold" VerticalAlignment="Center"/>
+                            </Grid>
+
+                            <!-- Scheda informativa Sistema e Prestazioni (interattiva, nascosta di default) -->
+                            <Border x:Name="BorderSystemInfo" Visibility="Collapsed" Background="#0F172A" CornerRadius="8" Padding="12" Margin="0,0,0,12" BorderBrush="#0284C7" BorderThickness="1">
+                                <TextBlock Text="{loc:Loc Settings_System_Desc}"
+                                           Foreground="#CBD5E1" FontSize="12" TextWrapping="Wrap"/>
+                            </Border>
+
+                            <CheckBox x:Name="ChkStartWithWindows" Foreground="#F8FAFC" FontSize="13.5" FontWeight="SemiBold" Margin="0,4" Cursor="Hand">
+                                <TextBlock Text="{loc:Loc Settings_Startup_Enable}" TextWrapping="Wrap"/>
+                            </CheckBox>
+
+                            <Border Height="1" Background="#334155" Margin="0,10"/>
+
+                            <CheckBox x:Name="ChkKeepWorkerWarm" Foreground="#F8FAFC" FontSize="13.5" FontWeight="SemiBold" Margin="0,4" Cursor="Hand">
+                                <TextBlock Text="{loc:Loc Settings_Performance_KeepWarm}" TextWrapping="Wrap"/>
+                            </CheckBox>
+
+                            <Grid Margin="0,6,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="80"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="{loc:Loc Settings_Performance_Timeout}" Foreground="#F8FAFC" FontSize="12.5" VerticalAlignment="Center"/>
+                                <TextBox Grid.Column="1" x:Name="TxtTimeoutSeconds" Height="30" Background="#0F172A" Foreground="#FFFFFF"
+                                         BorderBrush="#475569" HorizontalContentAlignment="Center" VerticalContentAlignment="Center" Text="30" FontSize="13"/>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- 5. Dimensioni Finestre QuickLook (Memorizzazione persistente per tipo) -->
+                    <Border Background="#1E232B" CornerRadius="8" Padding="16" BorderBrush="#334155" BorderThickness="1" Margin="0,12,0,0">
+                        <StackPanel>
+                            <Grid Margin="0,0,0,8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <Button Grid.Column="0" x:Name="BtnToggleRememberSizeInfo"
+                                        Style="{StaticResource InfoCircleButtonStyle}"
+                                        ToolTip="{loc:Loc Settings_RememberSize_Desc}"
+                                        Click="BtnToggleRememberSizeInfo_Click"/>
+                                <TextBlock Grid.Column="1" Text="{loc:Loc Settings_RememberSize_Title}" Foreground="#38BDF8" FontSize="15" FontWeight="Bold" VerticalAlignment="Center"/>
+                            </Grid>
+
+                            <!-- Scheda informativa Dimensioni (interattiva, nascosta di default) -->
+                            <Border x:Name="BorderRememberSizeInfo" Visibility="Collapsed" Background="#0F172A" CornerRadius="8" Padding="12" Margin="0,0,0,12" BorderBrush="#0284C7" BorderThickness="1">
+                                <TextBlock Text="{loc:Loc Settings_RememberSize_Desc}"
+                                           Foreground="#CBD5E1" FontSize="12" TextWrapping="Wrap"/>
+                            </Border>
+
+                            <CheckBox x:Name="ChkRememberImages" Content="{loc:Loc Settings_RememberSize_Images}" Foreground="#F8FAFC" FontSize="13" Margin="0,4" Cursor="Hand"/>
+                            <CheckBox x:Name="ChkRememberVideos" Content="{loc:Loc Settings_RememberSize_Videos}" Foreground="#F8FAFC" FontSize="13" Margin="0,4" Cursor="Hand"/>
+                            <CheckBox x:Name="ChkRememberAudio" Content="{loc:Loc Settings_RememberSize_Audio}" Foreground="#F8FAFC" FontSize="13" Margin="0,4" Cursor="Hand"/>
+                            <CheckBox x:Name="ChkRememberPdf" Content="{loc:Loc Settings_RememberSize_Pdf}" Foreground="#F8FAFC" FontSize="13" Margin="0,4" Cursor="Hand"/>
+                            <CheckBox x:Name="ChkRememberDocs" Content="{loc:Loc Settings_RememberSize_Documents}" Foreground="#F8FAFC" FontSize="13" Margin="0,4" Cursor="Hand"/>
+                            <CheckBox x:Name="ChkRememberGeneric" Content="{loc:Loc Settings_RememberSize_Generic}" Foreground="#F8FAFC" FontSize="13" Margin="0,4" Cursor="Hand"/>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- 6. Cartella Dati e Archiviazione (Portable / Standard) -->
+                    <Border Background="#1E232B" CornerRadius="8" Padding="16" BorderBrush="#334155" BorderThickness="1" Margin="0,12,0,0">
+                        <StackPanel>
+                            <TextBlock Text="{loc:Loc Settings_DataDir_Title}" Foreground="#38BDF8" FontSize="15" FontWeight="Bold" Margin="0,0,0,8"/>
+                            <TextBlock Text="{loc:Loc Settings_DataDir_Desc}"
+                                       Foreground="#CBD5E1" FontSize="12" Margin="0,0,0,8" TextWrapping="Wrap"/>
+
+                            <Grid Margin="0,2,0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBox x:Name="TxtDataDirectoryPath" Height="34" Background="#0F172A" Foreground="#F8FAFC"
+                                         BorderBrush="#475569" Padding="10,0" FontSize="12.5" IsReadOnly="True" VerticalContentAlignment="Center"/>
+                                <Button Grid.Column="1" x:Name="BtnOpenDataDir" Content="{loc:Loc Settings_DataDir_Btn_Open}" Margin="10,0,0,0" Height="34" Padding="14,0"
+                                        Background="#334155" Foreground="#FFFFFF" FontWeight="SemiBold" BorderThickness="0" Cursor="Hand" Click="BtnOpenDataDir_Click">
+                                    <Button.Style>
+                                        <Style TargetType="Button">
+                                            <Setter Property="Template">
+                                                <Setter.Value>
+                                                    <ControlTemplate TargetType="Button">
+                                                        <Border x:Name="Bd" Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                                                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                        </Border>
+                                                        <ControlTemplate.Triggers>
+                                                            <Trigger Property="IsMouseOver" Value="True">
+                                                                <Setter TargetName="Bd" Property="Background" Value="#475569"/>
+                                                            </Trigger>
+                                                        </ControlTemplate.Triggers>
+                                                    </ControlTemplate>
+                                                </Setter.Value>
+                                            </Setter>
+                                        </Style>
+                                    </Button.Style>
+                                </Button>
+                            </Grid>
+                            <Grid Margin="0,6,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" x:Name="TxtDataModeInfo" Text="Modalità: Standard (%LocalAppData%\AeroSpot)" Foreground="#94A3B8" FontSize="11.5" VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="1" x:Name="TxtIndexDiskUsage" Text="" Foreground="#38BDF8" FontSize="11.5" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- 7. Scheda Istruzioni d'uso & Documentazione (M3) -->
+                    <Border Background="#1E232B" CornerRadius="8" Padding="16" BorderBrush="#334155" BorderThickness="1" Margin="0,12,0,0">
+                        <StackPanel>
+                            <TextBlock Text="{loc:Loc Instructions_Title}" Foreground="#38BDF8" FontSize="15" FontWeight="Bold" Margin="0,0,0,4"/>
+                            <TextBlock Text="{loc:Loc Instructions_Desc}" Foreground="#CBD5E1" FontSize="12" Margin="0,0,0,10" TextWrapping="Wrap"/>
+
+                            <Grid Margin="0,4,0,10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Button Grid.Column="0" x:Name="BtnOpenInstructions" Content="{loc:Loc Instructions_Btn_Open}" Height="36" Padding="16,0"
+                                        HorizontalAlignment="Left" Background="#0284C7" Foreground="#FFFFFF" FontWeight="SemiBold" BorderThickness="0" Cursor="Hand" Click="BtnOpenInstructions_Click">
+                                    <Button.Style>
+                                        <Style TargetType="Button">
+                                            <Setter Property="Template">
+                                                <Setter.Value>
+                                                    <ControlTemplate TargetType="Button">
+                                                        <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                                                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                        </Border>
+                                                    </ControlTemplate>
+                                                </Setter.Value>
+                                            </Setter>
+                                            <Style.Triggers>
+                                                <Trigger Property="IsMouseOver" Value="True">
+                                                    <Setter Property="Background" Value="#38BDF8"/>
+                                                </Trigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                </Button>
+
+                                <Button Grid.Column="1" x:Name="BtnOpenGitHub" Content="{loc:Loc Instructions_GitHub_Link}" Height="36" Padding="14,0"
+                                        Background="#334155" Foreground="#CBD5E1" FontWeight="SemiBold" BorderThickness="0" Cursor="Hand" Click="BtnOpenGitHub_Click">
+                                    <Button.Style>
+                                        <Style TargetType="Button">
+                                            <Setter Property="Template">
+                                                <Setter.Value>
+                                                    <ControlTemplate TargetType="Button">
+                                                        <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                                                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                        </Border>
+                                                    </ControlTemplate>
+                                                </Setter.Value>
+                                            </Setter>
+                                            <Style.Triggers>
+                                                <Trigger Property="IsMouseOver" Value="True">
+                                                    <Setter Property="Background" Value="#475569"/>
+                                                    <Setter Property="Foreground" Value="#FFFFFF"/>
+                                                </Trigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                </Button>
+                            </Grid>
+
+                            <TextBlock x:Name="TxtAppVersionInfo" Text="AeroSpot v1.0.0 (Build 2026.10.20)" Foreground="#64748B" FontSize="11.5" Margin="0,4,0,0"/>
+                        </StackPanel>
+                    </Border>
+
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- Footer Buttons -->
+            <Border Grid.Row="2" Margin="0,16,0,0" BorderBrush="#334155" BorderThickness="0,1,0,0" Padding="0,14,0,0">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <!-- Tasto Ripristino Predefiniti in basso a sinistra (piccolo, grigio, logo rewind) -->
+                    <Button Grid.Column="0" x:Name="BtnResetDefaults" Content="{loc:Loc Settings_Btn_Reset}" Width="34" Height="34"
+                            Background="#1E232B" Foreground="#94A3B8" BorderBrush="#475569" BorderThickness="1"
+                            Cursor="Hand" ToolTip="{loc:Loc Settings_Btn_Reset_Tooltip}" Click="BtnResetDefaults_Click">
+                        <Button.Style>
+                            <Style TargetType="Button">
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="Button">
+                                            <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="6">
+                                                <TextBlock Text="{TemplateBinding Content}" FontSize="15" FontWeight="Bold" Foreground="{TemplateBinding Foreground}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            </Border>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                                <Style.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter Property="Background" Value="#334155"/>
+                                        <Setter Property="Foreground" Value="#F8FAFC"/>
+                                        <Setter Property="BorderBrush" Value="#64748B"/>
+                                    </Trigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
+                    </Button>
+
+                    <TextBlock Grid.Column="1" x:Name="TxtStatus" Text="" Foreground="#10B981" FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center" Margin="14,0" TextTrimming="CharacterEllipsis"/>
+
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right">
+                        <Button x:Name="BtnCancel" Content="{loc:Loc Settings_Btn_Cancel}" Width="95" Height="36" Margin="0,0,12,0"
+                                Background="Transparent" Foreground="#CBD5E1" BorderBrush="#475569" BorderThickness="1"
+                                Cursor="Hand" Click="BtnCancel_Click">
+                            <Button.Style>
+                                <Style TargetType="Button">
+                                    <Setter Property="Template">
+                                        <Setter.Value>
+                                            <ControlTemplate TargetType="Button">
+                                                <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="6">
+                                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                </Border>
+                                            </ControlTemplate>
+                                        </Setter.Value>
+                                    </Setter>
+                                    <Style.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter Property="Background" Value="#1E293B"/>
+                                            <Setter Property="Foreground" Value="#FFFFFF"/>
+                                        </Trigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+
+                        <Button x:Name="BtnSave" Content="{loc:Loc Settings_Btn_Save}" Width="150" Height="36"
+                                Background="#0284C7" Foreground="#FFFFFF" FontWeight="SemiBold" BorderThickness="0"
+                                Cursor="Hand" Click="BtnSave_Click">
+                            <Button.Style>
+                                <Style TargetType="Button">
+                                    <Setter Property="Template">
+                                        <Setter.Value>
+                                            <ControlTemplate TargetType="Button">
+                                                <Border Background="{TemplateBinding Background}" CornerRadius="6">
+                                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                </Border>
+                                            </ControlTemplate>
+                                        </Setter.Value>
+                                    </Setter>
+                                    <Style.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter Property="Background" Value="#38BDF8"/>
+                                        </Trigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </Grid>
+    </Border>
+</Window>

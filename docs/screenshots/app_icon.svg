@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1E232A" />
+      <stop offset="100%" stop-color="#0F1318" />
+    </linearGradient>
+    <linearGradient id="glowGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38BDF8" />
+      <stop offset="100%" stop-color="#0284C7" />
+    </linearGradient>
+  </defs>
+
+  <!-- Modern Windows 11 Fluent App Tile -->
+  <rect x="24" y="24" width="464" height="464" rx="96" ry="96" fill="url(#bgGrad)" stroke="#38BDF8" stroke-opacity="0.3" stroke-width="4" />
+
+  <!-- Top-Left Geometric Triangle -->
+  <path d="M 112,112 L 382,112 L 112,382 Z M 140,140 L 140,314 L 314,140 Z" 
+        fill="url(#glowGrad)" 
+        fill-rule="evenodd" />
+
+  <!-- Bottom-Right Geometric Triangle -->
+  <path d="M 400,400 L 130,400 L 400,130 Z M 372,372 L 372,198 L 198,372 Z" 
+        fill="#FFFFFF" 
+        fill-rule="evenodd" />
+</svg>
