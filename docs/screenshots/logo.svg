@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <!-- AeroSpot Modern Cyan/White Accent Gradient -->
+    <linearGradient id="aeroGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38BDF8" />
+      <stop offset="100%" stop-color="#0284C7" />
+    </linearGradient>
+  </defs>
+
+  <!-- Top-Left Geometric Triangle -->
+  <path d="M 64,64 L 422,64 L 64,422 Z M 96,96 L 96,345 L 345,96 Z" 
+        fill="#FFFFFF" 
+        fill-rule="evenodd" />
+
+  <!-- Bottom-Right Geometric Triangle -->
+  <path d="M 448,448 L 90,448 L 448,90 Z M 416,416 L 416,167 L 167,416 Z" 
+        fill="#FFFFFF" 
+        fill-rule="evenodd" />
+</svg>
