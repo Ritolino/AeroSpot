@@ -132,6 +132,18 @@ For complete compilation architecture and benchmarks, consult [docs/BUILDING.md]
 
 ---
 
+💡 About this Project & Disclaimer
+
+This project was conceived, designed, and tested by Gabriele Clemente (@Ritolino).
+
+>**Full Disclosure:** I am not a professional software engineer or UI/UX designer — I'm a passionate tech enthusiast! This application was architected, written, and refined through human-AI pair programming using Google Antigravity powered by Gemini 3.8.
+>
+>My primary contribution has been the initial concept, iterative testing, UI/UX design, feature scoping, and real-world verification on Windows hardware (including multi-process architecture, low-level Win32 hooks, DirectShow & MediaElement audio/video playback, SharpDX DirectX 11 >3D rendering, SQLite full-text search indexing, and complete bilingual localization).
+>
+>Because of this, suggestions, code reviews, and Pull Requests to improve the codebase, optimize dependencies, or enhance software architecture are warmly welcomed and appreciated!
+
+---
+
 ## 📄 License
 
 This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
