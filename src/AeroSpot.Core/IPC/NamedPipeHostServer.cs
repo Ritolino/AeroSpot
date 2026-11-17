@@ -88,6 +88,7 @@ namespace AeroSpot.Core.IPC
                 catch (Exception)
                 {
                     // Connection dropped or error; loop resets
+                    try { await Task.Delay(100, token).ConfigureAwait(false); } catch { }
                 }
                 finally
                 {
@@ -108,10 +109,18 @@ namespace AeroSpot.Core.IPC
 
         public async Task<bool> SendMessageAsync(IpcMessage message, int timeoutMs = 3000, CancellationToken token = default)
         {
-            if (_serverStream == null || !_serverStream.IsConnected) return false;
-
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(token);
             cts.CancelAfter(timeoutMs);
+
+            // Attendi brevemente che la connessione sia attiva se il client è in fase di handshake
+            int waitMs = 0;
+            while ((_serverStream == null || !_serverStream.IsConnected) && waitMs < Math.Min(timeoutMs, 500) && !cts.Token.IsCancellationRequested)
+            {
+                try { await Task.Delay(15, cts.Token).ConfigureAwait(false); } catch { break; }
+                waitMs += 15;
+            }
+
+            if (_serverStream == null || !_serverStream.IsConnected) return false;
 
             await _sendLock.WaitAsync(cts.Token).ConfigureAwait(false);
             try

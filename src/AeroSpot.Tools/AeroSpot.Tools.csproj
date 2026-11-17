@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <PlatformTarget>x64</PlatformTarget>
+    <Platforms>x64</Platforms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <Product>AeroSpot</Product>
+    <AssemblyTitle>AeroSpot Tools</AssemblyTitle>
+    <Description>AeroSpot Background AI Satellite Worker</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="FFMpegCore" Version="5.5.0" />
+    <PackageReference Include="FFMpegInstaller.Windows.x64" Version="0.1.10" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.20.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\AeroSpot.Core\AeroSpot.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\AeroSpot.Worker\Services\MediaConversionService.cs" Link="MediaConversionService.cs" />
+    <Compile Include="..\AeroSpot.Worker\Services\MediaCompatibilityService.cs" Link="MediaCompatibilityService.cs" />
+    <Compile Include="..\AeroSpot.Worker\Services\VideoMetadataService.cs" Link="VideoMetadataService.cs" />
+    <Compile Include="..\AeroSpot.Worker\FloatingNotificationWindow.xaml.cs" Link="FloatingNotificationWindow.xaml.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Page Include="..\AeroSpot.Worker\FloatingNotificationWindow.xaml" Link="FloatingNotificationWindow.xaml" SubType="Designer" Generator="MSBuild:Compile" />
+  </ItemGroup>
+
+</Project>

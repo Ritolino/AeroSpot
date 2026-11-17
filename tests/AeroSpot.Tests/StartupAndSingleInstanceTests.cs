@@ -13,16 +13,47 @@ namespace AeroSpot.Tests
         private const string StartupApprovedKey = @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
         private const string AppName = "AeroSpot";
 
+        private string? _originalRunValue;
+        private byte[]? _originalApprovedValue;
+
+        [TestInitialize]
+        public void BackupRegistry()
+        {
+            try
+            {
+                using var runKey = Registry.CurrentUser.OpenSubKey(RunRegistryKey, false);
+                _originalRunValue = runKey?.GetValue(AppName) as string;
+
+                using var approvedKey = Registry.CurrentUser.OpenSubKey(StartupApprovedKey, false);
+                _originalApprovedValue = approvedKey?.GetValue(AppName) as byte[];
+            }
+            catch { }
+        }
+
         [TestCleanup]
-        public void CleanupRegistry()
+        public void RestoreRegistry()
         {
             try
             {
                 using var runKey = Registry.CurrentUser.OpenSubKey(RunRegistryKey, true);
-                runKey?.DeleteValue(AppName, false);
+                if (_originalRunValue != null)
+                {
+                    runKey?.SetValue(AppName, _originalRunValue);
+                }
+                else
+                {
+                    runKey?.DeleteValue(AppName, false);
+                }
 
                 using var approvedKey = Registry.CurrentUser.OpenSubKey(StartupApprovedKey, true);
-                approvedKey?.DeleteValue(AppName, false);
+                if (_originalApprovedValue != null)
+                {
+                    approvedKey?.SetValue(AppName, _originalApprovedValue);
+                }
+                else
+                {
+                    approvedKey?.DeleteValue(AppName, false);
+                }
             }
             catch { }
         }
@@ -110,7 +141,7 @@ namespace AeroSpot.Tests
         [TestMethod]
         public void SingleInstance_Mutex_BlocksSecondInstance()
         {
-            string mutexName = "Local\\AeroSpot_Host_Mutex_" + Environment.UserName.Replace("\\", "_");
+            string mutexName = "Local\\AeroSpot_Test_Mutex_" + Guid.NewGuid().ToString("N");
 
             using var primaryMutex = new Mutex(true, mutexName, out bool createdNewPrimary);
             Assert.IsTrue(createdNewPrimary, "First mutex creation should succeed.");

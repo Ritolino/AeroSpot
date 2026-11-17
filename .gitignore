@@ -1,0 +1,35 @@
+# Build and distribution artifacts
+[Bb]in/
+[Oo]bj/
+dist/
+release/
+_Cleanup_*/
+_backups/
+
+# User data and portable state
+Data/
+portable.txt
+settings.json
+*.user
+*.userosscache
+*.suo
+*.sln.docstates
+.vs/
+.vscode/
+.idea/
+
+# Databases and diagnostics
+*.db
+*.db-wal
+*.db-shm
+*.log
+logs/
+TestResults/
+*.crash
+*.dmp
+
+# OS files
+Thumbs.db
+ehthumbs.db
+desktop.ini
+.DS_Store

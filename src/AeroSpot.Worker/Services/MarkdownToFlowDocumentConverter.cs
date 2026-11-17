@@ -33,16 +33,32 @@ namespace AeroSpot.Worker.Services
             QuoteBgBrush.Freeze();
         }
 
-        public static FlowDocument Convert(string markdownText)
+        public static FlowDocument Convert(string markdownText, bool forPrinting = false)
         {
+            var textBrush = forPrinting ? Brushes.Black : TextBrush;
+            var h2Brush = forPrinting ? Brushes.Black : H2Brush;
+            var accentBrush = forPrinting ? new SolidColorBrush(Color.FromRgb(0x02, 0x84, 0xC7)) : AccentBrush;
+            var codeBg = forPrinting ? new SolidColorBrush(Color.FromRgb(0xF1, 0xF5, 0xF9)) : CodeBgBrush;
+            var quoteBg = forPrinting ? new SolidColorBrush(Color.FromRgb(0xF8, 0xFA, 0xFC)) : QuoteBgBrush;
+            var quoteText = forPrinting ? new SolidColorBrush(Color.FromRgb(0x47, 0x55, 0x69)) : MutedBrush;
+            var borderBrush = forPrinting ? new SolidColorBrush(Color.FromRgb(0xCB, 0xD5, 0xE1)) : BorderBrush;
+            var inlineCodeBg = forPrinting ? new SolidColorBrush(Color.FromRgb(0xE2, 0xE8, 0xF0)) : InlineCodeBg;
+
             var doc = new FlowDocument
             {
-                Background = new SolidColorBrush(Color.FromRgb(0x14, 0x14, 0x14)),
-                Foreground = TextBrush,
+                Background = forPrinting ? Brushes.White : new SolidColorBrush(Color.FromRgb(0x14, 0x14, 0x14)),
+                Foreground = textBrush,
                 FontFamily = TextFont,
-                FontSize = 13.5,
-                PagePadding = new Thickness(24, 20, 24, 24)
+                FontSize = forPrinting ? 11.5 : 13.5,
+                PagePadding = forPrinting ? new Thickness(48) : new Thickness(24, 20, 24, 24)
             };
+
+            if (forPrinting)
+            {
+                doc.PageWidth = 793.7; // A4 a 96 DPI
+                doc.PageHeight = 1122.5;
+                doc.ColumnWidth = double.PositiveInfinity;
+            }
 
             if (string.IsNullOrWhiteSpace(markdownText))
             {
@@ -63,7 +79,7 @@ namespace AeroSpot.Worker.Services
                     if (inCodeBlock)
                     {
                         // End of code block
-                        doc.Blocks.Add(CreateCodeBlock(string.Join("\n", codeBlockLines)));
+                        doc.Blocks.Add(CreateCodeBlock(string.Join("\n", codeBlockLines), codeBg, borderBrush, textBrush));
                         codeBlockLines.Clear();
                         inCodeBlock = false;
                     }
@@ -91,43 +107,43 @@ namespace AeroSpot.Worker.Services
                 // Horizontal Rule
                 if (trimmed == "---" || trimmed == "***" || trimmed == "___")
                 {
-                    doc.Blocks.Add(CreateHorizontalRule());
+                    doc.Blocks.Add(CreateHorizontalRule(borderBrush));
                     continue;
                 }
 
                 // Headers
                 if (trimmed.StartsWith("# ") && trimmed.Length > 2)
                 {
-                    doc.Blocks.Add(CreateHeading(trimmed.Substring(2), 22, FontWeights.Bold, AccentBrush, new Thickness(0, 16, 0, 8)));
+                    doc.Blocks.Add(CreateHeading(trimmed.Substring(2), forPrinting ? 18 : 22, FontWeights.Bold, accentBrush, new Thickness(0, 16, 0, 8), h2Brush, inlineCodeBg));
                     continue;
                 }
                 if (trimmed.StartsWith("## ") && trimmed.Length > 3)
                 {
-                    doc.Blocks.Add(CreateHeading(trimmed.Substring(3), 18, FontWeights.Bold, H2Brush, new Thickness(0, 14, 0, 6)));
+                    doc.Blocks.Add(CreateHeading(trimmed.Substring(3), forPrinting ? 15 : 18, FontWeights.Bold, h2Brush, new Thickness(0, 14, 0, 6), h2Brush, inlineCodeBg));
                     continue;
                 }
                 if (trimmed.StartsWith("### ") && trimmed.Length > 4)
                 {
-                    doc.Blocks.Add(CreateHeading(trimmed.Substring(4), 15.5, FontWeights.SemiBold, AccentBrush, new Thickness(0, 12, 0, 4)));
+                    doc.Blocks.Add(CreateHeading(trimmed.Substring(4), forPrinting ? 13 : 15.5, FontWeights.SemiBold, accentBrush, new Thickness(0, 12, 0, 4), h2Brush, inlineCodeBg));
                     continue;
                 }
                 if (trimmed.StartsWith("#### ") && trimmed.Length > 5)
                 {
-                    doc.Blocks.Add(CreateHeading(trimmed.Substring(5), 14, FontWeights.SemiBold, H2Brush, new Thickness(0, 10, 0, 4)));
+                    doc.Blocks.Add(CreateHeading(trimmed.Substring(5), forPrinting ? 12 : 14, FontWeights.SemiBold, h2Brush, new Thickness(0, 10, 0, 4), h2Brush, inlineCodeBg));
                     continue;
                 }
 
                 // Blockquotes (> ...)
                 if (trimmed.StartsWith("> ") && trimmed.Length > 2)
                 {
-                    doc.Blocks.Add(CreateBlockQuote(trimmed.Substring(2)));
+                    doc.Blocks.Add(CreateBlockQuote(trimmed.Substring(2), quoteBg, accentBrush, quoteText, h2Brush, inlineCodeBg));
                     continue;
                 }
 
                 // Bullet Lists (- or * or •)
                 if ((trimmed.StartsWith("- ") || trimmed.StartsWith("* ") || trimmed.StartsWith("• ")) && trimmed.Length > 2)
                 {
-                    doc.Blocks.Add(CreateListItem(trimmed.Substring(2)));
+                    doc.Blocks.Add(CreateListItem(trimmed.Substring(2), accentBrush, h2Brush, inlineCodeBg));
                     continue;
                 }
 
@@ -135,7 +151,7 @@ namespace AeroSpot.Worker.Services
                 var numMatch = Regex.Match(trimmed, @"^(\d+)\.\s+(.*)$");
                 if (numMatch.Success)
                 {
-                    doc.Blocks.Add(CreateNumberedListItem(numMatch.Groups[1].Value, numMatch.Groups[2].Value));
+                    doc.Blocks.Add(CreateNumberedListItem(numMatch.Groups[1].Value, numMatch.Groups[2].Value, accentBrush, h2Brush, inlineCodeBg));
                     continue;
                 }
 
@@ -143,21 +159,21 @@ namespace AeroSpot.Worker.Services
                 var p = new Paragraph
                 {
                     Margin = new Thickness(0, 3, 0, 5),
-                    LineHeight = 22
+                    LineHeight = forPrinting ? 18 : 22
                 };
-                AddInlineFormattedText(p.Inlines, trimmed);
+                AddInlineFormattedText(p.Inlines, trimmed, accentBrush, h2Brush, inlineCodeBg);
                 doc.Blocks.Add(p);
             }
 
             if (inCodeBlock && codeBlockLines.Count > 0)
             {
-                doc.Blocks.Add(CreateCodeBlock(string.Join("\n", codeBlockLines)));
+                doc.Blocks.Add(CreateCodeBlock(string.Join("\n", codeBlockLines), codeBg, borderBrush, textBrush));
             }
 
             return doc;
         }
 
-        private static Block CreateHeading(string text, double fontSize, FontWeight weight, Brush foreground, Thickness margin)
+        private static Block CreateHeading(string text, double fontSize, FontWeight weight, Brush foreground, Thickness margin, Brush h2Brush, Brush inlineCodeBg)
         {
             var p = new Paragraph
             {
@@ -167,105 +183,86 @@ namespace AeroSpot.Worker.Services
                 Margin = margin,
                 LineHeight = fontSize * 1.3
             };
-            AddInlineFormattedText(p.Inlines, text);
+            AddInlineFormattedText(p.Inlines, text, foreground, h2Brush, inlineCodeBg);
             return p;
         }
 
-        private static Block CreateCodeBlock(string code)
+        private static Block CreateCodeBlock(string code, Brush codeBg, Brush borderBrush, Brush textBrush)
         {
-            var border = new Border
+            var p = new Paragraph
             {
-                Background = CodeBgBrush,
-                BorderBrush = BorderBrush,
+                Background = codeBg,
+                BorderBrush = borderBrush,
                 BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(6),
                 Padding = new Thickness(14, 10, 14, 10),
-                Margin = new Thickness(0, 8, 0, 10)
-            };
-
-            var tb = new TextBlock
-            {
-                Text = code,
+                Margin = new Thickness(0, 8, 0, 10),
                 FontFamily = CodeFont,
-                FontSize = 12.5,
-                Foreground = TextBrush,
-                TextWrapping = TextWrapping.Wrap
+                FontSize = 12.0,
+                Foreground = textBrush,
+                LineHeight = 18
             };
-
-            border.Child = tb;
-            return new BlockUIContainer(border);
+            p.Inlines.Add(new Run(code));
+            return p;
         }
 
-        private static Block CreateBlockQuote(string text)
+        private static Block CreateBlockQuote(string text, Brush quoteBg, Brush accentBrush, Brush quoteText, Brush h2Brush, Brush inlineCodeBg)
         {
-            var border = new Border
+            var p = new Paragraph
             {
-                Background = QuoteBgBrush,
-                BorderBrush = AccentBrush,
+                Background = quoteBg,
+                BorderBrush = accentBrush,
                 BorderThickness = new Thickness(3, 0, 0, 0),
-                CornerRadius = new CornerRadius(0, 4, 4, 0),
                 Padding = new Thickness(12, 6, 12, 6),
-                Margin = new Thickness(0, 6, 0, 8)
-            };
-
-            var tb = new TextBlock
-            {
+                Margin = new Thickness(0, 6, 0, 8),
                 FontFamily = TextFont,
-                FontSize = 13,
+                FontSize = 12.5,
                 FontStyle = FontStyles.Italic,
-                Foreground = MutedBrush,
-                TextWrapping = TextWrapping.Wrap
+                Foreground = quoteText,
+                LineHeight = 20
             };
-            tb.Inlines.Add(new Run(text));
-
-            border.Child = tb;
-            return new BlockUIContainer(border);
+            AddInlineFormattedText(p.Inlines, text, accentBrush, h2Brush, inlineCodeBg);
+            return p;
         }
 
-        private static Block CreateHorizontalRule()
+        private static Block CreateHorizontalRule(Brush borderBrush)
         {
             var rect = new Border
             {
                 Height = 1,
-                Background = BorderBrush,
+                Background = borderBrush,
                 Margin = new Thickness(0, 12, 0, 12)
             };
             return new BlockUIContainer(rect);
         }
 
-        private static Block CreateListItem(string text)
+        private static Block CreateListItem(string text, Brush accentBrush, Brush h2Brush, Brush inlineCodeBg)
         {
             var p = new Paragraph
             {
                 Margin = new Thickness(16, 2, 0, 2),
                 LineHeight = 20
             };
-            p.Inlines.Add(new Run("•  ") { Foreground = AccentBrush, FontWeight = FontWeights.Bold });
-            AddInlineFormattedText(p.Inlines, text);
+            p.Inlines.Add(new Run("•  ") { Foreground = accentBrush, FontWeight = FontWeights.Bold });
+            AddInlineFormattedText(p.Inlines, text, accentBrush, h2Brush, inlineCodeBg);
             return p;
         }
 
-        private static Block CreateNumberedListItem(string num, string text)
+        private static Block CreateNumberedListItem(string num, string text, Brush accentBrush, Brush h2Brush, Brush inlineCodeBg)
         {
             var p = new Paragraph
             {
                 Margin = new Thickness(16, 2, 0, 2),
                 LineHeight = 20
             };
-            p.Inlines.Add(new Run($"{num}.  ") { Foreground = AccentBrush, FontWeight = FontWeights.Bold });
-            AddInlineFormattedText(p.Inlines, text);
+            p.Inlines.Add(new Run($"{num}.  ") { Foreground = accentBrush, FontWeight = FontWeights.Bold });
+            AddInlineFormattedText(p.Inlines, text, accentBrush, h2Brush, inlineCodeBg);
             return p;
         }
 
-        private static void AddInlineFormattedText(InlineCollection inlines, string rawText)
+        private static void AddInlineFormattedText(InlineCollection inlines, string rawText, Brush accentBrush, Brush h2Brush, Brush inlineCodeBg)
         {
             if (string.IsNullOrEmpty(rawText)) return;
 
-            // Pattern for:
-            // 1. **bold**
-            // 2. *italic*
-            // 3. `inline code`
-            // 4. [text](url)
             var pattern = @"(\*\*(.*?)\*\*|\*(.*?)\*|`(.*?)`|\[(.*?)\]\((.*?)\))";
             var matches = Regex.Matches(rawText, pattern);
 
@@ -279,7 +276,7 @@ namespace AeroSpot.Worker.Services
 
                 if (m.Value.StartsWith("**") && m.Value.EndsWith("**"))
                 {
-                    inlines.Add(new Bold(new Run(m.Groups[2].Value)) { Foreground = H2Brush });
+                    inlines.Add(new Bold(new Run(m.Groups[2].Value)) { Foreground = h2Brush });
                 }
                 else if (m.Value.StartsWith("*") && m.Value.EndsWith("*"))
                 {
@@ -291,8 +288,8 @@ namespace AeroSpot.Worker.Services
                     {
                         FontFamily = CodeFont,
                         FontSize = 12,
-                        Background = InlineCodeBg,
-                        Foreground = AccentBrush
+                        Background = inlineCodeBg,
+                        Foreground = accentBrush
                     };
                     inlines.Add(run);
                 }
@@ -300,7 +297,7 @@ namespace AeroSpot.Worker.Services
                 {
                     string linkText = m.Groups[5].Value;
                     string linkUrl = m.Groups[6].Value;
-                    var linkRun = new Run(linkText) { Foreground = AccentBrush };
+                    var linkRun = new Run(linkText) { Foreground = accentBrush };
                     inlines.Add(new Bold(linkRun));
                 }
 

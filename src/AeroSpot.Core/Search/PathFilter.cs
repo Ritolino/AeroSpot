@@ -131,11 +131,24 @@ namespace AeroSpot.Core.Search
                 }
             }
 
+            // 2b. Esclusione file spazzatura, metadati AppleDouble macOS e file temporanei
+            string fileName = Path.GetFileName(lower);
+            if (!string.IsNullOrEmpty(fileName))
+            {
+                if (fileName.StartsWith("._", StringComparison.OrdinalIgnoreCase) ||
+                    fileName.StartsWith("~$", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(fileName, ".ds_store", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(fileName, "thumbs.db", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(fileName, "desktop.ini", StringComparison.OrdinalIgnoreCase))
+                {
+                    return false;
+                }
+            }
+
             // 3. Trattamento speciale cartella Windows: escluso dalla scansione generale
             string winDir = Environment.GetFolderPath(Environment.SpecialFolder.Windows).ToLowerInvariant();
             if (lower.StartsWith(winDir + "\\") || lower == winDir)
             {
-                string fileName = Path.GetFileName(lower);
                 foreach (var exe in AllowedWindowsExecutables)
                 {
                     if (string.Equals(fileName, exe, StringComparison.OrdinalIgnoreCase))
@@ -152,6 +165,21 @@ namespace AeroSpot.Core.Search
         public static bool IsReparsePointOrJunction(FileAttributes attributes)
         {
             return (attributes & FileAttributes.ReparsePoint) != 0;
+        }
+
+        public static IEnumerable<string> GetAllowedDriveLetters()
+        {
+            var list = new List<string>();
+            foreach (var c in _allowedDriveLetters)
+            {
+                if (char.IsUpper(c)) list.Add(c.ToString());
+            }
+            return list;
+        }
+
+        public static IEnumerable<string> GetExcludedSegments()
+        {
+            return _excludedSegments.ToArray();
         }
 
         public static IEnumerable<string> GetWhitelistedScanRoots()

@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Text;
 using System.Threading.Tasks;
@@ -7,6 +8,7 @@ using System.Windows.Media.Imaging;
 using AeroSpot.Core.Logging;
 using AeroSpot.Core.Preview;
 using AeroSpot.Core.Localization;
+using AeroSpot.Core.Search;
 
 namespace AeroSpot.Worker.Services
 {
@@ -17,9 +19,10 @@ namespace AeroSpot.Worker.Services
         Audio,
         Text,
         Markdown,
-        Pdf,
+        Html,
         Spreadsheet,
         PreviewHandler,
+        Pdf,
         Stl3D,
         Generic,
         Error
@@ -35,10 +38,10 @@ namespace AeroSpot.Worker.Services
         public string DetailsText { get; set; } = string.Empty;
         public string? FooterText { get; set; }
         public ImageSource? Image { get; set; }
-        public System.Collections.Generic.List<BitmapSource>? PdfPages { get; set; }
         public int PdfPageCount { get; set; }
         public double PdfWidth { get; set; }
         public double PdfHeight { get; set; }
+        public PdfSession? PdfSession { get; set; }
         public SpreadsheetModel? Spreadsheet { get; set; }
         public StlModel? StlModel { get; set; }
         public string? TextContent { get; set; }
@@ -47,6 +50,13 @@ namespace AeroSpot.Worker.Services
         public string? ErrorMessage { get; set; }
         public Guid PreviewHandlerClsid { get; set; } = Guid.Empty;
         public string? PreviewHandlerName { get; set; }
+        public int VideoRotation { get; set; }
+        public uint VideoWidth { get; set; }
+        public uint VideoHeight { get; set; }
+        public TimeSpan VideoDuration { get; set; }
+        public string? VideoAudioCodec { get; set; }
+        public int VideoAudioChannels { get; set; } = 2;
+        public bool IsBitstreamAudio { get; set; }
     }
 
     public struct FolderSizeResult
@@ -96,6 +106,19 @@ namespace AeroSpot.Worker.Services
                 }
             }
 
+            // Gestione schede Impostazioni (ms-settings: e aerospot:settings:)
+            if (!string.IsNullOrWhiteSpace(path) && (path.StartsWith("ms-settings:", StringComparison.OrdinalIgnoreCase) || path.StartsWith("aerospot:settings", StringComparison.OrdinalIgnoreCase)))
+            {
+                model.Type = PreviewType.Generic;
+                string lookupKey = path.Replace("ms-settings:", "").Replace("aerospot:settings:", "");
+                var settingMatch = SettingsSearchCatalog.Search(lookupKey, LocalizationService.CurrentLanguage, 1).FirstOrDefault();
+                model.Title = settingMatch != null ? settingMatch.GetTitle(LocalizationService.CurrentLanguage) : LocalizationService.Get("Spotlight_Category_Settings");
+                model.Subtitle = LocalizationService.Get("Spotlight_Category_Settings");
+                model.DetailsText = settingMatch != null ? settingMatch.GetDescription(LocalizationService.CurrentLanguage) : path;
+                model.FooterText = "↵ " + LocalizationService.Get("Preview_Hint_Open");
+                return model;
+            }
+
             if (string.IsNullOrWhiteSpace(path) || (!File.Exists(path) && !Directory.Exists(path)))
             {
                 model.Type = PreviewType.Error;
@@ -141,26 +164,38 @@ namespace AeroSpot.Worker.Services
                     {
                         var svgModel = await Task.Run(() =>
                         {
+                            // 1. Rendering vettoriale nativo ad alta fedeltà tramite SharpVectors
                             try
                             {
-                                // Tentativo rendering grafico raster ad alta definizione via IShellItemImageFactory
-                                var shellBitmap = IconService.GetImageFactoryBitmap(path, 1200);
-                                if (shellBitmap != null)
+                                var settings = new SharpVectors.Renderers.Wpf.WpfDrawingSettings
                                 {
+                                    IncludeRuntime = false,
+                                    TextAsGeometry = false
+                                };
+                                var reader = new SharpVectors.Converters.FileSvgReader(settings);
+                                var drawing = reader.Read(path);
+                                if (drawing != null)
+                                {
+                                    drawing.Freeze();
+                                    var drawingImage = new DrawingImage(drawing);
+                                    drawingImage.Freeze();
+
                                     model.Type = PreviewType.Image;
-                                    model.Image = shellBitmap;
-                                    model.Subtitle = $"SVG Vector Graphic • {sizeText}";
-                                    model.DetailsText = $"Format: SVG • {LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
+                                    model.Image = drawingImage;
+                                    int w = (int)Math.Round(drawingImage.Width);
+                                    int h = (int)Math.Round(drawingImage.Height);
+                                    model.Subtitle = w > 0 && h > 0 ? $"{w} × {h} • {sizeText} (SVG)" : $"SVG Vector • {sizeText}";
+                                    model.DetailsText = $"Format: SVG (Vector) • {LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
                                     model.FooterText = $"{LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
                                     return model;
                                 }
                             }
                             catch (Exception ex)
                             {
-                                AppLogger.Warn($"Rendering shell SVG non riuscito per {path}: {ex.Message}");
+                                AppLogger.Warn($"Rendering SharpVectors SVG non riuscito per {path}: {ex.Message}");
                             }
 
-                            // Fallback: visualizzazione codice sorgente XML dell'SVG
+                            // 2. Fallback: visualizzazione codice sorgente XML dell'SVG
                             try
                             {
                                 using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
@@ -191,26 +226,141 @@ namespace AeroSpot.Worker.Services
 
                     return await Task.Run(() =>
                     {
+                        var sw = Stopwatch.StartNew();
                         try
                         {
+                            // Per i file RAW fotografici, tenta prima l'estrazione ultra-rapida della preview JPEG incorporata
+                            if (IsRawExtension(ext))
+                            {
+                                if (TryExtractEmbeddedRawJpeg(path, out var rawBmp, out int rw, out int rh) && rawBmp != null)
+                                {
+                                    sw.Stop();
+                                    AppLogger.Debug($"[PreviewDiagnostic] RAW JPEG incorporato caricato in {sw.ElapsedMilliseconds} ms ({rw}x{rh}) da {path}");
+                                    model.Type = PreviewType.Image;
+                                    model.Image = rawBmp;
+                                    model.Subtitle = $"{rw} × {rh} • {sizeText} (RAW)";
+                                    model.DetailsText = $"Format: {ext.ToUpperInvariant().TrimStart('.')} • Embedded Preview • {LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
+                                    model.FooterText = $"{LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
+                                    return model;
+                                }
+                            }
+
+                            int origWidth = 0;
+                            int origHeight = 0;
+                            Rotation rotation = Rotation.Rotate0;
+
+                            // 1. Proba rapida dimensioni e orientamento EXIF dall'header (senza decodificare pixel)
+                            try
+                            {
+                                using (var probeStream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                                {
+                                    var decoder = BitmapDecoder.Create(probeStream, BitmapCreateOptions.DelayCreation, BitmapCacheOption.None);
+                                    if (decoder.Frames.Count > 0)
+                                    {
+                                        var frame = decoder.Frames[0];
+                                        origWidth = frame.PixelWidth;
+                                        origHeight = frame.PixelHeight;
+
+                                        if (frame.Metadata is BitmapMetadata metadata)
+                                        {
+                                            object? orientObj = null;
+                                            if (metadata.ContainsQuery("System.Photo.Orientation"))
+                                            {
+                                                orientObj = metadata.GetQuery("System.Photo.Orientation");
+                                            }
+                                            else if (metadata.ContainsQuery("/app1/ifd/{ushort=274}"))
+                                            {
+                                                orientObj = metadata.GetQuery("/app1/ifd/{ushort=274}");
+                                            }
+
+                                            if (orientObj is ushort orVal)
+                                            {
+                                                rotation = orVal switch
+                                                {
+                                                    3 => Rotation.Rotate180,
+                                                    6 => Rotation.Rotate90,
+                                                    8 => Rotation.Rotate270,
+                                                    _ => Rotation.Rotate0
+                                                };
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            catch { }
+
+                            // 2. Decodifica ottimizzata per il budget schermo (max 2560px)
                             using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
                             var bitmap = new BitmapImage();
                             bitmap.BeginInit();
                             bitmap.CacheOption = BitmapCacheOption.OnLoad;
                             bitmap.StreamSource = stream;
+
+                            const int maxPreviewDimension = 2560;
+                            if (origWidth > maxPreviewDimension || origHeight > maxPreviewDimension)
+                            {
+                                if (origWidth >= origHeight)
+                                {
+                                    bitmap.DecodePixelWidth = maxPreviewDimension;
+                                }
+                                else
+                                {
+                                    bitmap.DecodePixelHeight = maxPreviewDimension;
+                                }
+                            }
+
+                            if (rotation != Rotation.Rotate0)
+                            {
+                                bitmap.Rotation = rotation;
+                            }
+
                             bitmap.EndInit();
                             bitmap.Freeze(); // Consente il passaggio cross-thread sicuro
 
+                            sw.Stop();
+                            AppLogger.Debug($"[PreviewDiagnostic] Immagine caricata in {sw.ElapsedMilliseconds} ms ({origWidth}x{origHeight} -> {bitmap.PixelWidth}x{bitmap.PixelHeight}) da {path}");
+
                             model.Type = PreviewType.Image;
                             model.Image = bitmap;
-                            model.Subtitle = $"{bitmap.PixelWidth} × {bitmap.PixelHeight} • {sizeText}";
+                            int displayW = origWidth > 0 ? origWidth : bitmap.PixelWidth;
+                            int displayH = origHeight > 0 ? origHeight : bitmap.PixelHeight;
+                            if (rotation == Rotation.Rotate90 || rotation == Rotation.Rotate270)
+                            {
+                                int temp = displayW;
+                                displayW = displayH;
+                                displayH = temp;
+                            }
+                            model.Subtitle = $"{displayW} × {displayH} • {sizeText}";
                             model.DetailsText = $"Format: {ext.ToUpperInvariant().TrimStart('.')} • {LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
                             model.FooterText = $"{LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
                             return model;
                         }
                         catch (Exception ex)
                         {
-                            AppLogger.Warn($"Decodifica immagine non riuscita per {path}: {ex.Message}");
+                            AppLogger.Warn($"Decodifica WIC immagine non riuscita per {path}: {ex.Message}");
+
+                            // Gestione speciale a 3 livelli per formati RAW fotografici
+                            if (IsRawExtension(ext))
+                            {
+                                // Livello 2: Estrazione dell'anteprima JPEG incorporata
+                                if (TryExtractEmbeddedRawJpeg(path, out var rawBmp, out int rw, out int rh) && rawBmp != null)
+                                {
+                                    model.Type = PreviewType.Image;
+                                    model.Image = rawBmp;
+                                    model.Subtitle = $"{rw} × {rh} • {sizeText} (RAW)";
+                                    model.DetailsText = $"Format: {ext.ToUpperInvariant().TrimStart('.')} • Embedded Preview • {LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
+                                    model.FooterText = $"{LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
+                                    return model;
+                                }
+
+                                // Livello 3: Scheda metadati elegante e chiara
+                                model.Type = PreviewType.Generic;
+                                model.Subtitle = $"RAW Image ({ext.ToUpperInvariant().TrimStart('.')}) • {sizeText}";
+                                model.DetailsText = $"Formato: Foto RAW ({ext.ToUpperInvariant().TrimStart('.')})\nCodec WIC di sistema non disponibile.\n{LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
+                                model.FooterText = $"{LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
+                                return model;
+                            }
+
                             model.Type = PreviewType.Error;
                             model.ErrorMessage = "Impossibile decodificare l'anteprima dell'immagine. Il file potrebbe essere danneggiato o non supportato.";
                             model.Subtitle = $"Error • {sizeText}";
@@ -219,27 +369,64 @@ namespace AeroSpot.Worker.Services
                     });
                 }
 
-                // 2. Gestione Rapida e Reale PDF via Windows.Data.Pdf nativo (vettoriale ad altissima definizione)
+                // 2. Gestione Documenti PDF (Motore nativo Google PDFium ultra-veloce stile QuickLook)
                 if (ext == ".pdf")
                 {
+                    model.Type = PreviewType.Pdf;
+                    model.Subtitle = $"PDF Document • {sizeText}";
+                    model.DetailsText = $"Format: PDF • {LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
+                    model.FooterText = $"{LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
+
+                    // Inizializzazione istantanea (10-20ms) tramite Google PDFium (Docnet.Core)
                     try
                     {
-                        var pdfModel = await RenderPdfPageAsync(path, fileInfo);
-                        if (pdfModel != null)
+                        var session = PdfService.Open(path, defaultScale: 2.0);
+                        if (session != null)
                         {
-                            return pdfModel;
+                            model.PdfSession = session;
+                            model.PdfPageCount = session.PageCount;
+                            model.PdfWidth = session.OriginalWidth;
+                            model.PdfHeight = session.OriginalHeight;
+
+                            // Renderizza la prima pagina in ~12-15 ms
+                            model.Image = session.RenderPage(0);
+
+                            string pageSuffix = LocalizationService.CurrentLanguage == "it"
+                                ? $" ({session.PageCount} {(session.PageCount == 1 ? "pagina" : "pagine")})"
+                                : $" ({session.PageCount} {(session.PageCount == 1 ? "page" : "pages")})";
+                            model.Subtitle = $"PDF Document{pageSuffix} • {sizeText}";
+                            model.DetailsText = $"Format: PDF • {session.PageCount} pages • {LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
+                            model.FooterText = $"{session.PageCount} {(LocalizationService.CurrentLanguage == "it" ? "pagine" : "pages")} • {LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
                         }
                     }
                     catch (Exception ex)
                     {
-                        AppLogger.Warn($"Rendering PDF fallito per {path}: {ex.Message}");
+                        AppLogger.Debug($"Inizializzazione PDFium non riuscita per {path}: {ex.Message}");
                     }
+
+                    return model;
                 }
 
                 // 3. Gestione Video (.mp4, .mkv, .avi, .mov, .wmv, .webm, ecc.)
                 if (IsVideoExtension(ext))
                 {
                     model.Type = PreviewType.Video;
+                    try
+                    {
+                        var meta = await VideoMetadataService.GetMetadataAsync(path).ConfigureAwait(false);
+                        if (meta != null)
+                        {
+                            model.VideoRotation = meta.RotationDegrees;
+                            model.VideoWidth = meta.Width;
+                            model.VideoHeight = meta.Height;
+                            model.VideoDuration = meta.Duration;
+                            model.VideoAudioCodec = meta.AudioCodec;
+                            model.VideoAudioChannels = meta.AudioChannels;
+                            model.IsBitstreamAudio = meta.IsBitstreamAudio;
+                        }
+                    }
+                    catch { }
+
                     model.Subtitle = $"{LocalizationService.Get("Spotlight_Category_Video")} • {sizeText}";
                     model.DetailsText = $"Format: {ext.ToUpperInvariant().TrimStart('.')} • {LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
                     model.FooterText = $"{LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
@@ -256,34 +443,84 @@ namespace AeroSpot.Worker.Services
                     return model;
                 }
 
-                // 3c. Gestione Modelli 3D (.stl)
-                if (string.Equals(ext, ".stl", StringComparison.OrdinalIgnoreCase))
+                // 3c. Gestione Modelli 3D (.stl, .3mf)
+                if (string.Equals(ext, ".stl", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(ext, ".3mf", StringComparison.OrdinalIgnoreCase))
                 {
                     return await Task.Run(() =>
                     {
                         try
                         {
-                            var stl = StlLoader.Load(path);
+                            bool is3Mf = string.Equals(ext, ".3mf", StringComparison.OrdinalIgnoreCase);
+                            var stl = is3Mf ? ThreeMfLoader.Load(path) : StlLoader.Load(path);
                             if (stl != null && stl.TriangleCount > 0)
                             {
                                 model.Type = PreviewType.Stl3D;
                                 model.StlModel = stl;
+                                string formatLabel = is3Mf ? "3MF 3D" : "STL 3D";
                                 model.Subtitle = $"{LocalizationService.Get("Preview_Stl_Triangles", stl.TriangleCount)} • {sizeText}";
-                                model.DetailsText = $"STL 3D • Dim: {stl.SizeX:F1} × {stl.SizeY:F1} × {stl.SizeZ:F1} mm • {LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
+                                model.DetailsText = $"{formatLabel} • Dim: {stl.SizeX:F1} × {stl.SizeY:F1} × {stl.SizeZ:F1} mm • {LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
                                 model.FooterText = $"{LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
                                 return model;
+                            }
+
+                            // Fallback per file 3MF: se il parsing della geometria fallisce, tenta l'estrazione della thumbnail generata dallo slicer
+                            if (is3Mf)
+                            {
+                                var thumb = ThreeMfLoader.TryExtractThumbnail(path);
+                                if (thumb != null)
+                                {
+                                    model.Type = PreviewType.Image;
+                                    model.Image = thumb;
+                                    model.Subtitle = $"3MF Model (Thumbnail) • {sizeText}";
+                                    model.DetailsText = $"Format: 3MF • {LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
+                                    model.FooterText = $"{LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
+                                    return model;
+                                }
                             }
                         }
                         catch (Exception ex)
                         {
-                            AppLogger.Warn($"Errore parsing STL '{path}': {ex.Message}");
+                            AppLogger.Warn($"Errore parsing 3D '{path}': {ex.Message}");
                         }
 
                         model.Type = PreviewType.Error;
-                        model.ErrorMessage = "Impossibile caricare il modello 3D STL (file vuoto o corrotto).";
+                        model.ErrorMessage = string.Equals(ext, ".3mf", StringComparison.OrdinalIgnoreCase)
+                            ? "Impossibile caricare il modello 3D 3MF (geometria non valida o assente)."
+                            : "Impossibile caricare il modello 3D STL (file vuoto o corrotto).";
                         model.Subtitle = $"Error • {sizeText}";
                         return model;
                     });
+                }
+
+                // 3d. Gestione Documenti Web HTML (.html, .htm, .xhtml) con visualizzatore DirectX nativo
+                if (ext is ".html" or ".htm" or ".xhtml")
+                {
+                    model.Type = PreviewType.Html;
+                    model.Subtitle = $"HTML Document • {sizeText}";
+                    model.DetailsText = $"Format: HTML • {LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
+                    model.FooterText = $"{LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
+
+                    try
+                    {
+                        if (fileInfo.Length < 4 * 1024 * 1024)
+                        {
+                            model.TextContent = await File.ReadAllTextAsync(path);
+                        }
+                        else
+                        {
+                            using var reader = new StreamReader(path);
+                            char[] buffer = new char[64 * 1024];
+                            int read = await reader.ReadBlockAsync(buffer, 0, buffer.Length);
+                            model.TextContent = new string(buffer, 0, read) + "\n\n[... File HTML parziale per anteprima ...]";
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        model.TextContent = $"<!-- Errore lettura file: {ex.Message} -->";
+                    }
+
+                    return model;
                 }
 
                 // 4. Gestione Testo e Codice
@@ -345,9 +582,50 @@ namespace AeroSpot.Worker.Services
                     }
                 }
 
-                // 5. Gestione Documenti tramite Preview Handler di sistema (Office, RTF, ecc.)
+                // 4c. Gestione Documenti Word Nativi (.docx, .docm, .dotx) ad alte prestazioni (zero processi Office / aihost.exe)
+                if (ext is ".docx" or ".docm" or ".dotx")
+                {
+                    var docxData = await Task.Run(() => DocxReader.ReadDocx(path));
+                    if (docxData != null)
+                    {
+                        model.Type = PreviewType.Markdown;
+                        model.TextContent = !string.IsNullOrWhiteSpace(docxData.MarkdownContent)
+                            ? docxData.MarkdownContent
+                            : docxData.TextContent;
+                        string wordCountLabel = LocalizationService.CurrentLanguage == "it" ? "parole" : "words";
+                        string paraCountLabel = LocalizationService.CurrentLanguage == "it" ? "paragrafi" : "paragraphs";
+                        model.Subtitle = $"Word Document • {sizeText} • {docxData.WordCount} {wordCountLabel}";
+                        model.DetailsText = $"Format: {ext.ToUpperInvariant().TrimStart('.')} • {docxData.ParagraphCount} {paraCountLabel} • {LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
+                        model.FooterText = $"{docxData.ParagraphCount} {paraCountLabel} • {LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
+                        return model;
+                    }
+                }
+
+                // 5. Gestione esclusione file .ai da PreviewHandler COM difettosi (evita schermata nera)
+                if (ext == ".ai")
+                {
+                    model.Type = PreviewType.Generic;
+                    model.Subtitle = $"Adobe Illustrator Artwork • {sizeText}";
+                    string aiNoViewerMsg = LocalizationService.Get("Preview_NoViewer_Title", "AI");
+                    model.DetailsText = $"{aiNoViewerMsg}.\n{LocalizationService.Get("Preview_Path_Label")}: {path}";
+                    model.FooterText = $"{LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
+                    return model;
+                }
+
+                // 5b. Gestione Documenti tramite Preview Handler di sistema (Office, RTF, ecc.)
                 if (PreviewHandlerResolver.TryGetHandlerClsid(ext, out Guid clsid))
                 {
+                    // Blocca i formati Word legacy .doc/.dot dal caricamento COM per prevenire
+                    // la proliferazione di processi zombie WINWORD.EXE e aihost.exe
+                    if (ext is ".doc" or ".dot")
+                    {
+                        model.Type = PreviewType.Generic;
+                        model.Subtitle = $"Word Document • {sizeText}";
+                        model.DetailsText = $"Format: {ext.ToUpperInvariant().TrimStart('.')} • {LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
+                        model.FooterText = $"{LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
+                        return model;
+                    }
+
                     string friendlyName = PreviewHandlerResolver.GetHandlerFriendlyName(clsid) ?? "System Handler";
                     model.Type = PreviewType.PreviewHandler;
                     model.PreviewHandlerClsid = clsid;
@@ -390,77 +668,7 @@ namespace AeroSpot.Worker.Services
             }
         }
 
-        private static async Task<PreviewModel?> RenderPdfPageAsync(string path, FileInfo fileInfo)
-        {
-            try
-            {
-                var storageFile = await Windows.Storage.StorageFile.GetFileFromPathAsync(path);
-                var pdfDoc = await Windows.Data.Pdf.PdfDocument.LoadFromFileAsync(storageFile);
-                if (pdfDoc.PageCount == 0) return null;
 
-                double pdfWidth = 0;
-                double pdfHeight = 0;
-                try
-                {
-                    using var firstPage = pdfDoc.GetPage(0);
-                    pdfWidth = firstPage.Size.Width;
-                    pdfHeight = firstPage.Size.Height;
-                }
-                catch { }
-
-                var pages = new System.Collections.Generic.List<BitmapSource>();
-                // Rendering rapido delle prime pagine per apertura istantanea (< 100ms) ad altissima definizione
-                int maxPages = Math.Min((int)pdfDoc.PageCount, 5);
-
-                uint renderWidth = (uint)Math.Clamp(pdfWidth > 0 ? pdfWidth * 2.5 : 1800, 1600, 2200);
-                var options = new Windows.Data.Pdf.PdfPageRenderOptions
-                {
-                    DestinationWidth = renderWidth
-                };
-
-                for (uint i = 0; i < maxPages; i++)
-                {
-                    using var page = pdfDoc.GetPage(i);
-                    using var randomStream = new Windows.Storage.Streams.InMemoryRandomAccessStream();
-                    await page.RenderToStreamAsync(randomStream, options);
-
-                    using var netStream = System.IO.WindowsRuntimeStreamExtensions.AsStreamForRead(randomStream);
-                    var bitmap = new BitmapImage();
-                    bitmap.BeginInit();
-                    bitmap.CacheOption = BitmapCacheOption.OnLoad;
-                    bitmap.StreamSource = netStream;
-                    bitmap.EndInit();
-                    bitmap.Freeze();
-                    pages.Add(bitmap);
-                }
-
-                string sizeText = FormatFileSize(fileInfo.Length);
-                string pageSuffix = LocalizationService.CurrentLanguage == "it"
-                    ? (pdfDoc.PageCount > maxPages ? $" (prime {maxPages} di {pdfDoc.PageCount} pagine)" : $" ({pdfDoc.PageCount} {(pdfDoc.PageCount == 1 ? "pagina" : "pagine")})")
-                    : (pdfDoc.PageCount > maxPages ? $" (first {maxPages} of {pdfDoc.PageCount} pages)" : $" ({pdfDoc.PageCount} {(pdfDoc.PageCount == 1 ? "page" : "pages")})");
-
-                string pdfTitle = LocalizationService.Get("Preview_Pdf_Document");
-
-                return new PreviewModel
-                {
-                    Type = PreviewType.Pdf,
-                    PdfPages = pages,
-                    PdfPageCount = (int)pdfDoc.PageCount,
-                    PdfWidth = pdfWidth,
-                    PdfHeight = pdfHeight,
-                    FilePath = path,
-                    Title = fileInfo.Name,
-                    Subtitle = $"{pdfTitle}{pageSuffix} • {sizeText}",
-                    DetailsText = $"Format: PDF • {pdfDoc.PageCount} pages • {LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}",
-                    FooterText = $"{pdfDoc.PageCount} {(LocalizationService.CurrentLanguage == "it" ? "pagine" : "pages")} • {LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}"
-                };
-            }
-            catch (Exception ex)
-            {
-                AppLogger.Warn($"RenderPdfPageAsync error for {path}: {ex.Message}");
-                return null;
-            }
-        }
 
         private static bool IsImageExtension(string ext)
         {
@@ -474,6 +682,216 @@ namespace AeroSpot.Worker.Services
                 case ".gif":
                 case ".ico":
                 case ".svg":
+                case ".arw":
+                case ".dng":
+                case ".cr2":
+                case ".cr3":
+                case ".nef":
+                case ".orf":
+                case ".rw2":
+                case ".pef":
+                case ".raf":
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        public static bool TryExtractEmbeddedRawJpeg(string path, out BitmapSource? image, out int width, out int height)
+        {
+            image = null;
+            width = 0;
+            height = 0;
+            try
+            {
+                using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                int bytesToRead = (int)Math.Min(stream.Length, 16 * 1024 * 1024);
+                byte[] bytes = new byte[bytesToRead];
+                int totalRead = stream.Read(bytes, 0, bytesToRead);
+
+                int longestStart = -1;
+                int longestLen = 0;
+
+                for (int i = 0; i < totalRead - 4; i++)
+                {
+                    if (bytes[i] == 0xFF && bytes[i + 1] == 0xD8 && bytes[i + 2] == 0xFF)
+                    {
+                        // Possibile inizio JPEG (SOI). Cerca la fine (EOI: FF D9)
+                        for (int j = i + 1024; j < totalRead - 1; j++)
+                        {
+                            if (bytes[j] == 0xFF && bytes[j + 1] == 0xD9)
+                            {
+                                int len = (j + 2) - i;
+                                if (len > longestLen && len >= 50 * 1024)
+                                {
+                                    longestStart = i;
+                                    longestLen = len;
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (longestStart >= 0 && longestLen > 0)
+                {
+                    // Rilevamento orientamento EXIF (prima dal container TIFF del RAW, poi dall'APP1 del JPEG)
+                    int orientation = ExtractOrientationFromTiff(bytes, 0, totalRead);
+                    if (orientation <= 1)
+                    {
+                        orientation = ExtractOrientationFromJpegApp1(bytes, longestStart, longestLen);
+                    }
+
+                    Rotation rotation = orientation switch
+                    {
+                        3 => Rotation.Rotate180,
+                        6 => Rotation.Rotate90,
+                        8 => Rotation.Rotate270,
+                        _ => Rotation.Rotate0
+                    };
+
+                    using var ms = new MemoryStream(bytes, longestStart, longestLen);
+                    var bmp = new BitmapImage();
+                    bmp.BeginInit();
+                    bmp.CacheOption = BitmapCacheOption.OnLoad;
+                    bmp.StreamSource = ms;
+                    if (rotation != Rotation.Rotate0)
+                    {
+                        bmp.Rotation = rotation;
+                    }
+                    bmp.EndInit();
+                    bmp.Freeze();
+
+                    width = bmp.PixelWidth;
+                    height = bmp.PixelHeight;
+                    image = bmp;
+                    return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warn($"TryExtractEmbeddedRawJpeg fallito per {path}: {ex.Message}");
+            }
+            return false;
+        }
+
+        private static int ExtractOrientationFromTiff(byte[] data, int offset, int length)
+        {
+            try
+            {
+                if (data == null || offset < 0 || offset + 8 > length) return 1;
+
+                bool isLittleEndian;
+                if (data[offset] == 0x49 && data[offset + 1] == 0x49)
+                {
+                    isLittleEndian = true;
+                }
+                else if (data[offset] == 0x4D && data[offset + 1] == 0x4D)
+                {
+                    isLittleEndian = false;
+                }
+                else
+                {
+                    return 1;
+                }
+
+                ushort ReadUInt16(int pos)
+                {
+                    if (pos + 2 > length) return 0;
+                    return isLittleEndian
+                        ? (ushort)(data[pos] | (data[pos + 1] << 8))
+                        : (ushort)((data[pos] << 8) | data[pos + 1]);
+                }
+
+                uint ReadUInt32(int pos)
+                {
+                    if (pos + 4 > length) return 0;
+                    return isLittleEndian
+                        ? (uint)(data[pos] | (data[pos + 1] << 8) | (data[pos + 2] << 16) | (data[pos + 3] << 24))
+                        : (uint)((data[pos] << 24) | (data[pos + 1] << 16) | (data[pos + 2] << 8) | data[pos + 3]);
+                }
+
+                uint ifdOffset = ReadUInt32(offset + 4);
+                if (ifdOffset == 0 || offset + ifdOffset + 2 > length)
+                {
+                    return 1;
+                }
+
+                int ifdPos = (int)(offset + ifdOffset);
+                ushort numEntries = ReadUInt16(ifdPos);
+                ifdPos += 2;
+
+                for (int i = 0; i < numEntries && ifdPos + 12 <= length; i++, ifdPos += 12)
+                {
+                    ushort tag = ReadUInt16(ifdPos);
+                    if (tag == 0x0112) // Tag Orientation
+                    {
+                        ushort val = ReadUInt16(ifdPos + 8);
+                        if (val >= 1 && val <= 8)
+                        {
+                            return val;
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // Fallback silenzioso su orientamento standard
+            }
+            return 1;
+        }
+
+        private static int ExtractOrientationFromJpegApp1(byte[] data, int jpegStart, int jpegLen)
+        {
+            try
+            {
+                if (data == null || jpegStart < 0 || jpegLen < 16) return 1;
+                int limit = Math.Min(data.Length, jpegStart + jpegLen);
+                int p = jpegStart;
+                if (data[p] != 0xFF || data[p + 1] != 0xD8) return 1;
+                p += 2;
+
+                while (p + 4 <= limit)
+                {
+                    if (data[p] != 0xFF) break;
+                    byte marker = data[p + 1];
+                    if (marker == 0xDA || marker == 0xD9) break; // SOS o EOI
+                    ushort segLen = (ushort)((data[p + 2] << 8) | data[p + 3]);
+                    if (segLen < 2) break;
+
+                    if (marker == 0xE1 && p + 10 <= limit)
+                    {
+                        if (data[p + 4] == 'E' && data[p + 5] == 'x' && data[p + 6] == 'i' && data[p + 7] == 'f' &&
+                            data[p + 8] == 0 && data[p + 9] == 0)
+                        {
+                            int orient = ExtractOrientationFromTiff(data, p + 10, limit);
+                            if (orient > 1) return orient;
+                        }
+                    }
+
+                    p += 2 + segLen;
+                }
+            }
+            catch
+            {
+                // Fallback silenzioso
+            }
+            return 1;
+        }
+
+        public static bool IsRawExtension(string ext)
+        {
+            switch (ext?.ToLowerInvariant())
+            {
+                case ".arw":
+                case ".dng":
+                case ".cr2":
+                case ".cr3":
+                case ".nef":
+                case ".orf":
+                case ".rw2":
+                case ".pef":
+                case ".raf":
                     return true;
                 default:
                     return false;
@@ -599,8 +1017,6 @@ namespace AeroSpot.Worker.Services
                 case ".ini":
                 case ".cs":
                 case ".xml":
-                case ".html":
-                case ".htm":
                 case ".yaml":
                 case ".yml":
                 case ".toml":

@@ -6,7 +6,7 @@ namespace AeroSpot.Core.Search
 {
     public static class SearchRanker
     {
-        public static int CalculateScore(IndexedItem item, string query)
+        public static int CalculateScore(IndexedItem item, string query, List<string>? categoryPriority = null, bool prioritizeExactMatches = true)
         {
             if (string.IsNullOrWhiteSpace(query))
             {
@@ -58,34 +58,89 @@ namespace AeroSpot.Core.Search
                 score += 50;
             }
 
-            // Se c'è corrispondenza, applica i bonus e le ponderazioni
+            // Se c'è corrispondenza, applica i bonus di gerarchia categoria e le ponderazioni
             if (score > 0)
             {
-                bool isExecutableOrApp = item.IsApp ||
-                                        string.Equals(item.Category, "Applicazione", StringComparison.OrdinalIgnoreCase) ||
-                                        item.FullPath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ||
-                                        item.FullPath.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase);
-
-                if (isExecutableOrApp)
+                // Se la gerarchia mista è attiva, garantisce che i file o cartelle con il nome esatto abbiano sempre precedenza assoluta
+                // rispetto a file la cui corrispondenza è solo nella cartella genitrice (path-only match)
+                if (prioritizeExactMatches)
                 {
-                    // Priorità assoluta ai programmi rispetto alle cartelle o documenti
-                    score += 1000;
+                    string titleWithoutExt = title.Contains('.') ? System.IO.Path.GetFileNameWithoutExtension(title) : title;
+                    bool isExactTitle = string.Equals(title, q, StringComparison.OrdinalIgnoreCase) ||
+                                       string.Equals(titleWithoutExt, q, StringComparison.OrdinalIgnoreCase);
 
-                    // Se il nome dell'applicazione contiene la query come parola (es. "Photoshop" in "Adobe Photoshop 2024")
+                    if (isExactTitle)
+                    {
+                        score += 30000;
+                    }
+                    else if (title.StartsWith(q, StringComparison.OrdinalIgnoreCase) || titleWithoutExt.StartsWith(q, StringComparison.OrdinalIgnoreCase))
+                    {
+                        score += 15000;
+                    }
+                    else if (HasWordStartingWith(title, q))
+                    {
+                        score += 10000;
+                    }
+                    else if (title.IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        score += 5000;
+                    }
+                    // Le corrispondenze solo nel percorso (path-only) ricevono +0 tier bonus
+                }
+
+                string cat = (item.IsApp ||
+                              string.Equals(item.Category, "Applicazione", StringComparison.OrdinalIgnoreCase) ||
+                              item.FullPath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ||
+                              item.FullPath.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase))
+                    ? "Applicazione"
+                    : item.Category;
+
+                var priorityList = categoryPriority ?? Config.AppConfig.GetDefaultCategoryPriority();
+                int catIndex = priorityList.FindIndex(c => string.Equals(c, cat, StringComparison.OrdinalIgnoreCase));
+                if (catIndex >= 0)
+                {
+                    // L'elemento in cima alla gerarchia (indice 0) riceve il bonus massimo
+                    int priorityBonus = Math.Max(0, (priorityList.Count - catIndex) * 1200);
+                    score += priorityBonus;
+                }
+                else
+                {
+                    score += 500;
+                }
+
+                if (string.Equals(cat, "Applicazione", StringComparison.OrdinalIgnoreCase))
+                {
                     if (HasWordStartingWith(title, q))
                     {
                         score += 300;
                     }
                 }
-                else if (string.Equals(item.Category, "Cartella", StringComparison.OrdinalIgnoreCase))
-                {
-                    // Penalizza le cartelle rispetto alle applicazioni
-                    score -= 300;
-                }
 
                 // Penalità lunghezza (preferisce corrispondenze più dense e compatte)
                 int lengthDiff = Math.Abs(title.Length - q.Length);
                 score -= Math.Min(lengthDiff, 50);
+
+                // Bonus recency/freschezza proporzionale (max 40 punti)
+                // Consente ai file modificati più di recente di prevalere tra corrispondenze analoghe (es. "Capitolo 12" vs "Capitolo 1")
+                // senza intaccare i tier di corrispondenza o gerarchia (separati da >= 1200 punti).
+                if (item.LastModifiedUtcTicks > 0)
+                {
+                    long nowTicks = DateTime.UtcNow.Ticks;
+                    if (item.LastModifiedUtcTicks <= nowTicks)
+                    {
+                        double daysAgo = (nowTicks - item.LastModifiedUtcTicks) / (double)TimeSpan.TicksPerDay;
+                        int recencyBonus = daysAgo switch
+                        {
+                            <= 1.0 => 40,
+                            <= 7.0 => 30,
+                            <= 30.0 => 20,
+                            <= 180.0 => 10,
+                            <= 365.0 => 5,
+                            _ => 0
+                        };
+                        score += recencyBonus;
+                    }
+                }
             }
 
             return Math.Max(0, score);
@@ -119,12 +174,12 @@ namespace AeroSpot.Core.Search
             return true;
         }
 
-        public static List<IndexedItem> Rank(IEnumerable<IndexedItem> candidates, string query, int maxResults = 10)
+        public static List<IndexedItem> Rank(IEnumerable<IndexedItem> candidates, string query, int maxResults = 10, List<string>? categoryPriority = null, bool prioritizeExactMatches = true)
         {
             var scored = new List<IndexedItem>();
             foreach (var item in candidates)
             {
-                item.SearchScore = CalculateScore(item, query);
+                item.SearchScore = CalculateScore(item, query, categoryPriority, prioritizeExactMatches);
                 if (item.SearchScore > 0 || string.IsNullOrWhiteSpace(query))
                 {
                     scored.Add(item);
@@ -133,6 +188,7 @@ namespace AeroSpot.Core.Search
 
             return scored
                 .OrderByDescending(i => i.SearchScore)
+                .ThenByDescending(i => i.LastModifiedUtcTicks)
                 .ThenBy(i => i.Title.Length)
                 .ThenBy(i => i.Title, StringComparer.OrdinalIgnoreCase)
                 .Take(maxResults)

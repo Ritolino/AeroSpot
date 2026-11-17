@@ -65,7 +65,8 @@ namespace AeroSpot.Tests
                 KeepWorkerWarm = false
             };
 
-            using var manager = new WorkerManager(config);
+            string pipeName = $"AeroSpot_TestPipe_Crash_{Guid.NewGuid():N}";
+            using var manager = new WorkerManager(config, pipeName);
 
             // 1. Avvia inizialmente il Worker
             bool startedFirst = await manager.ShowLauncherAsync();

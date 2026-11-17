@@ -46,7 +46,15 @@ if (-not (Test-Path $TargetDir)) {
 # 1. File Radice Gestiti da Progetto
 $rootFiles = @(
     "AeroSpot.sln",
-    "Directory.Build.props"
+    "Directory.Build.props",
+    "CHANGELOG.md",
+    "README.md",
+    "README.it.md",
+    "STATUS.md",
+    "SPEC.md",
+    "STORICO_DECISIONI_E_PROBLEMI.md",
+    "STRUCTURE.md",
+    "THIRD_PARTY_NOTICES.md"
 )
 
 Write-Host "`n[1/4] Sincronizzazione file radice gestiti..." -ForegroundColor Yellow

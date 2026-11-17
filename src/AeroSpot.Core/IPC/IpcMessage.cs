@@ -20,6 +20,8 @@ namespace AeroSpot.Core.IPC
         RefreshIndex = 15,
         PreviewOpened = 16,
         PreviewClosed = 17,
+        HidePreview = 18,
+        CloseAll = 19,
         CloseWorker = 20,
         WorkerReady = 30,
         WorkerState = 31,

@@ -11,10 +11,13 @@ namespace AeroSpot.Host.Services
 {
     public sealed class WorkerManager : IDisposable
     {
-        private readonly AppConfig _config;
+        private AppConfig _config;
         private readonly NamedPipeHostServer _pipeServer;
+        private readonly string? _customPipeName;
         private Process? _workerProcess;
         private readonly object _lock = new object();
+        private readonly SemaphoreSlim _showLauncherLock = new SemaphoreSlim(1, 1);
+        private int _pendingShowLauncherCount;
         private readonly TaskCompletionSource<bool> _workerReadyTcs = new TaskCompletionSource<bool>();
         private bool _isDisposed;
 
@@ -26,10 +29,16 @@ namespace AeroSpot.Host.Services
         public event Action<string>? PreviewOpened;
         public event Action? PreviewClosed;
 
-        public WorkerManager(AppConfig config)
+        public void UpdateConfig(AppConfig config)
         {
             _config = config;
-            _pipeServer = new NamedPipeHostServer();
+        }
+
+        public WorkerManager(AppConfig config, string? customPipeName = null)
+        {
+            _config = config;
+            _customPipeName = customPipeName;
+            _pipeServer = new NamedPipeHostServer(customPipeName);
             _pipeServer.ClientConnected += OnClientConnected;
             _pipeServer.ClientDisconnected += OnClientDisconnected;
             _pipeServer.MessageReceived += OnMessageReceived;
@@ -86,7 +95,7 @@ namespace AeroSpot.Host.Services
             }
         }
 
-        public async Task<bool> EnsureWorkerStartedAsync(int timeoutMs = 8000)
+        public async Task<bool> EnsureWorkerStartedAsync(int timeoutMs = 25000)
         {
             lock (_lock)
             {
@@ -110,10 +119,17 @@ namespace AeroSpot.Host.Services
                     }
 
                     AppLogger.Info($"Avvio processo Worker: {workerExe}");
+                    string launchArgs = $"--timeout {_config.WorkerIdleTimeoutSeconds}";
+                    launchArgs += _config.KeepWorkerWarm ? " --keep-warm" : " --no-keep-warm";
+                    if (!string.IsNullOrEmpty(_customPipeName))
+                    {
+                        launchArgs += $" --pipe {_customPipeName}";
+                    }
+
                     var psi = new ProcessStartInfo
                     {
                         FileName = workerExe,
-                        Arguments = $"--timeout {_config.WorkerIdleTimeoutSeconds}",
+                        Arguments = launchArgs,
                         UseShellExecute = false,
                         CreateNoWindow = true,
                         WorkingDirectory = Path.GetDirectoryName(workerExe)
@@ -143,11 +159,18 @@ namespace AeroSpot.Host.Services
                 }
             }
 
-            // Attesa della connessione IPC
-            var cts = new CancellationTokenSource(timeoutMs);
-            while (!IsIpcConnected && !cts.IsCancellationRequested)
+            // Attesa della connessione IPC senza lanciare eccezioni se il timeout scade
+            using var cts = new CancellationTokenSource(timeoutMs);
+            try
             {
-                await Task.Delay(50, cts.Token).ConfigureAwait(false);
+                while (!IsIpcConnected && !cts.IsCancellationRequested)
+                {
+                    await Task.Delay(50, cts.Token).ConfigureAwait(false);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Timeout attesa completato
             }
 
             return IsIpcConnected;
@@ -158,6 +181,14 @@ namespace AeroSpot.Host.Services
 
         public async Task<bool> ShowLauncherAsync()
         {
+            if (Interlocked.Increment(ref _pendingShowLauncherCount) > 1)
+            {
+                AppLogger.Info("Richiesta ShowLauncher ignorata: un'operazione ShowLauncher è già in corso.");
+                Interlocked.Decrement(ref _pendingShowLauncherCount);
+                return true;
+            }
+
+            await _showLauncherLock.WaitAsync().ConfigureAwait(false);
             var sw = Stopwatch.StartNew();
             bool wasCold = !IsWorkerRunning || !IsIpcConnected;
             try
@@ -167,6 +198,14 @@ namespace AeroSpot.Host.Services
                 {
                     AppLogger.Warn("Impossibile mostrare il launcher: Worker non pronto.");
                     return false;
+                }
+
+                lock (_lock)
+                {
+                    if (_workerProcess != null && !_workerProcess.HasExited)
+                    {
+                        try { AeroSpot.Core.Native.Win32.AllowSetForegroundWindow((uint)_workerProcess.Id); } catch { }
+                    }
                 }
 
                 bool sent = await _pipeServer.SendMessageAsync(new IpcMessage(IpcMessageType.ShowLauncher)).ConfigureAwait(false);
@@ -189,6 +228,11 @@ namespace AeroSpot.Host.Services
                 AppLogger.Error("Errore nell'invio del comando ShowLauncher.", ex);
                 return false;
             }
+            finally
+            {
+                Interlocked.Decrement(ref _pendingShowLauncherCount);
+                _showLauncherLock.Release();
+            }
         }
 
         public async Task<bool> ShowPreviewAsync(string filePath)
@@ -202,6 +246,14 @@ namespace AeroSpot.Host.Services
                 {
                     AppLogger.Warn("Impossibile mostrare l'anteprima: Worker non pronto.");
                     return false;
+                }
+
+                lock (_lock)
+                {
+                    if (_workerProcess != null && !_workerProcess.HasExited)
+                    {
+                        try { AeroSpot.Core.Native.Win32.AllowSetForegroundWindow((uint)_workerProcess.Id); } catch { }
+                    }
                 }
 
                 bool sent = await _pipeServer.SendMessageAsync(new IpcMessage(IpcMessageType.ShowPreview, filePath)).ConfigureAwait(false);
@@ -222,6 +274,34 @@ namespace AeroSpot.Host.Services
             {
                 sw.Stop();
                 AppLogger.Error($"Errore nell'invio del comando ShowPreview per {filePath}.", ex);
+                return false;
+            }
+        }
+
+        public async Task<bool> HidePreviewAsync()
+        {
+            if (!IsWorkerRunning || !IsIpcConnected) return false;
+            try
+            {
+                return await _pipeServer.SendMessageAsync(new IpcMessage(IpcMessageType.HidePreview)).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error("Errore nell'invio del comando HidePreview.", ex);
+                return false;
+            }
+        }
+
+        public async Task<bool> CloseAllAsync()
+        {
+            if (!IsWorkerRunning || !IsIpcConnected) return false;
+            try
+            {
+                return await _pipeServer.SendMessageAsync(new IpcMessage(IpcMessageType.CloseAll)).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error("Errore nell'invio del comando CloseAll.", ex);
                 return false;
             }
         }

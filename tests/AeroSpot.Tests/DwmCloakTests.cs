@@ -21,7 +21,7 @@ namespace AeroSpot.Tests
         {
             var t = new Thread(() =>
             {
-                if (Application.Current == null) new Application();
+                if (Application.Current == null) new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
 
                 var win = new Window
                 {
@@ -61,7 +61,7 @@ namespace AeroSpot.Tests
         {
             var t = new Thread(() =>
             {
-                if (Application.Current == null) new Application();
+                if (Application.Current == null) new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
 
                 var win = new Window
                 {

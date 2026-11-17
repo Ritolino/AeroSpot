@@ -34,4 +34,11 @@
     <ProjectReference Include="..\AeroSpot.Core\AeroSpot.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="FFMpegCore" Version="5.5.0" />
+    <PackageReference Include="FFMpegInstaller.Windows.x64" Version="0.1.10" />
+    <PackageReference Include="Docnet.Core" Version="2.6.0" />
+    <PackageReference Include="SharpVectors.Wpf" Version="1.8.6" />
+  </ItemGroup>
+
 </Project>

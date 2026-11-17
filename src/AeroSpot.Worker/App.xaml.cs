@@ -14,6 +14,7 @@ namespace AeroSpot.Worker
     public partial class App : Application
     {
         public static bool IsShuttingDown { get; private set; }
+        public static MainWindow? MainLauncherWindow => (Current as App)?._mainWindow;
 
         private AppConfig _config = null!;
         private NamedPipeWorkerClient? _ipcClient;
@@ -23,6 +24,7 @@ namespace AeroSpot.Worker
         private DispatcherTimer? _idleTimer;
         private DispatcherTimer? _ramGraceTimer;
         private int _remainingIdleSeconds;
+        private long _lastShowMainWindowTicks;
 
         protected override async void OnStartup(StartupEventArgs e)
         {
@@ -31,21 +33,33 @@ namespace AeroSpot.Worker
             AppLogger.Initialize("Worker");
             AppLogger.Info("AeroSpot.Worker avviato (processo unificato Launcher + QuickLook + Impostazioni).");
 
+            StartupManager.EnsureBrowserEmulation();
             _config = AppConfig.Load();
             AeroSpot.Core.Localization.LocalizationService.Initialize(_config.Language);
             PathFilter.Configure(_config.IncludedDrives, _config.ExcludedDirectoryNames);
 
+            string? customPipeName = null;
             for (int i = 0; i < e.Args.Length; i++)
             {
                 if (e.Args[i] == "--timeout" && i + 1 < e.Args.Length && int.TryParse(e.Args[i + 1], out int t) && t > 0)
                 {
                     _config.WorkerIdleTimeoutSeconds = t;
-                    _config.KeepWorkerWarm = false;
                     AppLogger.Info($"Timeout di inattività configurato da parametro: {t}s");
                 }
                 else if (e.Args[i] == "--no-keep-warm")
                 {
                     _config.KeepWorkerWarm = false;
+                    AppLogger.Info("Parametro --no-keep-warm: KeepWorkerWarm disabilitato.");
+                }
+                else if (e.Args[i] == "--keep-warm")
+                {
+                    _config.KeepWorkerWarm = true;
+                    AppLogger.Info("Parametro --keep-warm: KeepWorkerWarm abilitato.");
+                }
+                else if (e.Args[i] == "--pipe" && i + 1 < e.Args.Length)
+                {
+                    customPipeName = e.Args[i + 1];
+                    AppLogger.Info($"Pipe IPC personalizzata: {customPipeName}");
                 }
             }
 
@@ -78,20 +92,16 @@ namespace AeroSpot.Worker
                     _ = _ipcClient.SendMessageAsync(new IpcMessage(IpcMessageType.PreviewClosed));
                 }
             };
+            _previewWindow.FileLaunched += (path) =>
+            {
+                _mainWindow?.ViewModel.RecordRecentItem(path);
+            };
 
             if (Array.Exists(e.Args, a => string.Equals(a, "--benchmark-cold-start", StringComparison.OrdinalIgnoreCase)))
             {
                 Shutdown(0);
                 return;
             }
-
-            // Inizializza la finestra delle Impostazioni
-            _settingsWindow = new SettingsWindow();
-            _settingsWindow.ConfigSaved += OnConfigSaved;
-            _settingsWindow.IsVisibleChanged += (s, ev) =>
-            {
-                if (!_settingsWindow.IsVisible) CheckIdleCountdown();
-            };
 
             // Setup idle timer
             _idleTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
@@ -119,7 +129,7 @@ namespace AeroSpot.Worker
             };
 
             // Connect IPC
-            _ipcClient = new NamedPipeWorkerClient();
+            _ipcClient = new NamedPipeWorkerClient(customPipeName);
             _ipcClient.Connected += OnIpcConnected;
             _ipcClient.Disconnected += OnIpcDisconnected;
             _ipcClient.MessageReceived += OnIpcMessageReceived;
@@ -148,13 +158,13 @@ namespace AeroSpot.Worker
         {
             AppLogger.Info("Worker: Host disconnesso.");
             _mainWindow?.SetIpcStatus("Disconnesso dall'Host");
-            Dispatcher.Invoke(() => ShutdownWorker("Host disconnesso"));
+            Dispatcher.InvokeAsync(() => ShutdownWorker("Host disconnesso"));
         }
 
         private void OnIpcMessageReceived(IpcMessage msg)
         {
             AppLogger.Info($"Worker: Ricevuto messaggio IPC Type={msg.Type}, Payload={msg.Payload}");
-            Dispatcher.Invoke(() =>
+            Dispatcher.InvokeAsync(() =>
             {
                 switch (msg.Type)
                 {
@@ -166,6 +176,12 @@ namespace AeroSpot.Worker
                         break;
                     case IpcMessageType.ShowPreview:
                         ShowPreviewWindow(msg.Payload);
+                        break;
+                    case IpcMessageType.HidePreview:
+                        _previewWindow?.HidePreview();
+                        break;
+                    case IpcMessageType.CloseAll:
+                        OnPreviewCloseAllRequested();
                         break;
                     case IpcMessageType.ShowSettings:
                         ShowSettingsWindow();
@@ -188,10 +204,17 @@ namespace AeroSpot.Worker
             {
                 if (_mainWindow.IsVisible)
                 {
+                    // Ignora impulsi doppi di ShowLauncher ricevuti entro 180ms dall'apertura
+                    if (Environment.TickCount64 - _lastShowMainWindowTicks < 180)
+                    {
+                        AppLogger.Info("ShowMainWindow: ignorato impulso ShowLauncher ravvicinato (<180ms dall'apertura).");
+                        return;
+                    }
                     HideMainWindow();
                     return;
                 }
 
+                _lastShowMainWindowTicks = Environment.TickCount64;
                 _mainWindow.ShowOnActiveMonitor();
                 _mainWindow.SetIdleStatus("Inattivo (Finestra visibile e attiva)");
             }
@@ -201,9 +224,20 @@ namespace AeroSpot.Worker
         {
             if (_mainWindow != null)
             {
+                _mainWindow.ViewModel?.OnSpotlightHidden();
+                _mainWindow.PrepareForHide();
                 _mainWindow.Hide();
             }
             CheckIdleCountdown();
+
+            bool any = (_mainWindow != null && _mainWindow.IsVisible) 
+                || (_previewWindow != null && _previewWindow.IsPreviewVisible)
+                || (_settingsWindow != null && _settingsWindow.IsVisible);
+            if (!any)
+            {
+                _ramGraceTimer?.Stop();
+                _ramGraceTimer?.Start();
+            }
         }
 
         private void ShowPreviewWindow(string filePath, bool isFromSpotlight = false)
@@ -258,16 +292,25 @@ namespace AeroSpot.Worker
         {
             _ramGraceTimer?.Stop();
             StopIdleCountdown();
+            HideMainWindow();
+
             if (_settingsWindow == null)
             {
                 _settingsWindow = new SettingsWindow();
                 _settingsWindow.ConfigSaved += OnConfigSaved;
+                _settingsWindow.IsVisibleChanged += (s, ev) =>
+                {
+                    if (!_settingsWindow.IsVisible) CheckIdleCountdown();
+                };
             }
+
+            _settingsWindow.ResetStatusMessage();
             _settingsWindow.ReloadSettings();
             _settingsWindow.Show();
+            _settingsWindow.Activate();
+
             IntPtr hWnd = new System.Windows.Interop.WindowInteropHelper(_settingsWindow).EnsureHandle();
             Win32.SetForegroundWindow(hWnd);
-            _settingsWindow.Activate();
         }
 
         private async void OnConfigSaved(AppConfig newConfig)
@@ -276,6 +319,18 @@ namespace AeroSpot.Worker
             _remainingIdleSeconds = _config.WorkerIdleTimeoutSeconds;
             AeroSpot.Core.Localization.LocalizationService.Initialize(_config.Language);
             PathFilter.Configure(_config.IncludedDrives, _config.ExcludedDirectoryNames);
+            _mainWindow?.ViewModel?.ReloadConfig();
+            _mainWindow?.UpdateConfig(_config);
+            _previewWindow?.UpdateConfig(_config);
+            if (_config.KeepWorkerWarm)
+            {
+                _idleTimer?.Stop();
+                _mainWindow?.SetIdleStatus("Attivo (Sempre in memoria)");
+            }
+            else
+            {
+                CheckIdleCountdown();
+            }
             AppLogger.Info("Configurazione applicata nel Worker. Invio notifica ConfigReloaded all'Host...");
             if (_ipcClient != null && _ipcClient.IsConnected)
             {
@@ -296,6 +351,13 @@ namespace AeroSpot.Worker
 
         private void StartIdleCountdown()
         {
+            if (_config.KeepWorkerWarm)
+            {
+                _idleTimer?.Stop();
+                _mainWindow?.SetIdleStatus("Attivo (Sempre in memoria)");
+                return;
+            }
+
             _remainingIdleSeconds = _config.WorkerIdleTimeoutSeconds;
             _idleTimer?.Start();
             UpdateIdleText();
@@ -310,14 +372,16 @@ namespace AeroSpot.Worker
 
         private void IdleTimer_Tick(object? sender, EventArgs e)
         {
+            if (_config.KeepWorkerWarm)
+            {
+                _idleTimer?.Stop();
+                _mainWindow?.SetIdleStatus("Attivo (Sempre in memoria)");
+                return;
+            }
+
             bool anyVisible = (_mainWindow != null && _mainWindow.IsVisible) 
                 || (_previewWindow != null && _previewWindow.IsPreviewVisible)
                 || (_settingsWindow != null && _settingsWindow.IsVisible);
-
-            if (_config.KeepWorkerWarm)
-            {
-                return; // Rimane residente in memoria per reattività istantanea (gestito da _ramGraceTimer per la memoria)
-            }
 
             if (anyVisible)
             {
@@ -338,7 +402,14 @@ namespace AeroSpot.Worker
 
         private void UpdateIdleText()
         {
-            _mainWindow?.SetIdleStatus($"In corso: arresto tra {_remainingIdleSeconds}s se inattivo");
+            if (_config.KeepWorkerWarm)
+            {
+                _mainWindow?.SetIdleStatus("Attivo (Sempre in memoria)");
+            }
+            else
+            {
+                _mainWindow?.SetIdleStatus($"In corso: arresto tra {_remainingIdleSeconds}s se inattivo");
+            }
         }
 
         private void ShutdownWorker(string reason)

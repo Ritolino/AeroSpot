@@ -120,17 +120,46 @@ namespace AeroSpot.Tests
         [TestMethod]
         public void MultiWordSearch_MatchesAllTerms()
         {
-            var vm = new LauncherViewModel();
+            string tempDb = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"AeroSpot_MultiWordTest_{Guid.NewGuid():N}.db");
+            try
+            {
+                using (var db = new AeroSpot.Core.Search.SqliteIndexDatabase(tempDb))
+                {
+                    db.UpsertBatch(new System.Collections.Generic.List<AeroSpot.Core.Search.IndexedItem>
+                    {
+                        new AeroSpot.Core.Search.IndexedItem
+                        {
+                            Title = "AeroSpot — Roadmap",
+                            FullPath = @"E:\Antigravity\AeroSpot\Progetto\ROADMAP.md",
+                            Category = "Documento"
+                        }
+                    });
 
-            // Cerca "aero roadmap"
-            vm.SearchText = "aero roadmap";
-            Assert.IsNotEmpty(vm.FilteredResults);
-            Assert.IsTrue(vm.FilteredResults.Any(r => r.Title.Contains("Roadmap", StringComparison.OrdinalIgnoreCase) || r.Subtitle.Contains("ROADMAP", StringComparison.OrdinalIgnoreCase)));
+                    var vm = new LauncherViewModel(db);
 
-            // Cerca termini in ordine inverso: "roadmap aero"
-            vm.SearchText = "roadmap aero";
-            Assert.IsNotEmpty(vm.FilteredResults);
-            Assert.IsTrue(vm.FilteredResults.Any(r => r.Title.Contains("Roadmap", StringComparison.OrdinalIgnoreCase) || r.Subtitle.Contains("ROADMAP", StringComparison.OrdinalIgnoreCase)));
+                    // Cerca "aero roadmap"
+                    vm.SearchText = "aero roadmap";
+                    Assert.IsNotEmpty(vm.FilteredResults);
+                    Assert.IsTrue(vm.FilteredResults.Any(r => r.Title.Contains("Roadmap", StringComparison.OrdinalIgnoreCase) || r.Subtitle.Contains("ROADMAP", StringComparison.OrdinalIgnoreCase)));
+
+                    // Cerca termini in ordine inverso: "roadmap aero"
+                    vm.SearchText = "roadmap aero";
+                    Assert.IsNotEmpty(vm.FilteredResults);
+                    Assert.IsTrue(vm.FilteredResults.Any(r => r.Title.Contains("Roadmap", StringComparison.OrdinalIgnoreCase) || r.Subtitle.Contains("ROADMAP", StringComparison.OrdinalIgnoreCase)));
+                }
+            }
+            finally
+            {
+                try
+                {
+                    if (System.IO.File.Exists(tempDb)) System.IO.File.Delete(tempDb);
+                    string wal = tempDb + "-wal";
+                    if (System.IO.File.Exists(wal)) System.IO.File.Delete(wal);
+                    string shm = tempDb + "-shm";
+                    if (System.IO.File.Exists(shm)) System.IO.File.Delete(shm);
+                }
+                catch { }
+            }
         }
 
         [TestMethod]
@@ -160,6 +189,26 @@ namespace AeroSpot.Tests
             // Secondo escape: testo già vuoto -> richiede hide
             OnEscape();
             Assert.IsTrue(hideRequested);
+        }
+
+        [TestMethod]
+        public void ResetSearchImmediate_ClearsSearchTextAndFilteredResultsSynchronously()
+        {
+            var vm = new LauncherViewModel();
+            vm.EnableAsyncDebounce = true;
+
+            vm.SearchText = "calc";
+            Assert.AreEqual("calc", vm.SearchText);
+
+            vm.ResetSearchImmediate();
+
+            Assert.AreEqual(string.Empty, vm.SearchText);
+            Assert.IsFalse(vm.HasSearchText);
+            Assert.AreEqual("All", vm.SelectedCategoryFilter);
+            Assert.AreEqual(-1, vm.SelectedIndex);
+            Assert.IsNull(vm.SelectedItem);
+            // Verify that no calculator action item or leftover item remains
+            Assert.IsFalse(vm.FilteredResults.Any(r => r.IsActionItem));
         }
     }
 }

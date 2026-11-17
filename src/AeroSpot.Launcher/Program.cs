@@ -10,8 +10,8 @@ using System.Windows.Forms;
 [assembly: AssemblyDescription("AeroSpot Launcher")]
 [assembly: AssemblyCompany("Ritolino")]
 [assembly: AssemblyCopyright("Copyright (c) 2026 Ritolino")]
-[assembly: AssemblyVersion("1.0.0.0")]
-[assembly: AssemblyFileVersion("1.0.0.0")]
+[assembly: AssemblyVersion("1.6.0.0")]
+[assembly: AssemblyFileVersion("1.6.0.0")]
 
 internal static class Program
 {

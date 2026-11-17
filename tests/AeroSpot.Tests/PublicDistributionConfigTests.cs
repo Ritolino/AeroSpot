@@ -51,7 +51,10 @@ namespace AeroSpot.Tests
                 Assert.AreEqual(25, loaded.WorkerIdleTimeoutSeconds);
                 Assert.IsTrue(loaded.KeepWorkerWarm);
                 Assert.AreEqual("Ctrl + Space", loaded.SpotlightHotkeyText);
-                Assert.AreEqual(2, loaded.SchemaVersion, "La configurazione deve essere migrata a SchemaVersion 2.");
+                Assert.AreEqual(4, loaded.SchemaVersion, "La configurazione deve essere migrata all'ultima SchemaVersion.");
+                Assert.AreEqual(SpotlightHomeMode.MostFrequentSearches, loaded.HomeDisplayMode, "HomeDisplayMode deve essere migrato a MostFrequentSearches se la cronologia era attiva.");
+                Assert.AreEqual("Impostazioni", loaded.CategoryPriority[0], "Impostazioni deve essere al primo posto nella gerarchia.");
+                Assert.IsTrue(loaded.EnableRecentHistory, "EnableRecentHistory deve essere inizializzato a true dopo la migrazione.");
                 Assert.IsNotNull(loaded.IncludedDrives);
                 Assert.IsNotEmpty(loaded.IncludedDrives, "IncludedDrives deve essere popolato con i drive di sistema di default.");
                 Assert.IsNotNull(loaded.ExcludedDirectoryNames);
@@ -99,6 +102,26 @@ namespace AeroSpot.Tests
 
             // DLL generiche in System32 non devono essere indicizzate
             Assert.IsFalse(PathFilter.IsPathAllowed(randomDll));
+        }
+
+        [TestMethod]
+        public void AppConfig_Defaults_ConversionAndShellIntegration()
+        {
+            var config = new AppConfig();
+            Assert.IsTrue(config.StartWithWindows, "StartWithWindows deve essere abilitato di default.");
+            Assert.IsTrue(config.OpenFolderAfterConversion, "OpenFolderAfterConversion deve essere abilitato di default.");
+            Assert.IsFalse(config.IntegrateWindowsContextMenu, "IntegrateWindowsContextMenu è disabilitato di default finché l'utente non lo attiva.");
+        }
+
+        [TestMethod]
+        public void ShellContextMenuIntegration_RegisterAndUnregister_WorksCleanly()
+        {
+            string testDir = AppDomain.CurrentDomain.BaseDirectory;
+            AeroSpot.Core.Native.ShellContextMenuIntegration.Register(testDir, "it");
+            Assert.IsTrue(AeroSpot.Core.Native.ShellContextMenuIntegration.IsRegistered(), "Il menu contestuale deve risultare registrato.");
+
+            AeroSpot.Core.Native.ShellContextMenuIntegration.Unregister();
+            Assert.IsFalse(AeroSpot.Core.Native.ShellContextMenuIntegration.IsRegistered(), "Il menu contestuale deve risultare rimosso.");
         }
     }
 }

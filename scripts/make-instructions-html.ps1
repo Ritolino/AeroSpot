@@ -288,26 +288,38 @@ function Format-InlineText {
 }
 
 # 1. Convert IT
-$itSource = Join-Path $SourceDir "ISTRUZIONI.md"
+$itCandidate1 = Join-Path $OutputDir "ISTRUZIONI.md"
+$itCandidate2 = Join-Path $SourceDir "Docs\ISTRUZIONI.md"
+$itCandidate3 = Join-Path $SourceDir "ISTRUZIONI.md"
+$itSource = if (Test-Path $itCandidate1) { $itCandidate1 } elseif (Test-Path $itCandidate2) { $itCandidate2 } else { $itCandidate3 }
+
 if (Test-Path $itSource) {
     Write-Output "Elaborazione guida italiana: $itSource"
     $itContent = Get-Content -Path $itSource -Raw -Encoding UTF8
     $itHtml = Convert-MarkdownToHtml -MarkdownText $itContent -Title "Guida Utente AeroSpot" -Language "it"
     $itOutPath = Join-Path $OutputDir "instructions.it.html"
     Set-Content -Path $itOutPath -Value $itHtml -Encoding UTF8
-    Copy-Item -Path $itSource -Destination (Join-Path $OutputDir "ISTRUZIONI.md") -Force
+    if ($itSource -ne (Join-Path $OutputDir "ISTRUZIONI.md")) {
+        Copy-Item -Path $itSource -Destination (Join-Path $OutputDir "ISTRUZIONI.md") -Force
+    }
     Write-Output "Generato con successo: $itOutPath ($((Get-Item $itOutPath).Length) bytes)"
 }
 
 # 2. Convert EN
-$enSource = Join-Path $SourceDir "INSTRUCTIONS.md"
+$enCandidate1 = Join-Path $OutputDir "INSTRUCTIONS.md"
+$enCandidate2 = Join-Path $SourceDir "Docs\INSTRUCTIONS.md"
+$enCandidate3 = Join-Path $SourceDir "INSTRUCTIONS.md"
+$enSource = if (Test-Path $enCandidate1) { $enCandidate1 } elseif (Test-Path $enCandidate2) { $enCandidate2 } else { $enCandidate3 }
+
 if (Test-Path $enSource) {
     Write-Output "Elaborazione guida inglese: $enSource"
     $enContent = Get-Content -Path $enSource -Raw -Encoding UTF8
     $enHtml = Convert-MarkdownToHtml -MarkdownText $enContent -Title "AeroSpot User Guide" -Language "en"
     $enOutPath = Join-Path $OutputDir "instructions.en.html"
     Set-Content -Path $enOutPath -Value $enHtml -Encoding UTF8
-    Copy-Item -Path $enSource -Destination (Join-Path $OutputDir "INSTRUCTIONS.md") -Force
+    if ($enSource -ne (Join-Path $OutputDir "INSTRUCTIONS.md")) {
+        Copy-Item -Path $enSource -Destination (Join-Path $OutputDir "INSTRUCTIONS.md") -Force
+    }
     Write-Output "Generato con successo: $enOutPath ($((Get-Item $enOutPath).Length) bytes)"
 }
 

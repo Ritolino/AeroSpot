@@ -30,6 +30,15 @@ namespace AeroSpot.Worker.Models
                         return AeroSpot.Core.Localization.LocalizationService.Get("Spotlight_Category_Image");
                     case "video":
                         return AeroSpot.Core.Localization.LocalizationService.Get("Spotlight_Category_Video");
+                    case "recente":
+                    case "recent":
+                        return AeroSpot.Core.Localization.LocalizationService.Get("Spotlight_Category_Recent");
+                    case "ricerca":
+                    case "search":
+                        return AeroSpot.Core.Localization.LocalizationService.Get("Spotlight_Category_Search");
+                    case "impostazioni":
+                    case "settings":
+                        return AeroSpot.Core.Localization.LocalizationService.Get("Spotlight_Category_Settings");
                     case "calcolatrice":
                     case "calculator":
                         return AeroSpot.Core.Localization.LocalizationService.CurrentLanguage == "it" ? "Calcolatrice" : "Calculator";

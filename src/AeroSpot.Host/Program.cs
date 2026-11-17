@@ -20,8 +20,9 @@ namespace AeroSpot.Host
             // Handle CLI argument --cleanup (M4.2)
             if (args != null && Array.Exists(args, a => string.Equals(a, "--cleanup", StringComparison.OrdinalIgnoreCase)))
             {
-                AppLogger.Info("Executing --cleanup: removing Windows autostart registry key.");
+                AppLogger.Info("Executing --cleanup: removing Windows autostart and context menu registry keys.");
                 StartupManager.Cleanup();
+                AeroSpot.Core.Native.ShellContextMenuIntegration.Unregister();
                 AppLogger.Info("Cleanup completed successfully. Exiting.");
                 return;
             }
@@ -42,9 +43,21 @@ namespace AeroSpot.Host
                 var config = AppConfig.Load();
                 AeroSpot.Core.Localization.LocalizationService.Initialize(config.Language);
 
-                if (config.StartWithWindows)
+                if (config.StartWithWindows && StartupManager.IsStartupApprovedByUser())
                 {
-                    StartupManager.AutoRepairPathIfEnabled();
+                    if (!StartupManager.IsStartupEnabled())
+                    {
+                        StartupManager.SetStartupEnabled(true);
+                    }
+                    else
+                    {
+                        StartupManager.AutoRepairPathIfEnabled();
+                    }
+                }
+
+                if (config.IntegrateWindowsContextMenu)
+                {
+                    AeroSpot.Core.Native.ShellContextMenuIntegration.Register(AppDomain.CurrentDomain.BaseDirectory, config.Language);
                 }
 
                 using var workerManager = new WorkerManager(config);
@@ -56,16 +69,16 @@ namespace AeroSpot.Host
                     return;
                 }
 
-                // Se l'utente ha configurato sia l'avvio con Windows sia il mantenimento del motore attivo,
-                // pre-avvia direttamente il Worker in background all'avvio.
-                if (config.StartWithWindows && config.KeepWorkerWarm)
+                // Se il mantenimento del motore attivo (KeepWorkerWarm) è abilitato,
+                // pre-avvia direttamente il Worker in background all'avvio dell'Host.
+                if (config.KeepWorkerWarm)
                 {
-                    AppLogger.Info("StartWithWindows e KeepWorkerWarm attivi: avvio anticipato del Worker all'avvio di Windows...");
+                    AppLogger.Info("KeepWorkerWarm attivo: avvio anticipato del Worker in background all'avvio dell'Host...");
                     _ = Task.Run(async () =>
                     {
                         try
                         {
-                            await workerManager.EnsureWorkerStartedAsync().ConfigureAwait(false);
+                            await workerManager.EnsureWorkerStartedAsync(25000).ConfigureAwait(false);
                             AppLogger.Info("Worker pre-avviato con successo in background all'avvio.");
                         }
                         catch (Exception ex)

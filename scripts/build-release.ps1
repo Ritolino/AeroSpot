@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Compila e pubblica AeroSpot in modalità Self-Contained per Windows (win-x64).
 .DESCRIPTION
@@ -23,12 +23,15 @@
 param(
     [string]$Configuration = "Release",
     [string]$Runtime = "win-x64",
-    [string]$Version = "1.0.0",
-    [bool]$ReadyToRun = $true,
+    [string]$Version = "",
+    [switch]$NoReadyToRun,
     [string]$OutDir = "",
     [switch]$SkipTests,
-    [bool]$CreateZip = $true
+    [switch]$NoZip
 )
+
+$ReadyToRun = -not $NoReadyToRun
+$CreateZip = -not $NoZip
 
 $ErrorActionPreference = "Stop"
 
@@ -36,6 +39,17 @@ Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
 $repoRoot = (Resolve-Path "$PSScriptRoot\..").Path
+
+if ([string]::IsNullOrWhiteSpace($Version)) {
+    $propsPath = Join-Path $repoRoot "Directory.Build.props"
+    if (Test-Path $propsPath) {
+        [xml]$propsXml = Get-Content $propsPath
+        $Version = $propsXml.Project.PropertyGroup.Version
+    }
+    if ([string]::IsNullOrWhiteSpace($Version)) {
+        $Version = "1.5.3"
+    }
+}
 $dotnet = "dotnet"
 $localDotnet = "$env:LOCALAPPDATA\Microsoft\dotnet\dotnet.exe"
 if (Test-Path $localDotnet) {
@@ -61,7 +75,7 @@ Write-Host "=========================================================="
 
 # 1. Aggiornamento Documentazione HTML Offline
 Write-Host "`n[1/5] Generazione documentazione HTML offline..." -ForegroundColor Yellow
-powershell -ExecutionPolicy Bypass -File "$repoRoot\scripts\make-instructions-html.ps1"
+& "$repoRoot\scripts\make-instructions-html.ps1"
 
 # 2. Esecuzione Test di Regressione
 if (-not $SkipTests) {
@@ -114,6 +128,19 @@ if ($LASTEXITCODE -ne 0) {
     Write-Error "Pubblicazione di AeroSpot.Worker fallita!"
 }
 
+Write-Host "`n[4/5] Pubblicazione AeroSpot.Tools (Satellite AI in app/, runtime condiviso)..." -ForegroundColor Yellow
+& $dotnet publish "$repoRoot\src\AeroSpot.Tools\AeroSpot.Tools.csproj" `
+    -c $Configuration `
+    -r $Runtime `
+    --self-contained true `
+    -p:PublishReadyToRun=$pArgR2R `
+    -p:PublishSingleFile=false `
+    -o $appDir
+
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "Pubblicazione di AeroSpot.Tools fallita!"
+}
+
 # Rimozione simboli di debug .pdb
 Get-ChildItem -Path $appDir -Filter "*.pdb" -Recurse | Remove-Item -Force
 
@@ -136,14 +163,36 @@ if (Test-Path $licenseCandidate) {
     Copy-Item -Path $licenseCandidate -Destination (Join-Path $appDir "LICENSE") -Force
 }
 
+# Inclusione componenti FFmpeg (ffmpeg.exe, ffprobe.exe e librerie) in app/ffmpeg/bin
+$ffmpegCandidate = Join-Path $repoRoot "src\AeroSpot.Tools\bin\$Configuration\net10.0-windows10.0.19041.0\ffmpeg"
+if (-not (Test-Path $ffmpegCandidate)) {
+    $ffmpegCandidate = Join-Path $repoRoot "src\AeroSpot.Worker\bin\$Configuration\net10.0-windows10.0.19041.0\ffmpeg"
+}
+if (-not (Test-Path $ffmpegCandidate)) {
+    $ffmpegCandidate = "C:\Users\gabry\.nuget\packages\ffmpeginstaller.windows.x64\0.1.10\contentFiles\any\netstandard2.1\ffmpeg"
+}
+if (Test-Path $ffmpegCandidate) {
+    Write-Host "Inclusione binari FFmpeg da $ffmpegCandidate..." -ForegroundColor Cyan
+    $appFfmpeg = Join-Path $appDir "ffmpeg"
+    if (-not (Test-Path $appFfmpeg)) {
+        New-Item -ItemType Directory -Path $appFfmpeg -Force | Out-Null
+    }
+    Copy-Item -Path "$ffmpegCandidate\*" -Destination $appFfmpeg -Recurse -Force
+}
+
 # Compilazione del Launcher nativo pulito AeroSpot.exe nella radice
 $launcherExe = Join-Path $OutDir "AeroSpot.exe"
-powershell -ExecutionPolicy Bypass -File "$repoRoot\scripts\compile-launcher.ps1" -OutFile $launcherExe
+& "$repoRoot\scripts\compile-launcher.ps1" -OutFile $launcherExe
+
+# Compilazione dell'Uninstaller nativo Uninstall.exe nella radice
+$uninstallerExe = Join-Path $OutDir "Uninstall.exe"
+& "$repoRoot\scripts\compile-uninstaller.ps1" -OutFile $uninstallerExe
 
 $readmeContent = @"
 AeroSpot v$Version (Portable Standalone)
 =====================================
 Avvio rapido: Doppio clic su 'AeroSpot.exe'
+Disinstallazione completa: Doppio clic su 'Uninstall.exe'
 Scorciatoia di ricerca: Alt + Spazio
 Anteprima QuickLook: Spazio
 Chiusura: Clic destro sull'icona nella barra di notifica -> 'Esci da AeroSpot'
@@ -157,13 +206,24 @@ if (-not (Test-Path $outDocs)) { New-Item -ItemType Directory -Path $outDocs -Fo
 Copy-Item -Path "$repoRoot\Docs\instructions.it.html" -Destination $outDocs -Force
 Copy-Item -Path "$repoRoot\Docs\instructions.en.html" -Destination $outDocs -Force
 
+# Inclusione script di monitoraggio diagnostico e prestazioni
+$outDiag = Join-Path $OutDir "scripts\diagnostics"
+if (-not (Test-Path $outDiag)) { New-Item -ItemType Directory -Path $outDiag -Force | Out-Null }
+$srcMonitor = Join-Path $repoRoot "scripts\diagnostics\monitor-performance.ps1"
+if (Test-Path $srcMonitor) { Copy-Item -Path $srcMonitor -Destination $outDiag -Force }
+$srcBat = Join-Path $repoRoot "Avvia_Monitor_Prestazioni.bat"
+if (Test-Path $srcBat) { Copy-Item -Path $srcBat -Destination $OutDir -Force }
+
 # Verifica file critici
 $hostExe = Join-Path $appDir "AeroSpot.Host.exe"
 $workerExe = Join-Path $appDir "AeroSpot.Worker.exe"
+$toolsExe = Join-Path $appDir "AeroSpot.Tools.exe"
+$ffmpegExe = Join-Path $appDir "ffmpeg\bin\ffmpeg.exe"
+$ffprobeExe = Join-Path $appDir "ffmpeg\bin\ffprobe.exe"
 $docsIt = Join-Path $OutDir "Docs\instructions.it.html"
 $docsEn = Join-Path $OutDir "Docs\instructions.en.html"
 
-if (-not (Test-Path $launcherExe) -or -not (Test-Path $hostExe) -or -not (Test-Path $workerExe) -or -not (Test-Path $docsIt) -or -not (Test-Path $docsEn)) {
+if (-not (Test-Path $launcherExe) -or -not (Test-Path $uninstallerExe) -or -not (Test-Path $hostExe) -or -not (Test-Path $workerExe) -or -not (Test-Path $toolsExe) -or -not (Test-Path $ffmpegExe) -or -not (Test-Path $ffprobeExe) -or -not (Test-Path $docsIt) -or -not (Test-Path $docsEn)) {
     Write-Error "Verifica integrità fallita: uno o più file indispensabili non sono presenti nell'output pubblicato!"
 }
 
