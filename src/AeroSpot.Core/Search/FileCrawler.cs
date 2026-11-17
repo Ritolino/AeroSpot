@@ -22,6 +22,23 @@ namespace AeroSpot.Core.Search
         public int CrawlAll(CancellationToken ct = default)
         {
             AppLogger.Info("FileCrawler: Avvio scansione indicizzata del sistema...");
+
+            // 0. Spurgo preventivo: elimina i file di dischi o cartelle non più inclusi nella configurazione
+            try
+            {
+                var allowedDrives = PathFilter.GetAllowedDriveLetters();
+                int purgedDrives = _db.PurgeDisallowedDrives(allowedDrives);
+                int purgedExcluded = _db.PurgeExcludedSegments(PathFilter.GetExcludedSegments());
+                if (purgedDrives > 0 || purgedExcluded > 0)
+                {
+                    AppLogger.Info($"FileCrawler: Bonifica completata prima della scansione (Dischi rimossi: {purgedDrives}, Esclusioni: {purgedExcluded}).");
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warn($"FileCrawler: Spurgo dischi non consentiti fallito o parziale: {ex.Message}");
+            }
+
             int totalIndexed = 0;
             var buffer = new List<IndexedItem>(_batchSize);
 
@@ -182,6 +199,15 @@ namespace AeroSpot.Core.Search
                 case ".gif":
                 case ".ico":
                 case ".svg":
+                case ".arw":
+                case ".dng":
+                case ".cr2":
+                case ".cr3":
+                case ".nef":
+                case ".orf":
+                case ".rw2":
+                case ".pef":
+                case ".raf":
                     return "Immagine";
 
                 case ".mp4":

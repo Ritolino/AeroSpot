@@ -75,12 +75,35 @@ namespace AeroSpot.Core.Search
                         CREATE INDEX IF NOT EXISTS idx_items_path ON IndexedItems(FullPath);
                         CREATE INDEX IF NOT EXISTS idx_items_category ON IndexedItems(Category);
 
+                        CREATE TABLE IF NOT EXISTS RecentHistory (
+                            FullPath TEXT PRIMARY KEY COLLATE NOCASE,
+                            LastOpenedUtcTicks INTEGER NOT NULL,
+                            OpenCount INTEGER NOT NULL DEFAULT 1
+                        );
+                        CREATE INDEX IF NOT EXISTS idx_recent_ticks ON RecentHistory(LastOpenedUtcTicks DESC);
+
+                        CREATE TABLE IF NOT EXISTS SearchHistory (
+                            NormalizedQuery TEXT PRIMARY KEY COLLATE NOCASE,
+                            RawQuery TEXT NOT NULL,
+                            SearchCount INTEGER NOT NULL DEFAULT 1,
+                            LastSearchedUtcTicks INTEGER NOT NULL
+                        );
+                        CREATE INDEX IF NOT EXISTS idx_search_freq ON SearchHistory(SearchCount DESC, LastSearchedUtcTicks DESC);
+
                         CREATE TABLE IF NOT EXISTS IndexMeta (
                             Key TEXT PRIMARY KEY,
                             Value TEXT NOT NULL
                         );
                     ";
                     cmd.ExecuteNonQuery();
+
+                    // Purga immediata di file ombra e spazzatura macOS/Windows se presenti nell'indice esistente
+                    using var purgeCmd = _connection.CreateCommand();
+                    purgeCmd.CommandText = "DELETE FROM IndexedItems WHERE Title LIKE '._%' OR Title = '.DS_Store' OR Title = 'Thumbs.db' OR Title = 'desktop.ini' OR Title LIKE '~$%';";
+                    purgeCmd.ExecuteNonQuery();
+
+                    // Pulizia retroattiva: elimina eventuali espressioni di calcolo salvate in precedenza nella cronologia
+                    CleanupCalculatorSearchesInternal();
                 }
             }
         }
@@ -174,18 +197,149 @@ namespace AeroSpot.Core.Search
             }
         }
 
-        public List<IndexedItem> Search(string query, int maxResults = 10)
+        /// <summary>
+        /// Rimuove dal database SQLite tutti i file indicizzati appartenenti a lettere di disco non più presenti nella lista consentita.
+        /// </summary>
+        public int PurgeDisallowedDrives(IEnumerable<string> allowedDrives)
         {
             EnsureOpen();
-            var candidates = new List<IndexedItem>();
+            var allowedLetters = new HashSet<char>();
+            if (allowedDrives != null)
+            {
+                foreach (var d in allowedDrives)
+                {
+                    if (!string.IsNullOrWhiteSpace(d))
+                    {
+                        char c = d.Trim()[0];
+                        if (char.IsLetter(c))
+                        {
+                            allowedLetters.Add(char.ToUpperInvariant(c));
+                        }
+                    }
+                }
+            }
+
+            if (allowedLetters.Count == 0) return 0;
 
             lock (_lock)
             {
-                using var cmd = _connection!.CreateCommand();
+                using var tx = _connection!.BeginTransaction();
+                using var cmd = _connection.CreateCommand();
+                cmd.Transaction = tx;
 
-                if (string.IsNullOrWhiteSpace(query))
+                var paramNames = new List<string>();
+                int i = 0;
+                foreach (var letter in allowedLetters)
                 {
-                    // Se la query è vuota, restituisce le applicazioni principali
+                    string pName = $"$d{i++}";
+                    paramNames.Add(pName);
+                    cmd.Parameters.AddWithValue(pName, letter.ToString());
+                }
+
+                cmd.CommandText = $@"
+                    DELETE FROM IndexedItems 
+                    WHERE substr(FullPath, 2, 1) = ':' 
+                      AND UPPER(substr(FullPath, 1, 1)) NOT IN ({string.Join(", ", paramNames)});
+                ";
+
+                int purgedCount = cmd.ExecuteNonQuery();
+                tx.Commit();
+
+                if (purgedCount > 0)
+                {
+                    try
+                    {
+                        using var ckCmd = _connection.CreateCommand();
+                        ckCmd.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
+                        ckCmd.ExecuteNonQuery();
+                    }
+                    catch { }
+
+                    AppLogger.Info($"SqliteIndexDatabase: Eliminati {purgedCount} record di dischi non più selezionati.");
+                }
+
+                return purgedCount;
+            }
+        }
+
+        /// <summary>
+        /// Rimuove dal database SQLite tutti i file indicizzati che contengono uno dei segmenti di percorso esclusi.
+        /// </summary>
+        public int PurgeExcludedSegments(IEnumerable<string> excludedSegments)
+        {
+            EnsureOpen();
+            if (excludedSegments == null) return 0;
+
+            lock (_lock)
+            {
+                using var tx = _connection!.BeginTransaction();
+                int totalPurged = 0;
+
+                foreach (var seg in excludedSegments)
+                {
+                    if (string.IsNullOrWhiteSpace(seg)) continue;
+                    string pattern = $"%{seg.Trim()}%";
+
+                    using var cmd = _connection.CreateCommand();
+                    cmd.Transaction = tx;
+                    cmd.CommandText = "DELETE FROM IndexedItems WHERE FullPath LIKE $pat;";
+                    cmd.Parameters.AddWithValue("$pat", pattern);
+                    totalPurged += cmd.ExecuteNonQuery();
+                }
+
+                tx.Commit();
+
+                if (totalPurged > 0)
+                {
+                    try
+                    {
+                        using var ckCmd = _connection.CreateCommand();
+                        ckCmd.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
+                        ckCmd.ExecuteNonQuery();
+                    }
+                    catch { }
+
+                    AppLogger.Info($"SqliteIndexDatabase: Eliminati {totalPurged} record corrispondenti alle esclusioni.");
+                }
+
+                return totalPurged;
+            }
+        }
+
+        /// <summary>
+        /// Rimuove dal database SQLite tutti i file di sistema spazzatura (es. file ombra macOS ._*, Thumbs.db, .DS_Store, desktop.ini).
+        /// </summary>
+        public int PurgeSystemJunkFiles()
+        {
+            EnsureOpen();
+            lock (_lock)
+            {
+                using var cmd = _connection!.CreateCommand();
+                cmd.CommandText = "DELETE FROM IndexedItems WHERE Title LIKE '._%' OR Title = '.DS_Store' OR Title = 'Thumbs.db' OR Title = 'desktop.ini' OR Title LIKE '~$%';";
+                int purged = cmd.ExecuteNonQuery();
+                if (purged > 0)
+                {
+                    try
+                    {
+                        using var ckCmd = _connection.CreateCommand();
+                        ckCmd.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
+                        ckCmd.ExecuteNonQuery();
+                    }
+                    catch { }
+                    AppLogger.Info($"SqliteIndexDatabase: Eliminati {purged} file spazzatura / metadati (._*, Thumbs.db, .DS_Store).");
+                }
+                return purged;
+            }
+        }
+
+        public List<IndexedItem> Search(string query, int maxResults, bool enableRecentHistory)
+        {
+            if (string.IsNullOrWhiteSpace(query) && !enableRecentHistory)
+            {
+                EnsureOpen();
+                lock (_lock)
+                {
+                    using var cmd = _connection!.CreateCommand();
                     cmd.CommandText = @"
                         SELECT Id, Title, FullPath, Category, Extension, ExecutionTarget, LastModifiedUtcTicks, IsApp
                         FROM IndexedItems
@@ -193,6 +347,123 @@ namespace AeroSpot.Core.Search
                         ORDER BY Title
                         LIMIT $limit;
                     ";
+                    cmd.Parameters.AddWithValue("$limit", maxResults);
+                    var apps = new List<IndexedItem>();
+                    using var reader = cmd.ExecuteReader();
+                    while (reader.Read())
+                    {
+                        apps.Add(new IndexedItem
+                        {
+                            Id = reader.GetInt64(0),
+                            Title = reader.GetString(1),
+                            FullPath = reader.GetString(2),
+                            Category = reader.GetString(3),
+                            Extension = reader.GetString(4),
+                            ExecutionTarget = reader.GetString(5),
+                            LastModifiedUtcTicks = reader.GetInt64(6),
+                            IsApp = reader.GetInt32(7) == 1
+                        });
+                    }
+                    return apps;
+                }
+            }
+            return Search(query, maxResults, null, null, true, enableRecentHistory ? Config.SpotlightHomeMode.RecentOpened : Config.SpotlightHomeMode.None);
+        }
+
+        public List<IndexedItem> Search(string query, int maxResults, string? categoryFilter, List<string>? categoryPriority, bool prioritizeExactMatches, bool enableRecentHistory)
+        {
+            return Search(query, maxResults, categoryFilter, categoryPriority, prioritizeExactMatches, enableRecentHistory ? Config.SpotlightHomeMode.RecentOpened : Config.SpotlightHomeMode.None);
+        }
+
+        public List<IndexedItem> Search(string query, int maxResults = 10, string? categoryFilter = null, List<string>? categoryPriority = null, bool prioritizeExactMatches = true, Config.SpotlightHomeMode homeMode = Config.SpotlightHomeMode.RecentOpened)
+        {
+            EnsureOpen();
+            var candidates = new List<IndexedItem>();
+
+            lock (_lock)
+            {
+                using var cmd = _connection!.CreateCommand();
+                bool hasFilter = !string.IsNullOrWhiteSpace(categoryFilter) &&
+                                 !string.Equals(categoryFilter, "All", StringComparison.OrdinalIgnoreCase) &&
+                                 !string.Equals(categoryFilter, "Tutti", StringComparison.OrdinalIgnoreCase);
+
+                if (string.IsNullOrWhiteSpace(query))
+                {
+                    if (hasFilter)
+                    {
+                        if (string.Equals(categoryFilter, "Applicazione", StringComparison.OrdinalIgnoreCase))
+                        {
+                            cmd.CommandText = @"
+                                SELECT Id, Title, FullPath, Category, Extension, ExecutionTarget, LastModifiedUtcTicks, IsApp
+                                FROM IndexedItems
+                                WHERE IsApp = 1 OR Category = 'Applicazione'
+                                ORDER BY Title
+                                LIMIT $limit;
+                            ";
+                        }
+                        else
+                        {
+                            cmd.CommandText = @"
+                                SELECT Id, Title, FullPath, Category, Extension, ExecutionTarget, LastModifiedUtcTicks, IsApp
+                                FROM IndexedItems
+                                WHERE Category = $catFilter
+                                ORDER BY Title
+                                LIMIT $limit;
+                            ";
+                            cmd.Parameters.AddWithValue("$catFilter", categoryFilter);
+                        }
+                    }
+                    else
+                    {
+                        switch (homeMode)
+                        {
+                            case Config.SpotlightHomeMode.None:
+                                return new List<IndexedItem>();
+
+                            case Config.SpotlightHomeMode.Alphabetical:
+                                // Ordine alfabetico delle applicazioni (comportamento classico originale di AeroSpot a Spotlight vuoto)
+                                break;
+
+                            case Config.SpotlightHomeMode.MostFrequentSearches:
+                                var searches = GetMostFrequentSearchesInternal(maxResults);
+                                if (searches.Count > 0)
+                                {
+                                    var searchItems = new List<IndexedItem>();
+                                    foreach (var s in searches)
+                                    {
+                                        searchItems.Add(new IndexedItem(s, s, "Ricerca", s, isApp: false));
+                                    }
+                                    return searchItems;
+                                }
+                                break;
+
+                            case Config.SpotlightHomeMode.MostFrequentlyOpened:
+                                var frequents = GetMostFrequentItemsInternal(maxResults);
+                                if (frequents.Count > 0)
+                                {
+                                    return frequents;
+                                }
+                                break;
+
+                            case Config.SpotlightHomeMode.RecentOpened:
+                            default:
+                                var recents = GetRecentItemsInternal(maxResults);
+                                if (recents.Count > 0)
+                                {
+                                    return recents;
+                                }
+                                break;
+                        }
+
+                        // Se la query è vuota e nessun elemento recente (o cronologia vuota), restituisce le applicazioni principali
+                        cmd.CommandText = @"
+                            SELECT Id, Title, FullPath, Category, Extension, ExecutionTarget, LastModifiedUtcTicks, IsApp
+                            FROM IndexedItems
+                            WHERE IsApp = 1
+                            ORDER BY Title
+                            LIMIT $limit;
+                        ";
+                    }
                     cmd.Parameters.AddWithValue("$limit", maxResults);
                 }
                 else
@@ -205,6 +476,19 @@ namespace AeroSpot.Core.Search
                         string paramName = $"$term{i}";
                         whereClauses.Add($"(Title LIKE {paramName} OR FullPath LIKE {paramName})");
                         cmd.Parameters.AddWithValue(paramName, $"%{terms[i]}%");
+                    }
+
+                    if (hasFilter)
+                    {
+                        if (string.Equals(categoryFilter, "Applicazione", StringComparison.OrdinalIgnoreCase))
+                        {
+                            whereClauses.Add("(IsApp = 1 OR Category = 'Applicazione')");
+                        }
+                        else
+                        {
+                            whereClauses.Add("Category = $catFilter");
+                            cmd.Parameters.AddWithValue("$catFilter", categoryFilter);
+                        }
                     }
 
                     cmd.CommandText = $@"
@@ -233,7 +517,7 @@ namespace AeroSpot.Core.Search
             }
 
             // Applica il ranking avanzato a multi-segnale
-            return SearchRanker.Rank(candidates, query, maxResults);
+            return SearchRanker.Rank(candidates, query, maxResults, categoryPriority, prioritizeExactMatches);
         }
 
         public int GetTotalCount()
@@ -245,6 +529,325 @@ namespace AeroSpot.Core.Search
                 cmd.CommandText = "SELECT COUNT(*) FROM IndexedItems;";
                 object? res = cmd.ExecuteScalar();
                 return res != null ? Convert.ToInt32(res) : 0;
+            }
+        }
+
+        /// <summary>
+        /// Registra un elemento nella cronologia delle aperture recenti (AeroSpot Home).
+        /// </summary>
+        public void RecordRecentItem(string fullPath)
+        {
+            if (string.IsNullOrWhiteSpace(fullPath)) return;
+            EnsureOpen();
+            lock (_lock)
+            {
+                try
+                {
+                    using var cmd = _connection!.CreateCommand();
+                    cmd.CommandText = @"
+                        INSERT INTO RecentHistory (FullPath, LastOpenedUtcTicks, OpenCount)
+                        VALUES ($path, $ticks, 1)
+                        ON CONFLICT(FullPath) DO UPDATE SET
+                            LastOpenedUtcTicks = $ticks,
+                            OpenCount = OpenCount + 1;
+                    ";
+                    cmd.Parameters.AddWithValue("$path", fullPath);
+                    cmd.Parameters.AddWithValue("$ticks", DateTime.UtcNow.Ticks);
+                    cmd.ExecuteNonQuery();
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Warn($"SqliteIndexDatabase.RecordRecentItem fallito: {ex.Message}");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Restituisce la lista degli elementi aperti di recente ordinati per recenza decrescente.
+        /// </summary>
+        public List<IndexedItem> GetRecentItems(int limit = 10)
+        {
+            EnsureOpen();
+            lock (_lock)
+            {
+                return GetRecentItemsInternal(limit);
+            }
+        }
+
+        private List<IndexedItem> GetRecentItemsInternal(int limit)
+        {
+            var recents = new List<IndexedItem>();
+            try
+            {
+                using var cmd = _connection!.CreateCommand();
+                cmd.CommandText = @"
+                    SELECT i.Id, i.Title, i.FullPath, i.Category, i.Extension, i.ExecutionTarget, i.LastModifiedUtcTicks, i.IsApp
+                    FROM RecentHistory r
+                    INNER JOIN IndexedItems i ON (r.FullPath = i.FullPath OR r.FullPath = i.ExecutionTarget)
+                    ORDER BY r.LastOpenedUtcTicks DESC
+                    LIMIT $limit;
+                ";
+                cmd.Parameters.AddWithValue("$limit", limit);
+                using var reader = cmd.ExecuteReader();
+                while (reader.Read())
+                {
+                    string fullPath = reader.GetString(2);
+                    bool isApp = reader.GetInt32(7) == 1;
+
+                    // Coerenza indice: se non è un'app registrata e il percorso fisico non esiste più, ignora
+                    if (!isApp && !File.Exists(fullPath) && !Directory.Exists(fullPath))
+                    {
+                        continue;
+                    }
+
+                    recents.Add(new IndexedItem
+                    {
+                        Id = reader.GetInt64(0),
+                        Title = reader.GetString(1),
+                        FullPath = fullPath,
+                        Category = "Recente",
+                        Extension = reader.GetString(4),
+                        ExecutionTarget = reader.GetString(5),
+                        LastModifiedUtcTicks = reader.GetInt64(6),
+                        IsApp = isApp
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warn($"SqliteIndexDatabase.GetRecentItems fallito: {ex.Message}");
+            }
+            return recents;
+        }
+
+        /// <summary>
+        /// Restituisce la lista degli elementi aperti più frequentemente ordinati per conteggio decrescente.
+        /// </summary>
+        public List<IndexedItem> GetMostFrequentItems(int limit = 10)
+        {
+            EnsureOpen();
+            lock (_lock)
+            {
+                return GetMostFrequentItemsInternal(limit);
+            }
+        }
+
+        private List<IndexedItem> GetMostFrequentItemsInternal(int limit)
+        {
+            var frequents = new List<IndexedItem>();
+            try
+            {
+                using var cmd = _connection!.CreateCommand();
+                cmd.CommandText = @"
+                    SELECT i.Id, i.Title, i.FullPath, i.Category, i.Extension, i.ExecutionTarget, i.LastModifiedUtcTicks, i.IsApp
+                    FROM RecentHistory r
+                    INNER JOIN IndexedItems i ON (r.FullPath = i.FullPath OR r.FullPath = i.ExecutionTarget)
+                    ORDER BY r.OpenCount DESC, r.LastOpenedUtcTicks DESC
+                    LIMIT $limit;
+                ";
+                cmd.Parameters.AddWithValue("$limit", limit);
+                using var reader = cmd.ExecuteReader();
+                while (reader.Read())
+                {
+                    string fullPath = reader.GetString(2);
+                    bool isApp = reader.GetInt32(7) == 1;
+
+                    if (!isApp && !File.Exists(fullPath) && !Directory.Exists(fullPath))
+                    {
+                        continue;
+                    }
+
+                    frequents.Add(new IndexedItem
+                    {
+                        Id = reader.GetInt64(0),
+                        Title = reader.GetString(1),
+                        FullPath = fullPath,
+                        Category = "Recente",
+                        Extension = reader.GetString(4),
+                        ExecutionTarget = reader.GetString(5),
+                        LastModifiedUtcTicks = reader.GetInt64(6),
+                        IsApp = isApp
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warn($"SqliteIndexDatabase.GetMostFrequentItems fallito: {ex.Message}");
+            }
+            return frequents;
+        }
+
+        /// <summary>
+        /// Registra una query di ricerca nella cronologia delle ricerche frequenti.
+        /// Ignora stringhe con meno di 2 caratteri ed esclude espressioni di calcolo/conversione.
+        /// </summary>
+        public void RecordSearch(string rawQuery)
+        {
+            if (string.IsNullOrWhiteSpace(rawQuery)) return;
+
+            // Esclude le espressioni di calcolo matematico o conversione di unità (Bugfix Novembre 2026 - P2)
+            if (ExpressionEvaluator.TryEvaluate(rawQuery, "it") != null || ExpressionEvaluator.TryEvaluate(rawQuery, "en") != null)
+            {
+                return;
+            }
+
+            string normalized = System.Text.RegularExpressions.Regex.Replace(rawQuery.Trim(), @"\s+", " ").ToLowerInvariant();
+            if (normalized.Length < 2) return;
+
+            EnsureOpen();
+            lock (_lock)
+            {
+                try
+                {
+                    using var cmd = _connection!.CreateCommand();
+                    cmd.CommandText = @"
+                        INSERT INTO SearchHistory (NormalizedQuery, RawQuery, SearchCount, LastSearchedUtcTicks)
+                        VALUES ($norm, $raw, 1, $ticks)
+                        ON CONFLICT(NormalizedQuery) DO UPDATE SET
+                            RawQuery = $raw,
+                            SearchCount = SearchCount + 1,
+                            LastSearchedUtcTicks = $ticks;
+                    ";
+                    cmd.Parameters.AddWithValue("$norm", normalized);
+                    cmd.Parameters.AddWithValue("$raw", rawQuery.Trim());
+                    cmd.Parameters.AddWithValue("$ticks", DateTime.UtcNow.Ticks);
+                    cmd.ExecuteNonQuery();
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Warn($"SqliteIndexDatabase.RecordSearch fallito: {ex.Message}");
+                }
+            }
+        }
+
+        public void CleanupCalculatorSearches()
+        {
+            EnsureOpen();
+            lock (_lock)
+            {
+                CleanupCalculatorSearchesInternal();
+            }
+        }
+
+        private void CleanupCalculatorSearchesInternal()
+        {
+            try
+            {
+                var toDelete = new List<string>();
+                using var cmd = _connection!.CreateCommand();
+                cmd.CommandText = "SELECT NormalizedQuery, RawQuery FROM SearchHistory;";
+                using var reader = cmd.ExecuteReader();
+                while (reader.Read())
+                {
+                    string norm = reader.GetString(0);
+                    string raw = reader.GetString(1);
+                    if (ExpressionEvaluator.TryEvaluate(raw, "it") != null || ExpressionEvaluator.TryEvaluate(raw, "en") != null)
+                    {
+                        toDelete.Add(norm);
+                    }
+                }
+                reader.Close();
+
+                if (toDelete.Count > 0)
+                {
+                    using var delCmd = _connection.CreateCommand();
+                    delCmd.CommandText = "DELETE FROM SearchHistory WHERE NormalizedQuery = $norm;";
+                    var p = delCmd.CreateParameter();
+                    p.ParameterName = "$norm";
+                    delCmd.Parameters.Add(p);
+                    foreach (var norm in toDelete)
+                    {
+                        p.Value = norm;
+                        delCmd.ExecuteNonQuery();
+                    }
+                    AppLogger.Info($"SqliteIndexDatabase: Eliminate {toDelete.Count} espressioni matematiche/calcolo da SearchHistory.");
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Debug($"SqliteIndexDatabase.CleanupCalculatorSearchesInternal fallito: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Restituisce l'elenco dei testi delle ricerche più frequenti ordinati per conteggio e recenza decrescente.
+        /// </summary>
+        public List<string> GetMostFrequentSearches(int limit = 10)
+        {
+            EnsureOpen();
+            lock (_lock)
+            {
+                return GetMostFrequentSearchesInternal(limit);
+            }
+        }
+
+        private List<string> GetMostFrequentSearchesInternal(int limit)
+        {
+            var searches = new List<string>();
+            try
+            {
+                using var cmd = _connection!.CreateCommand();
+                cmd.CommandText = @"
+                    SELECT RawQuery
+                    FROM SearchHistory
+                    ORDER BY SearchCount DESC, LastSearchedUtcTicks DESC
+                    LIMIT $limit;
+                ";
+                cmd.Parameters.AddWithValue("$limit", limit);
+                using var reader = cmd.ExecuteReader();
+                while (reader.Read())
+                {
+                    searches.Add(reader.GetString(0));
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warn($"SqliteIndexDatabase.GetMostFrequentSearches fallito: {ex.Message}");
+            }
+            return searches;
+        }
+
+        /// <summary>
+        /// Cancella completamente la cronologia delle aperture recenti.
+        /// </summary>
+        public void ClearRecentHistory()
+        {
+            EnsureOpen();
+            lock (_lock)
+            {
+                try
+                {
+                    using var cmd = _connection!.CreateCommand();
+                    cmd.CommandText = "DELETE FROM RecentHistory;";
+                    cmd.ExecuteNonQuery();
+                    AppLogger.Info("SqliteIndexDatabase: Cronologia aperture recenti cancellata con successo.");
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Warn($"SqliteIndexDatabase.ClearRecentHistory fallito: {ex.Message}");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Cancella completamente sia la cronologia degli elementi aperti sia la cronologia dei testi cercati.
+        /// </summary>
+        public void ClearAllHistory()
+        {
+            EnsureOpen();
+            lock (_lock)
+            {
+                try
+                {
+                    using var cmd = _connection!.CreateCommand();
+                    cmd.CommandText = "DELETE FROM RecentHistory; DELETE FROM SearchHistory;";
+                    cmd.ExecuteNonQuery();
+                    AppLogger.Info("SqliteIndexDatabase: Tutta la cronologia (aperture e ricerche) cancellata con successo.");
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Warn($"SqliteIndexDatabase.ClearAllHistory fallito: {ex.Message}");
+                }
             }
         }
 

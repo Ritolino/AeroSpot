@@ -9,12 +9,42 @@
         WindowStyle="None" AllowsTransparency="True"
         Background="Transparent" ShowInTaskbar="False"
         Topmost="True" Focusable="True"
-        PreviewMouseWheel="Window_PreviewMouseWheel">
+        PreviewMouseWheel="Window_PreviewMouseWheel"
+        PreviewKeyDown="Window_PreviewKeyDown">
     
     <Window.Resources>
         <!-- Converters -->
         <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
         <local:InverseBooleanToVisibilityConverter x:Key="InverseBoolToVisibility" />
+
+        <!-- Stile Filter Pill Fluent Dark -->
+        <Style x:Key="FilterPillButtonStyle" TargetType="{x:Type Button}">
+            <Setter Property="OverridesDefaultStyle" Value="True"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="Foreground" Value="#CBD5E1"/>
+            <Setter Property="Background" Value="#262C36"/>
+            <Setter Property="BorderBrush" Value="#3B4252"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="10,4"/>
+            <Setter Property="FontSize" Value="11.5"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type Button}">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="12" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#334155"/>
+                                <Setter Property="Foreground" Value="#FFFFFF"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
 
         <!-- Stile ScrollBar minimale e scuro -->
         <Style TargetType="{x:Type ScrollViewer}">
@@ -30,10 +60,47 @@
             </Setter>
         </Style>
 
+        <!-- Stile pulsanti discreti grigi per Impostazioni e Aggiorna Indice -->
+        <Style x:Key="ReindexButtonStyle" TargetType="Button">
+            <Setter Property="OverridesDefaultStyle" Value="True"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Padding" Value="7,3"/>
+            <Setter Property="FontSize" Value="10.5"/>
+            <Setter Property="Foreground" Value="#888888"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderBrush" Value="#3E3E42"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Brd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="4" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Brd" Property="Background" Value="#1AFFFFFF"/>
+                                <Setter TargetName="Brd" Property="BorderBrush" Value="#555555"/>
+                                <Setter Property="Foreground" Value="#CCCCCC"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Brd" Property="Background" Value="#26FFFFFF"/>
+                                <Setter TargetName="Brd" Property="BorderBrush" Value="#666666"/>
+                                <Setter Property="Foreground" Value="#FFFFFF"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Brd" Property="Opacity" Value="0.4"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- Stile per ListBoxItem scuro e pulito -->
         <Style x:Key="ResultItemStyle" TargetType="ListBoxItem">
             <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-            <Setter Property="Padding" Value="10,8" />
+            <Setter Property="Padding" Value="8,8" />
             <Setter Property="Margin" Value="0,1" />
             <Setter Property="Cursor" Value="Hand" />
             <Setter Property="Template">
@@ -80,6 +147,17 @@
             </Setter>
         </Style>
 
+        <Style TargetType="{x:Type Separator}">
+            <Setter Property="OverridesDefaultStyle" Value="True"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type Separator}">
+                        <Border Height="1" Background="#334155" Margin="4,3"/>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style TargetType="{x:Type MenuItem}">
             <Setter Property="OverridesDefaultStyle" Value="True"/>
             <Setter Property="Foreground" Value="#F8FAFC"/>
@@ -104,22 +182,24 @@
     </Window.Resources>
 
     <!-- Ombra esterna sagomata con angoli arrotondati (elimina angoli retti dell'ombra) -->
-    <Border Margin="12" CornerRadius="10">
+    <Border Margin="14" CornerRadius="10">
         <Border.Effect>
-            <DropShadowEffect BlurRadius="28" ShadowDepth="4" Direction="270" Color="#000000" Opacity="0.75" />
+            <!-- Ombra Fluent equilibrata (Variante 2 predefinita - confrontabile con Variante 1 e 3 in Correzioni_Schermate) -->
+            <DropShadowEffect BlurRadius="30" ShadowDepth="3" Direction="270" Color="#000000" Opacity="0.42" />
         </Border.Effect>
         <!-- Finestra principale AeroSpot con bordo ad alto contrasto per sfondi scuri -->
         <Border Background="#1E1E1E" BorderBrush="#475569" BorderThickness="1.2" CornerRadius="10">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" /> <!-- Search Box -->
+                    <RowDefinition Height="Auto" /> <!-- Category Filter Bar -->
                     <RowDefinition Height="Auto" /> <!-- Separator -->
                     <RowDefinition Height="*" />    <!-- Results List -->
                     <RowDefinition Height="Auto" /> <!-- Footer Bar -->
                 </Grid.RowDefinitions>
 
                 <!-- 1. Barra di Ricerca Superiore -->
-                <Grid Grid.Row="0" Margin="16,14,16,14">
+                <Grid Grid.Row="0" Margin="16,14,16,10">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto" /> <!-- Lente / Icona -->
                         <ColumnDefinition Width="*" />    <!-- Input Textbox -->
@@ -145,22 +225,74 @@
                                  FontSize="18" Foreground="#FFFFFF"
                                  Background="Transparent" BorderThickness="0"
                                  CaretBrush="#007ACC" VerticalAlignment="Center"
-                                 AcceptsReturn="False" PreviewKeyDown="SearchBox_PreviewKeyDown" />
+                                 AcceptsReturn="False" PreviewKeyDown="SearchBox_PreviewKeyDown"
+                                 PreviewMouseLeftButtonDown="SearchBox_PreviewMouseLeftButtonDown"
+                                 GotFocus="SearchBox_GotFocus" />
                     </Grid>
 
-                    <!-- Bottone per cancellare il testo inserito -->
-                    <Button Grid.Column="2" Content="✕" Width="24" Height="24"
-                            Background="Transparent" Foreground="#888888" BorderThickness="1"
-                            Padding="0" FontSize="12" Cursor="Hand" Click="ClearButton_Click"
-                            Visibility="{Binding HasSearchText, Converter={StaticResource BoolToVisibility}}" />
+                    <!-- Bottone per cancellare il testo inserito (Icona vettoriale circolare centrata otticamente, senza contorno) -->
+                    <Button Grid.Column="2" x:Name="ClearButton"
+                            Width="20" Height="20" Margin="8,0,0,0"
+                            VerticalAlignment="Center" HorizontalAlignment="Center"
+                            Cursor="Hand" Click="ClearButton_Click"
+                            AutomationProperties.Name="{loc:Loc Spotlight_Clear_Search}"
+                            Focusable="False" FocusVisualStyle="{x:Null}"
+                            Visibility="{Binding HasSearchText, Converter={StaticResource BoolToVisibility}}">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border x:Name="CircleBorder" Width="20" Height="20" CornerRadius="10"
+                                        Background="Transparent" BorderThickness="0"
+                                        SnapsToDevicePixels="True" UseLayoutRounding="True">
+                                    <Path x:Name="CrossPath" Data="M 6,6 L 14,14 M 14,6 L 6,14"
+                                          Stroke="#94A3B8" StrokeThickness="1.5" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                          HorizontalAlignment="Center" VerticalAlignment="Center"
+                                          Width="10" Height="10" Stretch="Uniform"
+                                          SnapsToDevicePixels="True" UseLayoutRounding="True" />
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="CircleBorder" Property="Background" Value="#26FFFFFF" />
+                                        <Setter TargetName="CrossPath" Property="Stroke" Value="#F8FAFC" />
+                                    </Trigger>
+                                    <Trigger Property="IsPressed" Value="True">
+                                        <Setter TargetName="CircleBorder" Property="Background" Value="#33FFFFFF" />
+                                        <Setter TargetName="CrossPath" Property="Stroke" Value="#38BDF8" />
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Button.Template>
+                    </Button>
                 </Grid>
 
+                <!-- 1.5. Barra Filtri Categoria Spotlight (Pills Fluent Dark - Centrati) -->
+                <ScrollViewer Grid.Row="1" HorizontalAlignment="Center" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"
+                              Margin="16,0,16,8">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <Button x:Name="FilterBtnAll" Tag="All" Content="{loc:Loc Spotlight_Filter_All}"
+                                Style="{StaticResource FilterPillButtonStyle}" Click="FilterPill_Click" />
+                        <Button x:Name="FilterBtnApps" Tag="Applicazione" Content="{loc:Loc Spotlight_Filter_Apps}"
+                                Style="{StaticResource FilterPillButtonStyle}" Click="FilterPill_Click" Margin="6,0,0,0" />
+                        <Button x:Name="FilterBtnPhotos" Tag="Immagine" Content="{loc:Loc Spotlight_Filter_Photos}"
+                                Style="{StaticResource FilterPillButtonStyle}" Click="FilterPill_Click" Margin="6,0,0,0" />
+                        <Button x:Name="FilterBtnDocs" Tag="Documento" Content="{loc:Loc Spotlight_Filter_Documents}"
+                                Style="{StaticResource FilterPillButtonStyle}" Click="FilterPill_Click" Margin="6,0,0,0" />
+                        <Button x:Name="FilterBtnVideos" Tag="Video" Content="{loc:Loc Spotlight_Filter_Videos}"
+                                Style="{StaticResource FilterPillButtonStyle}" Click="FilterPill_Click" Margin="6,0,0,0" />
+                        <Button x:Name="FilterBtnAudio" Tag="Audio" Content="{loc:Loc Spotlight_Filter_Audio}"
+                                Style="{StaticResource FilterPillButtonStyle}" Click="FilterPill_Click" Margin="6,0,0,0" />
+                        <Button x:Name="FilterBtnFolders" Tag="Cartella" Content="{loc:Loc Spotlight_Filter_Folders}"
+                                Style="{StaticResource FilterPillButtonStyle}" Click="FilterPill_Click" Margin="6,0,0,0" />
+                        <Button x:Name="FilterBtnSettings" Tag="Impostazioni" Content="{loc:Loc Spotlight_Filter_Settings}"
+                                Style="{StaticResource FilterPillButtonStyle}" Click="FilterPill_Click" Margin="6,0,0,0" />
+                    </StackPanel>
+                </ScrollViewer>
+
                 <!-- 2. Separatore orizzontale (visibile solo se ci sono risultati) -->
-                <Rectangle Grid.Row="1" Height="1" Fill="#2D2D2D" Margin="12,0,12,0"
+                <Rectangle Grid.Row="2" Height="1" Fill="#2D2D2D" Margin="12,0,12,0"
                            Visibility="{Binding HasResults, Converter={StaticResource BoolToVisibility}}" />
 
                 <!-- 3. Lista dei Risultati (fino a 10 visibili) -->
-                <ListBox Grid.Row="2" x:Name="ResultsList"
+                <ListBox Grid.Row="3" x:Name="ResultsList"
                          ItemsSource="{Binding FilteredResults}"
                          SelectedItem="{Binding SelectedItem, Mode=TwoWay}"
                          SelectedIndex="{Binding SelectedIndex, Mode=TwoWay}"
@@ -171,10 +303,24 @@
                          ScrollViewer.VerticalScrollBarVisibility="Auto"
                          PreviewKeyDown="ResultsList_PreviewKeyDown"
                          MouseDoubleClick="ResultsList_MouseDoubleClick"
+                         PreviewMouseLeftButtonDown="ResultsList_PreviewMouseLeftButtonDown"
+                         PreviewMouseMove="ResultsList_PreviewMouseMove"
+                         PreviewMouseLeftButtonUp="ResultsList_PreviewMouseLeftButtonUp"
                          PreviewMouseRightButtonDown="ResultsList_PreviewMouseRightButtonDown">
                     <ListBox.ContextMenu>
-                        <ContextMenu x:Name="ResultsContextMenu">
-                            <MenuItem Header="{loc:Loc Spotlight_Menu_OpenFilePath}" Click="ContextOpenPath_Click" FontWeight="SemiBold"/>
+                        <ContextMenu x:Name="ResultsContextMenu" Opened="ResultsContextMenu_Opened">
+                            <MenuItem x:Name="MenuOpenPath" Header="{loc:Loc Spotlight_Menu_OpenFilePath}" Click="ContextOpenPath_Click" FontWeight="SemiBold"/>
+                            <MenuItem x:Name="MenuCopyPath" Header="{loc:Loc Spotlight_Menu_CopyPath}" Click="ContextCopyPath_Click"/>
+                            <Separator x:Name="MenuSeparatorMedia"/>
+                            <MenuItem x:Name="MenuConvertJpg" Header="{loc:Loc Spotlight_Menu_ConvertJpg}" Click="ContextConvertJpg_Click"/>
+                            <MenuItem x:Name="MenuConvertPng" Header="{loc:Loc Spotlight_Menu_ConvertPng}" Click="ContextConvertPng_Click"/>
+                            <MenuItem x:Name="MenuConvertPdf" Header="{loc:Loc Spotlight_Menu_ConvertPdf}" Click="ContextConvertPdf_Click"/>
+                            <MenuItem x:Name="MenuConvertMp3" Header="{loc:Loc Spotlight_Menu_ConvertMp3}" Click="ContextConvertMp3_Click"/>
+                            <MenuItem x:Name="MenuConvertWav" Header="{loc:Loc Spotlight_Menu_ConvertWav}" Click="ContextConvertWav_Click"/>
+                            <MenuItem x:Name="MenuConvertMp4" Header="{loc:Loc Spotlight_Menu_ConvertMp4}" Click="ContextConvertMp4_Click"/>
+                            <MenuItem x:Name="MenuRemoveBg" Header="{loc:Loc Spotlight_Menu_RemoveBg}" Click="ContextRemoveBg_Click"/>
+                            <Separator x:Name="MenuSeparatorDelete"/>
+                            <MenuItem x:Name="MenuRecycleFile" Header="{loc:Loc Spotlight_Menu_RecycleFile}" Click="ContextRecycleFile_Click" Foreground="#EF4444"/>
                         </ContextMenu>
                     </ListBox.ContextMenu>
                     <ListBox.ItemTemplate>
@@ -187,7 +333,7 @@
                                 </Grid.ColumnDefinitions>
 
                                 <!-- Icona file/app (20x20) con scaling ad alta qualità -->
-                                <Image Grid.Column="0" Source="{Binding Icon}" Width="20" Height="20" Margin="2,0,12,0"
+                                <Image Grid.Column="0" Source="{Binding Icon}" Width="20" Height="20" Margin="0,0,12,0"
                                        VerticalAlignment="Center" RenderOptions.BitmapScalingMode="HighQuality" />
 
                                 <!-- Titolo e Percorso/Descrizione -->
@@ -207,7 +353,7 @@
                 </ListBox>
 
                 <!-- 4. Barra Informativa / Scorciatoie Footer -->
-                <Border Grid.Row="3" Background="#181818" CornerRadius="0,0,9,9" Padding="14,6" BorderBrush="#2D2D2D" BorderThickness="0,1,0,0">
+                <Border Grid.Row="4" Background="#181818" CornerRadius="0,0,9,9" Padding="14,6" BorderBrush="#2D2D2D" BorderThickness="0,1,0,0">
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />
@@ -217,8 +363,8 @@
 
                         <!-- Sinistra: Tasto Impostazioni (solo rotella) e Tasto Aggiorna Indice -->
                         <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
-                            <Button Content="⚙" FontSize="12" Foreground="#888888" Background="Transparent" BorderThickness="1" Padding="6,2" Cursor="Hand" Click="SettingsButton_Click" ToolTip="{loc:Loc Spotlight_Btn_Settings}" Margin="0,0,8,0"/>
-                            <Button x:Name="BtnReindexNow" Content="{loc:Loc Spotlight_Btn_Reindex}" FontSize="10" Foreground="#888888" Background="Transparent" BorderThickness="1" Padding="6,2" Cursor="Hand" Click="ReindexNowButton_Click" VerticalAlignment="Center" ToolTip="{loc:Loc Spotlight_IndexStatus_Updating}" />
+                            <Button Content="⚙" Style="{StaticResource ReindexButtonStyle}" Padding="6,2" FontSize="11" Click="SettingsButton_Click" ToolTip="{loc:Loc Spotlight_Btn_Settings}" Margin="0,0,8,0"/>
+                            <Button x:Name="BtnReindexNow" Style="{StaticResource ReindexButtonStyle}" Content="{loc:Loc Spotlight_Btn_Reindex}" Click="ReindexNowButton_Click" VerticalAlignment="Center" ToolTip="{loc:Loc Spotlight_IndexStatus_Updating}" />
                         </StackPanel>
 
                         <!-- Centro: Scritta AeroSpot centrata -->

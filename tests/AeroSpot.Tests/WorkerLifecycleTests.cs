@@ -37,11 +37,12 @@ namespace AeroSpot.Tests
         {
             string workerExe = GetWorkerExePath();
 
-            // Avvia Worker con timeout di 2 secondi
+            // Avvia Worker con timeout di 2 secondi e pipe di test isolata (per non connettersi a un eventuale Host attivo)
+            string testPipe = $"AeroSpot_TestPipe_{Guid.NewGuid():N}";
             var psi = new ProcessStartInfo
             {
                 FileName = workerExe,
-                Arguments = "--timeout 2 --no-keep-warm",
+                Arguments = $"--timeout 2 --no-keep-warm --pipe {testPipe}",
                 UseShellExecute = false,
                 CreateNoWindow = true
             };
@@ -53,7 +54,7 @@ namespace AeroSpot.Tests
             {
                 // In modalità autonoma (senza pipe dell'Host di produzione attiva in questo test),
                 // il worker attende fino a 3s la pipe e poi attiva il countdown di 2 secondi
-                bool exited = proc.WaitForExit(9000);
+                bool exited = proc.WaitForExit(15000);
                 Assert.IsTrue(exited, "Worker did not auto-shutdown within the idle timeout period.");
                 Assert.AreEqual(0, proc.ExitCode, "Worker exited with non-zero exit code.");
             }
@@ -70,7 +71,8 @@ namespace AeroSpot.Tests
         public async Task Benchmark_ColdStart_Vs_WarmStart()
         {
             string workerExe = GetWorkerExePath();
-            using var server = new NamedPipeHostServer();
+            string pipeName = $"AeroSpot_TestPipe_Bench_{Guid.NewGuid():N}";
+            using var server = new NamedPipeHostServer(pipeName);
             var readyTcs = new TaskCompletionSource<bool>();
             server.MessageReceived += msg =>
             {
@@ -83,7 +85,7 @@ namespace AeroSpot.Tests
             var psi = new ProcessStartInfo
             {
                 FileName = workerExe,
-                Arguments = "--timeout 10",
+                Arguments = $"--timeout 10 --pipe {pipeName}",
                 UseShellExecute = false,
                 CreateNoWindow = true
             };

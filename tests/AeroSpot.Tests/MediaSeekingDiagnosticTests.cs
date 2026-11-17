@@ -28,7 +28,7 @@ namespace AeroSpot.Tests
             {
                 try
                 {
-                    if (Application.Current == null) new Application();
+                    if (Application.Current == null) new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
 
                     var player = new MediaElement
                     {

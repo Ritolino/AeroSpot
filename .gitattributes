@@ -1,0 +1,24 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Source code and documents (Windows CRLF)
+*.cs text diff=csharp eol=crlf
+*.xaml text eol=crlf
+*.csproj text eol=crlf
+*.sln text eol=crlf
+*.ps1 text eol=crlf
+*.md text eol=crlf
+*.txt text eol=crlf
+*.html text eol=crlf
+*.json text eol=crlf
+
+# Binary assets
+*.ico binary
+*.png binary
+*.jpeg binary
+*.jpg binary
+*.pdf binary
+*.rtf binary
+*.zip binary
+*.dll binary
+*.exe binary

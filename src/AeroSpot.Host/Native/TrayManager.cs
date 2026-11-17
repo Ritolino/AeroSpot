@@ -57,11 +57,44 @@ namespace AeroSpot.Host.Native
             // Assicura la pulizia di eventuali icone residue prima della registrazione
             Win32.Shell_NotifyIcon(Win32.NIM_DELETE, ref nid);
 
-            _isAdded = Win32.Shell_NotifyIcon(Win32.NIM_ADD, ref nid);
+            for (int attempt = 1; attempt <= 3; attempt++)
+            {
+                _isAdded = Win32.Shell_NotifyIcon(Win32.NIM_ADD, ref nid);
+                if (_isAdded) break;
+
+                // Se NIM_ADD fallisce, prova NIM_MODIFY nel caso l'icona sia già presente nello slot
+                if (Win32.Shell_NotifyIcon(Win32.NIM_MODIFY, ref nid))
+                {
+                    _isAdded = true;
+                    break;
+                }
+
+                if (attempt < 3)
+                {
+                    System.Threading.Thread.Sleep(100);
+                }
+            }
+
             if (!_isAdded)
             {
                 int err = Marshal.GetLastWin32Error();
-                AppLogger.Warn($"Shell_NotifyIcon NIM_ADD returned false (LastError: {err})");
+                AppLogger.Warn($"Shell_NotifyIcon NIM_ADD returned false (LastError: {err}). Avvio retry asincrono in background...");
+                _ = Task.Run(async () =>
+                {
+                    for (int i = 1; i <= 5; i++)
+                    {
+                        await Task.Delay(1000).ConfigureAwait(false);
+                        if (_isAdded || _isDisposed) break;
+
+                        var retryNid = nid;
+                        if (Win32.Shell_NotifyIcon(Win32.NIM_ADD, ref retryNid) || Win32.Shell_NotifyIcon(Win32.NIM_MODIFY, ref retryNid))
+                        {
+                            _isAdded = true;
+                            AppLogger.Info($"Tray icon aggiunta con successo al tentativo differito #{i}.");
+                            break;
+                        }
+                    }
+                });
             }
             else
             {

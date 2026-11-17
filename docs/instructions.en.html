@@ -127,37 +127,75 @@
 <body>
     <div class="container">
 <h1>AeroSpot User Guide</h1>
-<p>Welcome to <strong>AeroSpot</strong>, the modern Windows 11 application designed to combine the fast search experience of a <em>Spotlight</em>-style launcher with the instant preview capabilities of <em>QuickLook</em>, keeping resident memory consumption of the Host at rest strictly under 10 MB of Private Bytes.</p>
+<p>Welcome to <strong>AeroSpot</strong>, the modern Windows 11 (and Windows 10 x64) application designed to combine the fast search experience of a <em>Spotlight</em>-style launcher with the instant preview capabilities of <em>QuickLook</em>, keeping resident memory consumption of the Host at rest strictly under 10 MB of Private Bytes.</p>
 <hr/>
-<h2>1. Quick Start</h2>
-<p>AeroSpot is a native, portable Windows 11 (x64) application requiring zero installation and zero external dependencies:</p>
+<h2>1. Quick Start &amp; Editions</h2>
+<p>AeroSpot is distributed in two editions built from the exact same compiled binaries:</p>
+<div class='table-container'><table>
+<thead><tr>
+<th>Edition</th>
+<th>Target Audience</th>
+<th>Program Folder</th>
+<th>Data &amp; Database Folder</th>
+</tr></thead><tbody>
+<tr>
+<td><strong>Installer (<code>Setup.exe</code>)</strong></td>
+<td>Everyday users, permanent installation</td>
+<td><code>{localappdata}\Programs\AeroSpot\</code></td>
+<td><code>%LOCALAPPDATA%\AeroSpot\Data\</code></td>
+</tr>
+<tr>
+<td><strong>Portable (<code>.zip</code>)</strong></td>
+<td>Developers, USB drives, portable usage</td>
+<td>User-selected extracted folder</td>
+<td>Local <code>Data\</code> subfolder beside program files</td>
+</tr>
+</tbody></table></div>
+<h3>Launching the Application</h3>
 <ul>
-<li><strong>Launching the app:</strong> Double-click <code>AeroSpot.Host.exe</code> (or the <code>AeroSpot</code> shortcut). The app launches silently in the background and places its dark Fluent icon in the system tray at the bottom right corner (next to the Windows clock).</li>
-<li><strong>Clean exit:</strong> Right-click the AeroSpot icon in the system tray -&gt; <strong>Exit AeroSpot</strong>. All processes (Host and Worker) terminate cleanly and immediately.</li>
-<li><strong>Uninstallation / Registry cleanup:</strong> If you enabled automatic startup with Windows and wish to remove the app, execute from Command Prompt or Terminal:</li>
+<li><strong>Installed Edition:</strong> Launch AeroSpot from the Start menu or the Desktop shortcut.</li>
+<li><strong>Portable Edition:</strong> Extract the ZIP archive and run the native launcher <code>AeroSpot.exe</code>.</li>
+<li>The application launches silently in the background and places its dark Fluent icon in the System Tray next to the Windows clock.</li>
+</ul>
+<h3>Clean Exit and Uninstallation</h3>
+<ul>
+<li><strong>Clean exit:</strong> Right-click the AeroSpot icon in the system tray -&gt; <strong>Exit AeroSpot</strong>. All processes (Host, Worker, Tools) terminate cleanly and immediately.</li>
+<li><strong>Uninstalling Installed Edition:</strong> Open Windows <em>Settings</em> -&gt; <em>Apps</em> -&gt; <em>Installed apps</em> -&gt; search for <strong>AeroSpot</strong> -&gt; <em>Uninstall</em>. The uninstaller will prompt whether you wish to keep or delete your search index and user preferences.</li>
+<li><strong>Uninstalling Portable Edition:</strong> Run <code>Uninstall.exe</code> located in the root of the extracted folder. It terminates active processes, cleans autostart and context entries from the Windows Registry, purges cache, and deletes the application folder. Alternatively, execute from terminal:</li>
 </ul>
 <p>```cmd</p>
 <p>AeroSpot.Host.exe --cleanup</p>
 <p>```</p>
-<p>This command immediately purges any autostart reference from the Windows Registry before you delete the application folder.</p>
 <hr/>
 <h2>2. Using the Launcher (Quick Search)</h2>
 <h3>Keyboard Shortcut</h3>
 <ul>
 <li><strong>Default shortcut:</strong> <code>Alt + Space</code> (customizable in Settings to <code>Ctrl + Space</code>, <code>Win + Space</code>, or a custom combination).</li>
-<li>AeroSpot can be summoned instantly from any application or screen.</li>
+<li>Summon AeroSpot instantly from any application or screen.</li>
 </ul>
 <h3>How to Search</h3>
-<p>1. Press the shortcut: the fluid dark acrylic search bar appears centered at the top of the screen.</p>
+<p>1. Press the keyboard shortcut: the fluid dark acrylic search bar appears centered at the top of your active screen.</p>
 <p>2. Type what you are looking for:</p>
 <ul>
-<li><strong>Installed and system applications</strong> (e.g. <em>Chrome</em>, <em>Notepad</em>, <em>Calculator</em>, <em>Terminal</em>, <em>VS Code</em>, <em>Steam</em>, UWP/Store apps like <em>WhatsApp</em>)</li>
+<li><strong>Installed and system applications</strong> (e.g. <em>Chrome</em>, <em>Notepad</em>, <em>Calculator</em>, <em>Terminal</em>, <em>VS Code</em>, <em>Steam</em>, Store/UWP apps like <em>WhatsApp</em>)</li>
 <li><strong>Documents and files</strong> (e.g. <em>report.docx</em>, <em>sheet.xlsx</em>, <em>project.py</em>, <em>image.png</em>, <em>video.mp4</em>)</li>
 <li><strong>Folders</strong> (e.g. <em>Downloads</em>, <em>Documents</em>, <em>Pictures</em>)</li>
 </ul>
-<p>3. <strong>Built-in Calculator:</strong> Directly enter a mathematical expression (e.g. <code>2+2</code>, <code>15 * 4</code>, <code>sqrt(144)</code>, <code>sin(pi/2)</code>) to view the single evaluated result instantly.</p>
-<p>4. <strong>Unit Converter:</strong> Convert units on the fly for length, weight/mass (grams, hectograms, kilograms, pounds, ounces), volume (liters, milliliters, centiliters, gallons), temperature (&#176;C, &#176;F, K), and currencies.</p>
-<p>5. <strong>Space works naturally:</strong> When searching multi-word queries (e.g. <em>&quot;Google Chrome&quot;</em> or <em>&quot;Shopping notes&quot;</em>), pressing the spacebar types a normal space character without triggering file preview.</p>
+<p>3. <strong>Built-in Calculator with Percentages:</strong> Directly enter a mathematical expression (e.g. <code>2+2</code>, <code>15 * 4</code>, <code>sqrt(144)</code>, <code>sin(pi/2)</code>) or percentage formulas in Windows/Excel style:</p>
+<ul>
+<li><code>1190-22%</code> = <code>928.2</code></li>
+<li><code>1190+22%</code> = <code>1451.8</code></li>
+<li><code>1190*22%</code> = <code>261.8</code></li>
+<li><code>1190/22%</code> = <code>5409.09...</code></li>
+<li><code>22%</code> = <code>0.22</code></li>
+<li>Chained percentages: <code>200+10%+10%</code> = <code>242</code></li>
+<li>With parentheses: <code>(100+20)-10%</code> = <code>108</code></li>
+</ul>
+<p>4. <strong>Unit Converter:</strong> Convert units on the fly for length, weight/mass (grams, hectograms, kilograms, pounds, ounces), volume (liters, milliliters, centiliters, gallons), and temperatures (&#176;C, &#176;F, K).</p>
+<p>5. <strong>Recently Opened Items (Home):</strong> When the search box is empty, Spotlight displays your recently opened items (apps, files, documents) ordered by recency with a warm amber &quot;Recent&quot; badge.</p>
+<p>6. <strong>Windows Settings &amp; AeroSpot Tabs Search:</strong> Search Windows system settings directly (e.g. <em>&quot;keyboard&quot;</em>, <em>&quot;tastiera&quot;</em>, <em>&quot;wifi&quot;</em>, <em>&quot;display&quot;</em>, <em>&quot;schermo&quot;</em>, <em>&quot;sound&quot;</em>, <em>&quot;suono&quot;</em>, <em>&quot;updates&quot;</em>, <em>&quot;bluetooth&quot;</em>, <em>&quot;printers&quot;</em>, <em>&quot;battery&quot;</em>, <em>&quot;mouse&quot;</em>, <em>&quot;privacy&quot;</em>, <em>&quot;notifications&quot;</em>, <em>&quot;background&quot;</em>, <em>&quot;storage&quot;</em>, <em>&quot;accessibility&quot;</em>) and AeroSpot configuration tabs (<em>&quot;shortcuts&quot;</em>, <em>&quot;indexing&quot;</em>, <em>&quot;updates&quot;</em>, <em>&quot;instructions&quot;</em>). A dedicated <em>&quot;Settings&quot;</em> filter button lets you isolate configuration items.</p>
+<p>7. <strong>Zero-Lag Smooth Typing:</strong> A 50ms asynchronous Dispatcher debounce timer decouples typing from SQLite database queries, maintaining a fluid 60/144 fps typing experience with zero keypress lag.</p>
+<p>8. <strong>Space works naturally:</strong> When searching multi-word queries (e.g. <em>&quot;Google Chrome&quot;</em> or <em>&quot;Shopping notes&quot;</em>), pressing the spacebar types a normal space character without triggering file preview.</p>
 <h3>Shortcuts within the Search Window</h3>
 <div class='table-container'><table>
 <thead><tr>
@@ -198,7 +236,7 @@
 </tr>
 <tr>
 <td><strong>Right-Click on result</strong></td>
-<td>Opens context menu: <strong>📁 Open file location</strong> (reveals file in File Explorer), <strong>🚀 Open</strong>, <strong>👁 Preview</strong>, <strong>📋 Copy path</strong>.</td>
+<td>Opens dynamic context menu: <strong>📁 Open file location</strong>, <strong>🚀 Open</strong>, <strong>👁 Preview</strong>, <strong>📋 Copy path</strong>, and quick conversion actions.</td>
 </tr>
 <tr>
 <td><strong>Double Click</strong></td>
@@ -213,93 +251,184 @@
 <td>Automatically dismisses the launcher.</td>
 </tr>
 </tbody></table></div>
+<h3>Quick Actions, Windows Context Menu &amp; Aggregate Conversions</h3>
+<p>Right-clicking any search result in Spotlight, inside QuickLook, or via the cascading <strong>&quot;AeroSpot&quot; submenu in Windows File Explorer</strong> (<code>Shift + Right-click</code> / classic menu) gives instant access to single-file and <strong>multi-selection batch conversions</strong>:</p>
+<ul>
+<li><strong>📁 Open file location:</strong> Opens File Explorer and directly selects and highlights the item.</li>
+<li><strong>🖼 Convert to JPG / PNG:</strong> Converts images (individually or in batch when selecting multiple files of the same format) into high-quality JPEG (using DPI-independent pixel-level white compositing for transparency) or lossless transparent PNG.</li>
+<li><strong>📄 Convert to PDF / Combine photos into single PDF:</strong> Converts images or text/Word documents (<code>.md</code>, <code>.txt</code>, <code>.docx</code>) into native PDFs; selecting multiple photos combines them seamlessly into one ordered <strong>multi-page PDF document</strong>.</li>
+<li><strong>📑 Merge selected PDFs:</strong> Selecting two or more <code>.pdf</code> files in File Explorer merges them into a single unified document preserving all vector graphics and selectable text.</li>
+<li><strong>🎬 Convert to MP4 / 🎵 Extract MP3 &amp; WAV:</strong> Converts non-MP4 videos (MKV, AVI, MOV, WMV, WEBM) to compatible MP4 via FFmpeg or extracts high-quality MP3/WAV audio.</li>
+<li><strong>✨ Remove Background (AI):</strong> Cuts out photo backgrounds (single or multi-file batch) using a local Onnx/DirectML neural model with DirectX 12 GPU acceleration and CPU fallback. Downloaded on-demand upon first use (~44 MB).</li>
+<li><strong>Smart Multi-Monitor Progress Pill:</strong> Every task displays a sleek Dark Acrylic notification anchored flush inside the bottom-right corner of the <strong>currently active monitor</strong> (per-monitor DPI aware) with accurate live progress and a &quot;Show in folder&quot; button upon completion.</li>
+</ul>
 <hr/>
 <h2>3. Instant File Preview (QuickLook)</h2>
-<p>When in <strong>File Explorer</strong> (or on the <strong>Desktop</strong>):</p>
+<p>When in <strong>File Explorer</strong>, on the <strong>Desktop</strong>, or inside <strong>Open / Save / Attach file dialogs</strong> of any application (e.g. WhatsApp, Chrome, Edge, Notepad, Office):</p>
 <p>1. Click on a file or select it using keyboard arrow keys.</p>
 <p>2. Press the <strong>Spacebar</strong>: a window with the file&#39;s content preview opens instantly.</p>
 <p>3. Press <strong>Space</strong> (or <strong>Esc</strong>) again to close the preview.</p>
 <h3>Interactive Features in Preview:</h3>
 <ul>
-<li><strong>Mouse Wheel Zoom (Images and PDFs):</strong> Zoom in or out smoothly anchored directly at the mouse cursor.</li>
-<li><strong>Pan and Drag:</strong> When an image or PDF document is zoomed in, freely drag it by holding down the left mouse button. Click <strong>1:1</strong> to reset to original scale.</li>
+<li><strong>Right-Click Context Menu:</strong> Right-clicking anywhere within the QuickLook preview window brings up a Dark Fluent context menu granting direct access to all conversion tools, file management, and window controls.</li>
+<li><strong>Manual Rotation (Photos &amp; Videos):</strong> Dedicated <strong>⟳</strong> button in the QuickLook header to rotate preview by 90&#176; clockwise per click (0&#176; → 90&#176; → 180&#176; → 270&#176;). The window geometry and aspect ratio automatically adapt to the rotated view, eliminating black bars or letterboxing. Rotation is view-only in real time: the underlying file is never modified or rewritten on disk.</li>
+<li><strong>Mouse Wheel Zoom (Images):</strong> Zoom in or out smoothly anchored directly at the mouse cursor.</li>
+<li><strong>Pan and Drag:</strong> When an image is zoomed in, freely drag it by holding down the left mouse button. Click <strong>1:1</strong> to reset to original scale.</li>
+<li><strong>PDF Document Navigation:</strong> High-speed left sidebar thumbnail gallery (rendered on-demand in 1–2 ms per page); click any thumbnail to jump directly to that page with synchronized blue border highlighting. Scroll vertically through continuous stacked pages, pan with the hand tool (<code>Cursors.SizeAll</code>), use keyboard keys (<code>PageUp</code>/<code>PageDown</code>/<code>Home</code>/<code>End</code>), or click the vertical Up (<code>▲</code>) and Down (<code>▼</code>) chevrons on the bottom-left page capsule.</li>
 <li><strong>Full Screen:</strong> Press <strong>F11</strong>, <strong>double-click</strong> the photo/video, or click the <strong>⛶</strong> button at the top right to expand preview to full screen.</li>
 <li><strong>Window Memory:</strong> The preview window remembers position and dimensions during the active session, with optional persistent per-category memory via the pin 📌 icon in the header.</li>
 </ul>
-<h3>Supported Formats:</h3>
-<ul>
-<li><strong>PDF Documents:</strong> High-performance native vector multi-page viewer (<code>Windows.Data.Pdf</code>). Automatically adapts to actual page aspect ratio (landscape vs portrait), allows vertical scrolling across pages, fluid <code>Ctrl + Mouse Wheel</code> zoom (0.4x - 4.0x), pan with left mouse button, and <code>1:1</code> reset button.</li>
-<li><strong>Audio (.mp3, .wav, .m4a, .aac, .flac, .wma, .ogg, .mid, .midi, .aiff, .opus):</strong> Native playback with animated 33 RPM spinning vinyl record with vintage center hole/label, tonearm tracking track progression and retracting to side on stop/pause without resetting rotation, interactive scrubber, and volume slider.</li>
-<li><strong>3D STL Models (.stl):</strong> Native 60 FPS 3D rendering engine for ASCII and binary STL files. Orbit rotation via mouse dragging, mouse wheel zoom, and triangle/bounding box dimensions.</li>
-<li><strong>Videos (.mp4, .mov, .mkv, .avi, .wmv, .webm, .h264, .h265, .m4v, .flv, .3gp, .ts, .mpg, .mpeg):</strong> Smooth playback with default volume at 50%, full duration formatting with hours (<code>hh:mm:ss</code> for &gt; 1h), interactive click-to-seek timeline scrubber, and frameless vector controls.</li>
-<li><strong>Excel Spreadsheets (.xlsx, .xlsm, .xltx):</strong> High-speed native OpenXML reader with Dark Fluent grid layout, sheet tabs for multi-sheet workbooks, and correct bidirectional horizontal/vertical scrollbars.</li>
-<li><strong>Text &amp; Source Code:</strong> .txt, .md, .py, .json, .log, .csv, .ini, .cs, .xml, .yaml, .toml, .sql, .bat, .cmd, .cpp, .c, .h, .rs, .go, .ts, .js with monospace font, automatic encoding detection, line count, and vertical mouse wheel scrolling.</li>
-<li><strong>Office Documents &amp; RTF:</strong> Word (.docx), PowerPoint (.pptx), Rich Text (.rtf) via registered system preview handlers (COM Preview Handlers).</li>
-<li><strong>Folders:</strong> Immediate 0 ms display with full path at top, modification date in footer, and asynchronous calculation of total disk size, file count, and folder count (e.g. <code>1.45 GB (1,240 files, 48 folders)</code>).</li>
-<li><strong>Images:</strong> PNG, JPG, JPEG, WebP, animated GIFs, BMP, high-resolution ICO with proportional zoom and pan.</li>
-<li><strong>Shortcuts (.lnk) &amp; Applications:</strong> Clean information card with path, size, and date without text clipping, and high-definition vector icons for Desktop and UWP/Store apps.</li>
-<li><strong>Other Files:</strong> Descriptive card with metadata, format, modification date, and file size.</li>
-</ul>
+<h3>Canonical Supported Formats Table:</h3>
+<div class='table-container'><table>
+<thead><tr>
+<th>Category</th>
+<th>Supported Formats and Extensions</th>
+<th>Viewer Features / Architectural Notes</th>
+</tr></thead><tbody>
+<tr>
+<td><strong>PDF Documents</strong></td>
+<td><code>.pdf</code></td>
+<td>Ultra-fast native preview via Google PDFium x64 (<code>Docnet.Core</code>, QuickLook Store standard) on pure white paper with elegant drop shadow, <strong>continuous vertical scrolling</strong> with stacked pages, <strong>left sidebar page thumbnail gallery</strong> (<code>PdfSidebar</code>, 144px) for rapid browsing and click-to-page jump with synchronized highlight, <strong>page counter capsule repositioned at bottom-left</strong> under thumbnails with vertical chevrons (▲ / ▼), async lazy-loading with LRU cache (max 16 pages in RAM), left-click hand tool panning (<code>Cursors.SizeAll</code>), cursor-anchored <code>Ctrl + MouseWheel</code> zoom at <strong>60 FPS with 1:1 reset button</strong>, keyboard shortcuts (<code>PageUp</code>/<code>PageDown</code>/<code>Home</code>/<code>End</code>), and 100% in-process execution with zero external browser subprocesses.</td>
+</tr>
+<tr>
+<td><strong>Images</strong></td>
+<td><code>.png</code>, <code>.jpg</code>, <code>.jpeg</code>, <code>.webp</code>, <code>.bmp</code>, <code>.gif</code>, <code>.ico</code></td>
+<td>High-resolution rendering with DWM Cloaking anti-flicker architecture, DCT downsampling to 2560px for instant loading (&lt; 150 ms), zoom and pan, animated GIF support.</td>
+</tr>
+<tr>
+<td><strong>Camera RAW</strong></td>
+<td><code>.arw</code>, <code>.dng</code>, <code>.cr2</code>, <code>.cr3</code>, <code>.nef</code>, <code>.orf</code>, <code>.rw2</code>, <code>.pef</code>, <code>.raf</code></td>
+<td>Ultra-fast strategy: 1) Instant (~20–30 ms) embedded full-size preview JPEG extraction without full raw demosaicing; 2) Fallback to system WIC decoder with DCT downsampling and EXIF orientation; 3) Clean camera metadata card. Zero prior conversion needed.</td>
+</tr>
+<tr>
+<td><strong>Vector Graphics</strong></td>
+<td><code>.svg</code></td>
+<td>High-fidelity native vector rendering powered by SharpVectors (WPF DrawingImage), infinite smooth zoom without pixelation, safe script isolation (<code>IncludeRuntime = false</code>), and XML source code fallback.</td>
+</tr>
+<tr>
+<td><strong>Vector Graphics AI</strong></td>
+<td><code>.ai</code> (Adobe Illustrator)</td>
+<td>Clean informational card with technical metadata and quick launch in default application, avoiding third-party COM server crashes and black screens.</td>
+</tr>
+<tr>
+<td><strong>Spreadsheets</strong></td>
+<td><code>.xlsx</code>, <code>.xlsm</code>, <code>.xltx</code></td>
+<td>Native C# OpenXML reader with zero external dependencies (opens without Office installed), multi-sheet tab navigation, Dark Fluent grid with column letters and row numbers.</td>
+</tr>
+<tr>
+<td><strong>Audio</strong></td>
+<td><code>.mp3</code>, <code>.wav</code>, <code>.m4a</code>, <code>.aac</code>, <code>.flac</code>, <code>.wma</code>, <code>.ogg</code>, <code>.mid</code>, <code>.midi</code>, <code>.aiff</code>, <code>.opus</code></td>
+<td>Vintage 33 RPM spinning vinyl turntable with center spindle hole, animated continuous rotation, cinematic tonearm tracking grooves and retracting on pause/stop while freezing rotation angle.</td>
+</tr>
+<tr>
+<td><strong>Videos</strong></td>
+<td><code>.mp4</code>, <code>.mov</code>, <code>.mkv</code>, <code>.avi</code>, <code>.wmv</code>, <code>.webm</code>, <code>.h264</code>, <code>.h265</code>, <code>.m4v</code>, <code>.flv</code>, <code>.3gp</code>, <code>.ts</code>, <code>.mpg</code>, <code>.mpeg</code></td>
+<td>Hardware-accelerated smooth playback, automatic orientation for vertical smartphone recordings, on-demand 60x FFmpeg remuxing pipeline for incompatible multichannel bitstream audio (AC-3, DTS, TrueHD) at VLC parity, interactive click-to-seek timeline scrubber.</td>
+</tr>
+<tr>
+<td><strong>3D Models</strong></td>
+<td><code>.stl</code></td>
+<td>Native 60 FPS 3D rendering engine for ASCII and binary STL files. Orbit rotation via mouse dragging, mouse wheel zoom, triangle count, and bounding box dimensions.</td>
+</tr>
+<tr>
+<td><strong>Web Pages</strong></td>
+<td><code>.html</code>, <code>.htm</code></td>
+<td>Safe passive dark-mode viewer, isolated from script execution and compliant with WPF airspace constraints.</td>
+</tr>
+<tr>
+<td><strong>Text &amp; Code</strong></td>
+<td><code>.txt</code>, <code>.md</code>, <code>.py</code>, <code>.json</code>, <code>.log</code>, <code>.csv</code>, <code>.ini</code>, <code>.cs</code>, <code>.xml</code>, <code>.yaml</code>, <code>.toml</code>, <code>.sql</code>, <code>.bat</code>, <code>.cmd</code>, <code>.cpp</code>, <code>.c</code>, <code>.h</code>, <code>.rs</code>, <code>.go</code>, <code>.ts</code>, <code>.js</code></td>
+<td>Monospace typography (<em>Cascadia Mono</em> / <em>Consolas</em>), automatic encoding detection (UTF-8, UTF-16, ANSI), line count, and safe 100 KB truncation limit to protect RAM.</td>
+</tr>
+<tr>
+<td><strong>Office Documents</strong></td>
+<td><code>.docx</code>, <code>.docm</code>, <code>.dotx</code>, <code>.pptx</code>, <code>.rtf</code></td>
+<td>Native zero-Office OpenXML reader (~5–15 ms) for <code>.docx</code>/<code>.docm</code>/<code>.dotx</code> with Fluent typography and PDF export; out-of-process COM hosting (<code>prevhost.exe</code>) for <code>.pptx</code> and <code>.rtf</code>.</td>
+</tr>
+<tr>
+<td><strong>Folders</strong></td>
+<td>File system directories and folders</td>
+<td>Instant 0 ms display with asynchronous calculation of total disk size, file count, and subfolder count.</td>
+</tr>
+<tr>
+<td><strong>Shortcuts &amp; Apps</strong></td>
+<td><code>.lnk</code>, UWP / Store apps</td>
+<td>Metadata card with real target extraction, file size, and high-resolution vector application icons.</td>
+</tr>
+<tr>
+<td><strong>Generic Files</strong></td>
+<td>All other file extensions</td>
+<td>Clean informational card with native Shell icon, file size, modification date, and full path.</td>
+</tr>
+</tbody></table></div>
 <blockquote><strong>Typing Protection:</strong> When renaming a file or typing in Windows Explorer&#39;s address bar or search box, pressing Space inputs a normal space character without opening preview.</blockquote>
 <hr/>
 <h2>4. Settings Panel</h2>
 <p>You can access Settings in two ways:</p>
 <p>1. <strong>From system tray:</strong> Right-click the AeroSpot icon next to the clock -&gt; <strong>Settings...</strong></p>
-<p>2. <strong>From search bar:</strong> Click the <strong>⚙ Settings</strong> button in the lower bar of Spotlight.</p>
-<h3>Configurable Options:</h3>
-<p>1. <strong>Interface Language:</strong> Choose between <code>Automatic (system language)</code>, <code>Italiano</code>, or <code>English</code>. Language switches instantly across the entire interface without restart.</p>
-<p>2. <strong>Spotlight Shortcut:</strong> Choose between <code>Alt + Space</code>, <code>Ctrl + Space</code>, <code>Win + Space</code>, or record a custom combination with real-time collision detection.</p>
-<p>3. <strong>QuickLook Shortcut:</strong> Choose <code>Space</code>, <code>Shift + Space</code>, or record your preferred key.</p>
-<p>4. <strong>Indexed Drives:</strong> Select drives to monitor via checkboxes (system drive and detected fixed drives enabled by default, e.g. <code>C:\</code>, <code>E:\</code>, <code>D:\</code>).</p>
-<p>5. <strong>Folder Exclusions:</strong> Excludes heavy game directories (<em>SteamLibrary</em>, <em>Epic Games</em>), temp folders (<em>Temp</em>, <em>AppData\Local\Temp</em>), and developer build folders (<em>.git</em>, <em>node_modules</em>, <em>bin</em>, <em>obj</em>) by default. Easily add or remove custom paths.</p>
-<p>6. <strong>System &amp; Performance:</strong></p>
+<p>2. <strong>From search bar:</strong> Click the <strong>⚙ Settings</strong> button at the bottom-right corner of Spotlight.</p>
+<h3>Configurable Tabs and Sections:</h3>
+<p>The Settings window is organized into three clean, focused sections:</p>
+<p>1. <strong>General:</strong></p>
 <ul>
-<li><em>Start with Windows:</em> Registers AeroSpot in Windows autostart with standard user privileges. Honors Task Manager status and auto-repairs path if the folder is moved.</li>
-<li><em>Worker Pre-spawn:</em> If both &quot;Start with Windows&quot; and &quot;Keep worker warm&quot; are enabled, AeroSpot automatically pre-spawns the Worker in the background at system boot for instant 0 ms response.</li>
-<li><em>Worker Auto-Shutdown:</em> Host consumes only <strong>~8 MB RAM</strong> at rest. When Worker spawns for a preview or search, it shuts down after 30 seconds of inactivity, returning all memory to Windows. A 10-second grace period is active between consecutive previews to eliminate micro-stutters.</li>
+<li><strong>Interface Language:</strong> Toggle between <code>Automatic</code>, <code>Italiano</code>, and <code>English</code> with instantaneous in-memory language switching.</li>
+<li><strong>Keyboard Shortcuts:</strong> Configure global hotkeys for Spotlight (default <code>Alt + Space</code>) and QuickLook (default <code>Spacebar</code>).</li>
+<li><strong>Startup &amp; Performance:</strong> Options for <em>Start with Windows</em>, <em>Keep-Warm</em> active engine, and <em>Pre-spawn on Startup</em>.</li>
+<li><strong>Explorer Integration:</strong> Windows Shell context menu actions and auto-opening destination folder after media conversions.</li>
+<li><strong>Updates &amp; About:</strong> GitHub update check frequency, instant manual check, version info, <code>Data\</code> folder link, and icon cache reset.</li>
 </ul>
-<p>7. <strong>Data Directory &amp; Storage:</strong></p>
+<p>2. <strong>QuickLook:</strong></p>
 <ul>
-<li>Displays real data directory path: <code>&lt;AppDir&gt;\Data\</code> if <code>portable.txt</code> is present, or <code>%LOCALAPPDATA%\AeroSpot\</code>.</li>
-<li>Shows real-time disk space consumed by the search index database (<code>index.db</code>).</li>
+<li><strong>Preview Guide &amp; Shortcuts:</strong> Overview of keyboard commands (<code>Space</code> / <code>Esc</code> to dismiss, <code>F11</code> or double click for fullscreen, wheel zoom, mouse pan, <code>PageUp</code>/<code>PageDown</code> for PDF, <code>1:1</code> reset button).</li>
+<li><strong>Rotation &amp; Proportions:</strong> Dedicated <strong>⟳</strong> button for 90&#176; clockwise real-time rotation for photos and videos with automatic window aspect-ratio adjustment (no black bars).</li>
+<li><strong>Window Behavior:</strong> Manage persistent per-category window size memory via pin 📌 icon, with a one-click button to reset remembered sizes to factory defaults.</li>
+<li><strong>Always on Top Window Lock:</strong> Option <em>&quot;Keep preview window always on top&quot;</em> to choose whether QuickLook remains permanently pinned in the foreground even when clicking other applications, or uses the default contextual layering where the active window smoothly layers over QuickLook upon deactivation.</li>
 </ul>
-<p>8. <strong>Instructions &amp; Documentation:</strong></p>
+<p>3. <strong>Spot (Search &amp; Indexing):</strong></p>
 <ul>
-<li>Buttons to open the formatted offline HTML documentation in the default browser or visit the official GitHub repository.</li>
+<li><strong>Home Screen Mode:</strong> Initial view dropdown (<em>Recently opened items</em>, <em>Most frequently opened items</em>, <em>Most frequent searches</em>, <em>Show nothing / Blank privacy</em>).</li>
+<li><strong>Indexed Drives:</strong> Toggle disk drives to index with detailed technical info card on RAM, CPU, and scan speed.</li>
+<li><strong>Exclusions:</strong> Exclude folders or paths from indexing with immediate SQLite record purge.</li>
+<li><strong>Update Frequency:</strong> Configure periodic disk re-scan interval.</li>
+<li><strong>History &amp; Privacy:</strong> Irreversibly clear recent search queries and opened items from local SQLite database.</li>
+<li><strong>Category Hierarchy:</strong> Fluid drag-and-drop reordering of search result categories with ghost card and target slot highlighting. Mixed hierarchy toggle and reset order button.</li>
 </ul>
 <hr/>
 <h2>5. System Tray Icon and Menu</h2>
-<p>Located at the bottom right, next to the Windows clock:</p>
+<p>In the bottom-right corner, next to the Windows clock:</p>
 <ul>
-<li><strong>Left Click (or Double Click):</strong> Opens or toggles the Spotlight search bar.</li>
-<li><strong>Right Click:</strong> Context menu offering:</li>
-<li><em>Open AeroSpot (Alt + Space)</em></li>
+<li><strong>Left-Click (or double click):</strong> Summons Spotlight quick search.</li>
+<li><strong>Right-Click:</strong> Native Win32 context menu featuring:</li>
+<li><em>Open AeroSpot (<code>Alt + Space</code>)</em></li>
 <li><em>Settings...</em></li>
-<li><em>Worker Status</em> (indicates whether UI engine is idle or active in RAM)</li>
-<li><em>Exit AeroSpot</em> (clean, complete shutdown of all processes).</li>
+<li><em>Check for updates...</em></li>
+<li><em>Worker Status</em> (indicates whether UI worker is idle or active in memory)</li>
+<li><em>Exit AeroSpot</em> (clean and complete shutdown of all processes).</li>
 </ul>
 <hr/>
-<h2>6. Graphic Identity and Logo</h2>
-<p>Original design assets are located in <code>design/</code>:</p>
-<ul>
-<li><code>design/logo.svg</code>: High-precision vector SVG with opposed triangles and diagonal cut.</li>
-<li><code>design/app_icon.svg</code> and <code>app_icon.png</code>: Fluent dark squircle icon with cyan/white gradient.</li>
-<li><code>design/app.ico</code>: Multi-resolution embedded application and tray icon.</li>
-</ul>
+<h2>6. Installation, Update, and Uninstallation Guide</h2>
+<h3>Installed Edition (Recommended)</h3>
+<p>1. <strong>Installation:</strong> Download and run <code>AeroSpot-Setup-v&lt;ver&gt;.exe</code>. Installs per-user into <code>{localappdata}\Programs\AeroSpot</code> without requiring UAC administrator privileges. Creates Start Menu and Desktop shortcuts.</p>
+<p>2. <strong>Updating:</strong> When an update is detected, click &quot;Update&quot;. The updater terminates active processes and replaces program binaries while preserving your search database and preferences intact in <code>%LOCALAPPDATA%\AeroSpot\Data\</code>.</p>
+<p>3. <strong>Uninstallation:</strong> From Windows <em>Installed Apps</em>, select AeroSpot and click <em>Uninstall</em>. The uninstaller cleans program files, shortcuts, autostart entries, and prompts whether to keep or remove the index database.</p>
+<h3>Portable Edition</h3>
+<p>1. <strong>Installation:</strong> Download and extract <code>AeroSpot-v&lt;ver&gt;-win-x64-portable.zip</code> into any folder or USB drive. Run <code>AeroSpot.exe</code>.</p>
+<p>2. <strong>Updating:</strong> Download the new portable ZIP, exit AeroSpot from tray, and overwrite existing files. Your local <code>Data\</code> subfolder is completely untouched.</p>
+<p>3. <strong>Uninstallation:</strong> Run <code>Uninstall.exe</code> beside <code>AeroSpot.exe</code> for an automated, zero-residue cleanup.</p>
 <hr/>
-<h2>7. Troubleshooting</h2>
+<h2>7. Troubleshooting &amp; FAQ</h2>
 <ul>
-<li><strong>Shortcut does not respond:</strong></li>
+<li><strong>The shortcut <code>Alt + Space</code> does not respond:</strong></li>
 </ul>
-<p>Check if another utility (e.g. Listary or PowerToys) claims <code>Alt + Space</code>. AeroSpot automatically falls back to <code>Ctrl + Space</code> or <code>Alt + F12</code> and displays a notification. You can also pick an alternative shortcut in Settings.</p>
+<p>Verify if another utility (e.g. PowerToys Run or Listary) already occupies <code>Alt + Space</code>. AeroSpot detects the conflict, notifies you, and switches to safe fallbacks <code>Ctrl + Space</code> or <code>Alt + F12</code>. You can customize the shortcut at any time in Settings.</p>
 <ul>
-<li><strong>Emergency unblock hotkey:</strong></li>
+<li><strong>Emergency Unhook Key:</strong></li>
 </ul>
-<p>Pressing <code>F12</code> immediately unhooks keyboard listeners and restores input focus in case of unexpected lockups.</p>
+<p>If keyboard focus becomes trapped, pressing <code>F12</code> immediately forces the Host to unhook low-level keyboard listeners and restore Windows focus.</p>
 <ul>
-<li><strong>Log files:</strong></li>
+<li><strong>Viewing Diagnostic Logs:</strong></li>
 </ul>
-<p>Detailed diagnostic logs are stored in the data directory (<code>&lt;DataDir&gt;\logs\host.log</code> and <code>worker.log</code>).</p>
+<p>Log files retaining the last 24 hours of diagnostics for Host, Worker, and Tools are located in the <code>logs\</code> subfolder inside your active data directory.</p>
 
         <div class="footer">
             AeroSpot â€” Windows 11 Spotlight &amp; QuickLook Engine &bull; Offline Documentation

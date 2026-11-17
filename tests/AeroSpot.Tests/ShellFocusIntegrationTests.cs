@@ -20,7 +20,8 @@ namespace AeroSpot.Tests
             var config = AppConfig.Load();
             config.WorkerIdleTimeoutSeconds = 4; // Breve timeout per il test
 
-            using var manager = new WorkerManager(config);
+            string pipeName = $"AeroSpot_TestPipe_Shell_{Guid.NewGuid():N}";
+            using var manager = new WorkerManager(config, pipeName);
 
             string sampleFile = Path.Combine(AppContext.BaseDirectory, "AeroSpot.Core.dll");
             Assert.IsTrue(File.Exists(sampleFile), "Sample file for preview must exist.");

@@ -255,11 +255,16 @@ namespace AeroSpot.Core.Shell
             return false;
         }
 
+        public static bool IsFileDialog(IntPtr hwnd)
+        {
+            return FileDialogResolver.IsFileDialog(hwnd);
+        }
+
         public static bool TryGetFocusedPath(IntPtr foregroundHwnd, out string? filePath)
         {
             filePath = null;
 
-            if (foregroundHwnd == IntPtr.Zero || !IsExplorerOrDesktop(foregroundHwnd))
+            if (foregroundHwnd == IntPtr.Zero || (!IsExplorerOrDesktop(foregroundHwnd) && !IsFileDialog(foregroundHwnd)))
             {
                 return false;
             }
@@ -272,15 +277,22 @@ namespace AeroSpot.Core.Shell
 
             try
             {
-                if (IsDesktop(foregroundHwnd))
+                if (IsExplorerOrDesktop(foregroundHwnd))
                 {
-                    filePath = GetFocusedPathForDesktop();
-                    return !string.IsNullOrEmpty(filePath);
+                    if (IsDesktop(foregroundHwnd))
+                    {
+                        filePath = GetFocusedPathForDesktop();
+                        return !string.IsNullOrEmpty(filePath);
+                    }
+                    else
+                    {
+                        filePath = GetFocusedPathForExplorer(foregroundHwnd);
+                        return !string.IsNullOrEmpty(filePath);
+                    }
                 }
-                else
+                else if (IsFileDialog(foregroundHwnd))
                 {
-                    filePath = GetFocusedPathForExplorer(foregroundHwnd);
-                    return !string.IsNullOrEmpty(filePath);
+                    return FileDialogResolver.TryGetFocusedPath(foregroundHwnd, out filePath);
                 }
             }
             catch (Exception ex)
@@ -288,6 +300,8 @@ namespace AeroSpot.Core.Shell
                 AppLogger.Warn("Errore durante il recupero dell'elemento con focus dalla Shell.", ex);
                 return false;
             }
+
+            return false;
         }
 
         public static string? GetFocusedPathForDesktop()

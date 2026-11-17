@@ -12,6 +12,7 @@ namespace AeroSpot.Host.Native
         private const string WindowClassName = "AeroSpot_Host_MessageClass";
         private const int HOTKEY_ID_PRIMARY = 9001;
         private const int HOTKEY_ID_FALLBACK = 9002;
+        private static readonly uint WM_TASKBARCREATED = Win32.RegisterWindowMessage("TaskbarCreated");
 
         private AppConfig _config;
         private readonly WorkerManager _workerManager;
@@ -23,6 +24,7 @@ namespace AeroSpot.Host.Native
         private int _registeredHotkeyId;
         private System.Threading.CancellationTokenSource? _dynamicTrackingCts;
         private string? _lastActivePreviewPath;
+        private volatile bool _isPreviewActive;
         private bool _isDisposed;
 
         public HostWindow(AppConfig config, WorkerManager workerManager)
@@ -79,18 +81,35 @@ namespace AeroSpot.Host.Native
             _trayManager.AddTrayIcon(AeroSpot.Core.Localization.LocalizationService.Get("Tray_Tooltip"));
 
             _workerManager.ConfigReloadRequested += OnConfigReloadRequested;
-            _workerManager.PreviewOpened += StartDynamicTracking;
-            _workerManager.PreviewClosed += StopDynamicTracking;
+            _workerManager.PreviewOpened += (path) =>
+            {
+                _isPreviewActive = true;
+                StartDynamicTracking(path);
+            };
+            _workerManager.PreviewClosed += () =>
+            {
+                _isPreviewActive = false;
+                StopDynamicTracking();
+            };
 
             // Registra Hotkey globale
             RegisterHotkeys();
 
             // Inizializza hook globale per QuickLook (intercettazione Spazio/hotkey in Explorer e Desktop)
-            _hookManager = new KeyboardHookManager(_config.QuickLookKey, _config.QuickLookModifiers, OnQuickLookPreviewRequested);
+            _hookManager = new KeyboardHookManager(
+                _config.QuickLookKey, 
+                _config.QuickLookModifiers, 
+                OnQuickLookPreviewRequested, 
+                OnQuickLookCloseRequested, 
+                () => _isPreviewActive,
+                OnCloseAllRequested);
             if (!_hookManager.Install())
             {
                 AppLogger.Warn("Installazione dell'hook per QuickLook non riuscita. L'anteprima da Explorer potrebbe non funzionare.");
             }
+
+            // Avvia controllo automatico aggiornamenti in background
+            ScheduleAutomaticUpdateCheck();
 
             return true;
         }
@@ -98,13 +117,38 @@ namespace AeroSpot.Host.Native
         private void OnQuickLookPreviewRequested(string filePath)
         {
             AppLogger.Info($"Richiesta anteprima QuickLook da Explorer per: {filePath}");
+            Win32.AllowSetForegroundWindow(Win32.ASFW_ANY);
+            _isPreviewActive = true;
             _ = Task.Run(async () =>
             {
                 bool ok = await _workerManager.ShowPreviewAsync(filePath);
                 if (!ok)
                 {
+                    _isPreviewActive = false;
                     AppLogger.Warn($"Impossibile mostrare l'anteprima per {filePath}.");
                 }
+            });
+        }
+
+        private void OnQuickLookCloseRequested()
+        {
+            AppLogger.Info("Richiesta chiusura rapida QuickLook da hook di tastiera.");
+            _isPreviewActive = false;
+            StopDynamicTracking();
+            _ = Task.Run(async () =>
+            {
+                await _workerManager.HidePreviewAsync();
+            });
+        }
+
+        private void OnCloseAllRequested()
+        {
+            AppLogger.Info("Richiesta chiusura unificata (CloseAll) da hook di tastiera Escape.");
+            _isPreviewActive = false;
+            StopDynamicTracking();
+            _ = Task.Run(async () =>
+            {
+                await _workerManager.CloseAllAsync();
             });
         }
 
@@ -113,6 +157,7 @@ namespace AeroSpot.Host.Native
             StopDynamicTracking();
 
             _lastActivePreviewPath = initialPath;
+            string trackedPath = initialPath;
             _dynamicTrackingCts = new System.Threading.CancellationTokenSource();
             var token = _dynamicTrackingCts.Token;
 
@@ -124,18 +169,23 @@ namespace AeroSpot.Host.Native
                     try
                     {
                         System.Threading.Thread.Sleep(120);
-                        if (token.IsCancellationRequested) break;
+                        if (token.IsCancellationRequested || !_isPreviewActive) break;
 
                         IntPtr fg = Win32.GetForegroundWindow();
-                        if (AeroSpot.Core.Shell.ExplorerFocusResolver.IsExplorerOrDesktop(fg) && 
+                        if ((AeroSpot.Core.Shell.ExplorerFocusResolver.IsExplorerOrDesktop(fg) || 
+                             AeroSpot.Core.Shell.ExplorerFocusResolver.IsFileDialog(fg)) && 
                             !AeroSpot.Core.Shell.ExplorerFocusResolver.IsUserTypingOrRenaming(fg))
                         {
                             if (AeroSpot.Core.Shell.ExplorerFocusResolver.TryGetFocusedPath(fg, out string? newPath) && !string.IsNullOrEmpty(newPath))
                             {
-                                if (!string.Equals(newPath, _lastActivePreviewPath, StringComparison.OrdinalIgnoreCase))
+                                if (token.IsCancellationRequested || !_isPreviewActive) break;
+
+                                if (!string.Equals(newPath, trackedPath, StringComparison.OrdinalIgnoreCase))
                                 {
+                                    trackedPath = newPath;
                                     _lastActivePreviewPath = newPath;
                                     AppLogger.Info($"Selezione dinamica cambiata in Explorer: {newPath}");
+                                    Win32.AllowSetForegroundWindow(Win32.ASFW_ANY);
                                     _ = _workerManager.ShowPreviewAsync(newPath);
                                 }
                             }
@@ -251,6 +301,41 @@ namespace AeroSpot.Host.Native
             });
         }
 
+        private void ScheduleAutomaticUpdateCheck()
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    // Attendi 10 secondi dall'avvio per non impattare le prestazioni iniziali di Windows
+                    await Task.Delay(10000).ConfigureAwait(false);
+
+                    if (AeroSpot.Core.Services.UpdateService.ShouldCheckForUpdates(_config))
+                    {
+                        var result = await AeroSpot.Core.Services.UpdateService.CheckForUpdatesAsync(ct: CancellationToken.None).ConfigureAwait(false);
+                        if (result.IsSuccess)
+                        {
+                            _config.LastUpdateCheckUtc = DateTime.UtcNow;
+                            _config.Save();
+
+                            if (result.HasUpdate)
+                            {
+                                AppLogger.Info($"UpdateService: Trovato aggiornamento automatico v{result.LatestVersion}!");
+                                _trayManager?.ShowBalloonNotification(
+                                    "AeroSpot — Aggiornamento disponibile",
+                                    $"È disponibile la nuova versione v{result.LatestVersion}! Clicca per visualizzare o aggiornare.",
+                                    Win32.NIIF_INFO);
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Warn($"Verifica automatica aggiornamenti: {ex.Message}");
+                }
+            });
+        }
+
         private void OnConfigReloadRequested()
         {
             AppLogger.Info("Ricevuta richiesta ricarica configurazione. Invio messaggio al thread Host...");
@@ -264,12 +349,19 @@ namespace AeroSpot.Host.Native
         {
             AppLogger.Info("Ricarica impostazioni Host eseguita sul thread Win32...");
             _config = AppConfig.Load();
+            _workerManager.UpdateConfig(_config);
             AeroSpot.Core.Localization.LocalizationService.Initialize(_config.Language);
             RegisterHotkeys();
 
             // Riconfigura hook se il tasto o i modificatori di QuickLook sono cambiati
             _hookManager?.Dispose();
-            _hookManager = new KeyboardHookManager(_config.QuickLookKey, _config.QuickLookModifiers, OnQuickLookPreviewRequested);
+            _hookManager = new KeyboardHookManager(
+                _config.QuickLookKey,
+                _config.QuickLookModifiers,
+                OnQuickLookPreviewRequested,
+                OnQuickLookCloseRequested,
+                () => _isPreviewActive,
+                OnCloseAllRequested);
             _hookManager.Install();
 
             if (_config.KeepWorkerWarm)
@@ -297,6 +389,13 @@ namespace AeroSpot.Host.Native
 
         private IntPtr CustomWndProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam)
         {
+            if (msg == WM_TASKBARCREATED && WM_TASKBARCREATED != 0)
+            {
+                AppLogger.Info("Messaggio TaskbarCreated ricevuto: ripristino icona nella System Tray...");
+                _trayManager?.AddTrayIcon(AeroSpot.Core.Localization.LocalizationService.Get("Tray_Tooltip"));
+                return IntPtr.Zero;
+            }
+
             switch (msg)
             {
                 case Win32.WM_HOTKEY:
@@ -324,6 +423,11 @@ namespace AeroSpot.Host.Native
                     else if (mouseMsg == Win32.WM_LBUTTONUP || mouseMsg == Win32.WM_LBUTTONDBLCLK)
                     {
                         OnShowLauncherRequested();
+                        return IntPtr.Zero;
+                    }
+                    else if (mouseMsg == 0x0405) // NIN_BALLOONUSERCLICK
+                    {
+                        OnSettingsRequested();
                         return IntPtr.Zero;
                     }
                     break;

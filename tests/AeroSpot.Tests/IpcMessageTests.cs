@@ -42,6 +42,21 @@ namespace AeroSpot.Tests
         }
 
         [TestMethod]
+        public async Task Roundtrip_CloseAll_Success()
+        {
+            var original = new IpcMessage(IpcMessageType.CloseAll);
+
+            using var ms = new MemoryStream();
+            await IpcMessage.WriteAsync(ms, original);
+
+            ms.Position = 0;
+            var deserialized = await IpcMessage.ReadAsync(ms);
+
+            Assert.IsNotNull(deserialized);
+            Assert.AreEqual(IpcMessageType.CloseAll, deserialized.Type);
+        }
+
+        [TestMethod]
         public async Task Read_CorruptedMagicHeader_ThrowsInvalidDataException()
         {
             byte[] corrupted = new byte[11];

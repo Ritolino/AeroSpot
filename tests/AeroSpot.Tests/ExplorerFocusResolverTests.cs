@@ -158,6 +158,51 @@ namespace AeroSpot.Tests
             TestContext?.WriteLine($"Desktop resolved path: {desktopPath ?? "(no selection)"}");
         }
 
+        [TestMethod]
+        public void FileDialogResolver_HandlesZeroHandlesSafely()
+        {
+            Assert.IsFalse(FileDialogResolver.IsFileDialog(IntPtr.Zero));
+            Assert.IsFalse(ExplorerFocusResolver.IsFileDialog(IntPtr.Zero));
+            Assert.IsFalse(FileDialogResolver.TryGetFocusedPath(IntPtr.Zero, out string? path));
+            Assert.IsNull(path);
+        }
+
+        [TestMethod]
+        public void PreviewWindow_ContextualTopmost_TransitionsOnActivationEvents()
+        {
+            Exception? threadEx = null;
+            var t = new System.Threading.Thread(() =>
+            {
+                try
+                {
+                    var window = new AeroSpot.Worker.PreviewWindow();
+
+                    // Initial XAML Topmost is false (no permanent pin)
+                    Assert.IsFalse(window.Topmost, "Window should not have static Topmost=True permanently.");
+
+                    // Simula attivazione finestra (focus acquisito)
+                    window.Topmost = true;
+                    Assert.IsTrue(window.Topmost);
+
+                    // Deattivazione (utente passa a un'altra finestra): Topmost deve essere rilasciato
+                    window.Topmost = false;
+                    Assert.IsFalse(window.Topmost, "Topmost should be released on deactivation so other windows sit above.");
+                }
+                catch (Exception ex)
+                {
+                    threadEx = ex;
+                }
+            });
+            t.SetApartmentState(System.Threading.ApartmentState.STA);
+            t.Start();
+            t.Join(TimeSpan.FromSeconds(5));
+
+            if (threadEx != null)
+            {
+                throw new AssertFailedException("PreviewWindow contextual topmost test failed: " + threadEx.Message, threadEx);
+            }
+        }
+
         public TestContext? TestContext { get; set; }
 
         public class MockShellItem

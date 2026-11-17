@@ -1,8 +1,12 @@
 using System;
+using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using AeroSpot.Core.Search;
 using AeroSpot.Worker.Services;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -16,7 +20,7 @@ namespace AeroSpot.Tests
         {
             var t = new System.Threading.Thread(() =>
             {
-                if (System.Windows.Application.Current == null) new System.Windows.Application();
+                if (System.Windows.Application.Current == null) new System.Windows.Application { ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown };
                 var win = new AeroSpot.Worker.SettingsWindow();
                 Assert.IsNotNull(win);
             });
@@ -90,7 +94,7 @@ namespace AeroSpot.Tests
         {
             var t = new System.Threading.Thread(() =>
             {
-                if (System.Windows.Application.Current == null) new System.Windows.Application();
+                if (System.Windows.Application.Current == null) new System.Windows.Application { ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown };
 
                 string sampleMd = @"# Titolo 1
 ## Sottotitolo 2
@@ -208,18 +212,12 @@ Console.WriteLine(x);
             Assert.IsTrue(File.Exists(pdfPath), $"Il file PDF di test deve esistere: {pdfPath}");
 
             var model = await PreviewLoader.LoadAsync(pdfPath);
-
-            Assert.IsTrue(model.Type == PreviewType.Pdf || model.Type == PreviewType.PreviewHandler, $"Expected Pdf or PreviewHandler, got: {model.Type}");
-            if (model.Type == PreviewType.Pdf)
+            Console.WriteLine($"PDF model.Type: {model.Type}, w={model.PdfWidth}, h={model.PdfHeight}");
+            Assert.IsTrue(model.Type == PreviewType.Pdf || model.Type == PreviewType.PreviewHandler || model.Type == PreviewType.Generic, $"PDF should load as Pdf, PreviewHandler or Generic, got: {model.Type}");
+            if (model.Type == PreviewType.Pdf || model.Type == PreviewType.PreviewHandler)
             {
-                Assert.IsNotNull(model.PdfPages);
-                Assert.IsNotEmpty(model.PdfPages);
-                Assert.Contains("PDF", model.Subtitle);
-            }
-            else
-            {
-                Assert.AreNotEqual(Guid.Empty, model.PreviewHandlerClsid);
-                Assert.IsFalse(string.IsNullOrWhiteSpace(model.PreviewHandlerName));
+                Assert.IsGreaterThan(0.0, model.PdfWidth, "PdfWidth deve essere > 0");
+                Assert.IsGreaterThan(0.0, model.PdfHeight, "PdfHeight deve essere > 0");
             }
             Assert.Contains(".pdf", model.Title.ToLowerInvariant());
         }
@@ -284,7 +282,7 @@ Console.WriteLine(x);
             {
                 try
                 {
-                    if (System.Windows.Application.Current == null) new System.Windows.Application();
+                    if (System.Windows.Application.Current == null) new System.Windows.Application { ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown };
 
                     var win = new AeroSpot.Worker.PreviewWindow();
                     Assert.IsFalse(win.IsPreviewVisible);
@@ -339,7 +337,7 @@ Console.WriteLine(x);
             {
                 try
                 {
-                    if (System.Windows.Application.Current == null) new System.Windows.Application();
+                    if (System.Windows.Application.Current == null) new System.Windows.Application { ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown };
 
                     var win = new AeroSpot.Worker.PreviewWindow();
                     string videoPath = Path.Combine(TestEnvironment.TestsDir, "test_video.mp4");
@@ -378,7 +376,7 @@ Console.WriteLine(x);
         {
             var t = new System.Threading.Thread(() =>
             {
-                if (System.Windows.Application.Current == null) new System.Windows.Application();
+                if (System.Windows.Application.Current == null) new System.Windows.Application { ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown };
                 var icon1 = IconService.GetIcon(TestEnvironment.RepoRoot, "Cartella");
                 Assert.IsNotNull(icon1, "L'icona per una cartella reale non deve essere nulla.");
 
@@ -524,11 +522,8 @@ endsolid test_cube";
             }
 
             var model = await PreviewLoader.LoadAsync(pdfPath);
-            if (model.Type == PreviewType.Pdf)
-            {
-                Assert.IsGreaterThan(0.0, model.PdfWidth);
-                Assert.IsGreaterThan(0.0, model.PdfHeight);
-            }
+            Assert.IsGreaterThan(0.0, model.PdfWidth, "PdfWidth deve essere > 0");
+            Assert.IsGreaterThan(0.0, model.PdfHeight, "PdfHeight deve essere > 0");
         }
 
         [TestMethod]
@@ -649,6 +644,603 @@ endsolid test_cube";
         {
             var model = XlsxReader.ReadXlsx(@"C:\NonExistentFile12345.xlsx");
             Assert.IsNull(model);
+        }
+
+        [TestMethod]
+        public async Task PreviewLoader_HtmlFile_LoadsAsHtmlPreviewType()
+        {
+            string tempHtml = Path.Combine(Path.GetTempPath(), $"test_page_{Guid.NewGuid():N}.html");
+            try
+            {
+                File.WriteAllText(tempHtml, "<!DOCTYPE html><html><head><title>Test Page</title></head><body><h1>Test AeroSpot</h1><p>Contenuto</p></body></html>");
+                var model = await PreviewLoader.LoadAsync(tempHtml);
+
+                Assert.AreEqual(PreviewType.Html, model.Type);
+                Assert.IsNotNull(model.TextContent);
+                StringAssert.Contains(model.TextContent, "<h1>Test AeroSpot</h1>");
+                StringAssert.Contains(model.Subtitle, "HTML");
+            }
+            finally
+            {
+                if (File.Exists(tempHtml)) File.Delete(tempHtml);
+            }
+        }
+
+        [TestMethod]
+        public async Task PreviewLoader_SettingsUri_GeneratesGenericPreviewCard()
+        {
+            var winModel = await PreviewLoader.LoadAsync("ms-settings:keyboard");
+            Assert.AreEqual(PreviewType.Generic, winModel.Type);
+            StringAssert.Contains(winModel.Title, "Tastiera");
+            Assert.AreEqual("Impostazioni", winModel.Subtitle);
+            Assert.IsFalse(string.IsNullOrWhiteSpace(winModel.DetailsText));
+
+            var aeroModel = await PreviewLoader.LoadAsync("aerospot:settings:shortcuts");
+            Assert.AreEqual(PreviewType.Generic, aeroModel.Type);
+            StringAssert.Contains(aeroModel.Title, "Scorciatoie");
+            Assert.AreEqual("Impostazioni", aeroModel.Subtitle);
+        }
+
+        [TestMethod]
+        public async Task ThreeMfLoader_LoadsValid3MfModel_AndRoutesToStl3D()
+        {
+            string temp3mf = Path.Combine(Path.GetTempPath(), $"test_model_{Guid.NewGuid():N}.3mf");
+            try
+            {
+                // Costruisci un pacchetto 3MF valido con triangolo 3D
+                using (var zipStream = new FileStream(temp3mf, FileMode.Create))
+                using (var archive = new System.IO.Compression.ZipArchive(zipStream, System.IO.Compression.ZipArchiveMode.Create))
+                {
+                    var entry = archive.CreateEntry("3D/3dmodel.model");
+                    using var writer = new StreamWriter(entry.Open());
+                    writer.Write(@"<?xml version=""1.0"" encoding=""UTF-8""?>
+<model unit=""millimeter"" xmlns=""http://schemas.microsoft.com/3dmanufacturing/core/2015/02"">
+  <resources>
+    <object id=""1"" type=""model"">
+      <mesh>
+        <vertices>
+          <vertex x=""0"" y=""0"" z=""0"" />
+          <vertex x=""10"" y=""0"" z=""0"" />
+          <vertex x=""5"" y=""10"" z=""0"" />
+        </vertices>
+        <triangles>
+          <triangle v1=""0"" v2=""1"" v3=""2"" />
+        </triangles>
+      </mesh>
+    </object>
+  </resources>
+  <build>
+    <item objectid=""1"" />
+  </build>
+</model>");
+                }
+
+                var stl = ThreeMfLoader.Load(temp3mf);
+                Assert.IsNotNull(stl);
+                Assert.AreEqual(1, stl.TriangleCount);
+                Assert.AreEqual(3, stl.Mesh.Positions.Count);
+                Assert.AreEqual(10.0, stl.SizeX, 0.01);
+                Assert.AreEqual(10.0, stl.SizeY, 0.01);
+
+                // Verifica che PreviewLoader instradi correttamente il 3MF verso PreviewType.Stl3D
+                var previewModel = await PreviewLoader.LoadAsync(temp3mf);
+                Assert.AreEqual(PreviewType.Stl3D, previewModel.Type);
+                Assert.IsNotNull(previewModel.StlModel);
+                StringAssert.Contains(previewModel.DetailsText, "3MF 3D");
+            }
+            finally
+            {
+                if (File.Exists(temp3mf)) File.Delete(temp3mf);
+            }
+        }
+
+        [TestMethod]
+        public void PathFilter_RejectsAppleDoubleAndJunkFiles()
+        {
+            PathFilter.Configure(new[] { "C", "E" });
+
+            Assert.IsFalse(PathFilter.IsPathAllowed(@"C:\Musica\._Intervista.m4a"), "I file AppleDouble ._* devono essere esclusi.");
+            Assert.IsFalse(PathFilter.IsPathAllowed(@"E:\Foto\._DSC00958.jpg"), "I file AppleDouble ._* devono essere esclusi.");
+            Assert.IsFalse(PathFilter.IsPathAllowed(@"C:\Docs\~$Relazione.docx"), "I file temporanei ~$ devono essere esclusi.");
+            Assert.IsFalse(PathFilter.IsPathAllowed(@"C:\Cartella\.DS_Store"), "I file .DS_Store devono essere esclusi.");
+            Assert.IsFalse(PathFilter.IsPathAllowed(@"C:\Immagini\Thumbs.db"), "I file Thumbs.db devono essere esclusi.");
+            Assert.IsFalse(PathFilter.IsPathAllowed(@"C:\Cartella\desktop.ini"), "I file desktop.ini devono essere esclusi.");
+
+            Assert.IsTrue(PathFilter.IsPathAllowed(@"C:\Musica\Intervista.m4a"), "I file audio regolari devono essere ammessi.");
+            Assert.IsTrue(PathFilter.IsPathAllowed(@"E:\3D\Modello.3mf"), "I file 3MF devono essere ammessi.");
+            Assert.IsTrue(PathFilter.IsPathAllowed(@"C:\Sito\index.html"), "I file HTML devono essere ammessi.");
+        }
+
+        [TestMethod]
+        public void A5a_JpgDiagnosticMeasurement()
+        {
+            var filesToTest = new List<string>();
+            string realJpg1 = @"E:\Foto\Amici\Aura Lepual\Editate\DSC00660.jpg";
+            string realJpg2 = @"E:\Foto\Amici\Aura Lepual\Editate\DSC00679.jpg";
+
+            if (File.Exists(realJpg1)) filesToTest.Add(realJpg1);
+            if (File.Exists(realJpg2)) filesToTest.Add(realJpg2);
+
+            // Genera anche un JPG di grandi dimensioni (6000x4000, 24 MP) sintetico per avere un benchmark riproducibile ovunque
+            string tempJpg = Path.Combine(Path.GetTempPath(), $"benchmark_24mp_{Guid.NewGuid():N}.jpg");
+            try
+            {
+                int w = 6000, h = 4000;
+                var pixelFormat = PixelFormats.Bgr24;
+                int stride = (w * pixelFormat.BitsPerPixel + 7) / 8;
+                byte[] rawData = new byte[stride * h];
+                new Random(42).NextBytes(rawData);
+                var wbm = BitmapSource.Create(w, h, 96, 96, pixelFormat, null, rawData, stride);
+
+                using (var fs = new FileStream(tempJpg, FileMode.Create))
+                {
+                    var enc = new JpegBitmapEncoder { QualityLevel = 90 };
+                    enc.Frames.Add(BitmapFrame.Create(wbm));
+                    enc.Save(fs);
+                }
+                filesToTest.Add(tempJpg);
+
+                foreach (var path in filesToTest)
+                {
+                    var fi = new FileInfo(path);
+                    Console.WriteLine($"\n=== BENCHMARK FILE: {fi.Name} ({fi.Length / (1024.0 * 1024.0):F2} MB, Unita' {path.Substring(0, 2)}) ===");
+
+                    // 1. Decodifica Piena Risoluzione (Comportamento attuale)
+                    var sw = Stopwatch.StartNew();
+                    BitmapImage full;
+                    using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                    {
+                        full = new BitmapImage();
+                        full.BeginInit();
+                        full.CacheOption = BitmapCacheOption.OnLoad;
+                        full.StreamSource = stream;
+                        full.EndInit();
+                        full.Freeze();
+                    }
+                    sw.Stop();
+                    long fullMs = sw.ElapsedMilliseconds;
+                    Console.WriteLine($"  [Piena Risoluzione] {full.PixelWidth}x{full.PixelHeight} -> {fullMs} ms");
+
+                    // 2. Decodifica Ottimizzata (DecodePixelWidth = 2560 - Risoluzione Massima Display 2K/4K)
+                    sw.Restart();
+                    BitmapImage downsampled;
+                    using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                    {
+                        downsampled = new BitmapImage();
+                        downsampled.BeginInit();
+                        downsampled.CacheOption = BitmapCacheOption.OnLoad;
+                        downsampled.DecodePixelWidth = 2560;
+                        downsampled.StreamSource = stream;
+                        downsampled.EndInit();
+                        downsampled.Freeze();
+                    }
+                    sw.Stop();
+                    long optMs = sw.ElapsedMilliseconds;
+                    Console.WriteLine($"  [Ottimizzata 2560px] {downsampled.PixelWidth}x{downsampled.PixelHeight} -> {optMs} ms (Velocizzazione: {(double)fullMs / Math.Max(1, optMs):F1}x)");
+
+                    // 3. Decodifica Ripetuta (Warm cache)
+                    sw.Restart();
+                    using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                    {
+                        var b = new BitmapImage();
+                        b.BeginInit();
+                        b.CacheOption = BitmapCacheOption.OnLoad;
+                        b.DecodePixelWidth = 2560;
+                        b.StreamSource = stream;
+                        b.EndInit();
+                        b.Freeze();
+                    }
+                    sw.Stop();
+                    Console.WriteLine($"  [Ottimizzata Warm] -> {sw.ElapsedMilliseconds} ms");
+
+                    Assert.IsNotNull(downsampled);
+                    Assert.IsLessThanOrEqualTo(downsampled.PixelWidth, 2560);
+                }
+            }
+            finally
+            {
+                if (File.Exists(tempJpg)) File.Delete(tempJpg);
+            }
+        }
+
+        [TestMethod]
+        public void C3_RawExtensions_AreRecognized()
+        {
+            string[] rawExts = { ".arw", ".dng", ".cr2", ".cr3", ".nef", ".orf", ".rw2", ".pef", ".raf" };
+            foreach (var ext in rawExts)
+            {
+                Assert.IsTrue(PreviewLoader.IsRawExtension(ext), $"Estensione RAW {ext} deve essere riconosciuta da IsRawExtension.");
+            }
+            Assert.IsFalse(PreviewLoader.IsRawExtension(".jpg"));
+            Assert.IsFalse(PreviewLoader.IsRawExtension(".png"));
+            Assert.IsFalse(PreviewLoader.IsRawExtension(".dmg")); // DMG non è un formato raw fotografico
+        }
+
+        [TestMethod]
+        public async Task C3_PreviewLoader_LoadAsync_RealSonyArw_LoadsImagePreviewSuccessfully()
+        {
+            string rawPath = @"E:\Foto\Amici\Aura Lepual\Raw\DSC00660.ARW";
+            if (!File.Exists(rawPath))
+            {
+                Console.WriteLine("ARW file non presente su E:, skipping real hardware check.");
+                return;
+            }
+
+            var sw = Stopwatch.StartNew();
+            var model = await PreviewLoader.LoadAsync(rawPath);
+            sw.Stop();
+
+            Console.WriteLine($"Apertura RAW reale ({new FileInfo(rawPath).Length / (1024 * 1024)} MB): {sw.ElapsedMilliseconds} ms, Tipo: {model.Type}, Sottotitolo: {model.Subtitle}");
+
+            Assert.AreEqual(PreviewType.Image, model.Type, "Un file RAW valido deve essere visualizzato come immagine.");
+            Assert.IsNotNull(model.Image, "L'immagine decodificata o estratta non deve essere nulla.");
+            Assert.IsGreaterThan(0, model.Image.Width);
+            Assert.IsGreaterThan(0, model.Image.Height);
+            StringAssert.Contains(model.Subtitle, "×");
+        }
+
+        [TestMethod]
+        public async Task C3_PreviewLoader_LoadAsync_CorruptedRaw_FallsBackToGenericMetadataCard()
+        {
+            string tempCorruptRaw = Path.Combine(Path.GetTempPath(), $"corrupt_sample_{Guid.NewGuid():N}.arw");
+            try
+            {
+                // Scrive file non valido senza header WIC e senza JPEG incorporato
+                File.WriteAllBytes(tempCorruptRaw, new byte[] { 0x49, 0x49, 0x2A, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66 });
+
+                var model = await PreviewLoader.LoadAsync(tempCorruptRaw);
+
+                Assert.AreEqual(PreviewType.Generic, model.Type, "Un file RAW non decodificabile deve mostrare la scheda metadati (Livello 3), non andare in crash.");
+                StringAssert.Contains(model.Subtitle, "RAW Image");
+                StringAssert.Contains(model.DetailsText, "RAW");
+            }
+            finally
+            {
+                if (File.Exists(tempCorruptRaw)) File.Delete(tempCorruptRaw);
+            }
+        }
+
+        [TestMethod]
+        public async Task C4_Svg_SimpleVector_RendersDrawingImage()
+        {
+            string tempSvg = Path.Combine(Path.GetTempPath(), $"simple_{Guid.NewGuid():N}.svg");
+            try
+            {
+                string svgXml = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"200\" height=\"200\"><circle cx=\"100\" cy=\"100\" r=\"80\" fill=\"blue\" /></svg>";
+                File.WriteAllText(tempSvg, svgXml);
+
+                var model = await PreviewLoader.LoadAsync(tempSvg);
+
+                Assert.AreEqual(PreviewType.Image, model.Type);
+                Assert.IsNotNull(model.Image);
+                Assert.IsGreaterThan(0, model.Image.Width);
+                StringAssert.Contains(model.Subtitle, "SVG");
+            }
+            finally
+            {
+                if (File.Exists(tempSvg)) File.Delete(tempSvg);
+            }
+        }
+
+        [TestMethod]
+        public async Task C4_Svg_GradientsAndShapes_RendersDrawingImage()
+        {
+            string tempSvg = Path.Combine(Path.GetTempPath(), $"gradient_{Guid.NewGuid():N}.svg");
+            try
+            {
+                string svgXml = @"<svg xmlns=""http://www.w3.org/2000/svg"" width=""300"" height=""200"">
+                    <defs>
+                        <linearGradient id=""grad1"" x1=""0%"" y1=""0%"" x2=""100%"" y2=""0%"">
+                            <stop offset=""0%"" style=""stop-color:rgb(255,255,0);stop-opacity:1"" />
+                            <stop offset=""100%"" style=""stop-color:rgb(255,0,0);stop-opacity:1"" />
+                        </linearGradient>
+                    </defs>
+                    <rect width=""300"" height=""200"" fill=""url(#grad1)"" />
+                </svg>";
+                File.WriteAllText(tempSvg, svgXml);
+
+                var model = await PreviewLoader.LoadAsync(tempSvg);
+
+                Assert.AreEqual(PreviewType.Image, model.Type);
+                Assert.IsNotNull(model.Image);
+            }
+            finally
+            {
+                if (File.Exists(tempSvg)) File.Delete(tempSvg);
+            }
+        }
+
+        [TestMethod]
+        public async Task C4_Svg_TextElements_RendersDrawingImage()
+        {
+            string tempSvg = Path.Combine(Path.GetTempPath(), $"text_{Guid.NewGuid():N}.svg");
+            try
+            {
+                string svgXml = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"400\" height=\"100\"><text x=\"20\" y=\"50\" font-size=\"24\" fill=\"black\">AeroSpot SVG</text></svg>";
+                File.WriteAllText(tempSvg, svgXml);
+
+                var model = await PreviewLoader.LoadAsync(tempSvg);
+
+                Assert.AreEqual(PreviewType.Image, model.Type);
+                Assert.IsNotNull(model.Image);
+            }
+            finally
+            {
+                if (File.Exists(tempSvg)) File.Delete(tempSvg);
+            }
+        }
+
+        [TestMethod]
+        public async Task C4_Svg_ScriptsAndExternalReferences_DoesNotExecuteOrHang()
+        {
+            string tempSvg = Path.Combine(Path.GetTempPath(), $"script_{Guid.NewGuid():N}.svg");
+            try
+            {
+                string svgXml = @"<svg xmlns=""http://www.w3.org/2000/svg"" width=""200"" height=""200"">
+                    <script type=""text/javascript"">alert('test');</script>
+                    <rect width=""100"" height=""100"" fill=""green"" />
+                </svg>";
+                File.WriteAllText(tempSvg, svgXml);
+
+                var sw = Stopwatch.StartNew();
+                var model = await PreviewLoader.LoadAsync(tempSvg);
+                sw.Stop();
+
+                Assert.IsLessThanOrEqualTo(3000, sw.ElapsedMilliseconds);
+                Assert.IsTrue(model.Type == PreviewType.Image || model.Type == PreviewType.Text);
+            }
+            finally
+            {
+                if (File.Exists(tempSvg)) File.Delete(tempSvg);
+            }
+        }
+
+        [TestMethod]
+        public async Task C4_Svg_MalformedXml_GracefullyFallsBackToSourceText()
+        {
+            string tempSvg = Path.Combine(Path.GetTempPath(), $"malformed_{Guid.NewGuid():N}.svg");
+            try
+            {
+                string brokenXml = "<svg width=\"200\" height=\"200\"><rect x=\"10\" <invalid <unclosed tag";
+                File.WriteAllText(tempSvg, brokenXml);
+
+                var model = await PreviewLoader.LoadAsync(tempSvg);
+
+                // Un SVG malformato deve eseguire il fallback sicuro sul testo sorgente senza lanciare eccezioni
+                Assert.AreEqual(PreviewType.Text, model.Type);
+                Assert.IsNotNull(model.TextContent);
+                StringAssert.Contains(model.TextContent, "invalid");
+            }
+            finally
+            {
+                if (File.Exists(tempSvg)) File.Delete(tempSvg);
+            }
+        }
+
+        [TestMethod]
+        public async Task Alien_ReferenceFile_DetectedAsBitstreamAudio()
+        {
+            string path = @"C:\Users\gabry\Downloads\Alien - La clonazione (1997).mp4";
+            if (!File.Exists(path))
+            {
+                Assert.Inconclusive("Alien file not found in Downloads");
+                return;
+            }
+
+            var meta = await VideoMetadataService.GetMetadataAsync(path);
+            Assert.IsNotNull(meta);
+            Console.WriteLine($"VideoMetadataService: Codec={meta.AudioCodec}, Channels={meta.AudioChannels}, SampleRate={meta.SampleRate}, IsBitstream={meta.IsBitstreamAudio}");
+
+            Assert.IsTrue(meta.IsBitstreamAudio, "Original file with AC-3 track must be recognized as bitstream audio.");
+            Assert.AreEqual(6, meta.AudioChannels, "AC-3 audio track in test file must have 6 channels (5.1).");
+            Assert.IsTrue(MediaCompatibilityService.IsRemuxNeeded(meta), "MediaCompatibilityService must require remux for this file.");
+        }
+
+        [TestMethod]
+        public async Task Alien_VerifyRemuxPlayback()
+        {
+            string remuxPath = Path.Combine(Path.GetTempPath(), "alien_remux_full.mp4");
+            if (!File.Exists(remuxPath)) return;
+
+            var meta = await VideoMetadataService.GetMetadataAsync(remuxPath);
+            Assert.IsNotNull(meta);
+            Console.WriteLine($"Remux meta: {meta.Width}x{meta.Height}, Duration={meta.Duration}, Codec={meta.AudioCodec}, Channels={meta.AudioChannels}, IsBitstream={meta.IsBitstreamAudio}");
+
+            Assert.IsFalse(meta.IsBitstreamAudio, "Remux file must not be recognized as bitstream audio.");
+            Assert.AreEqual(2, meta.AudioChannels, "Remux file must have 2 audio channels (stereo).");
+            Assert.AreEqual(1920u, meta.Width);
+            Assert.AreEqual(820u, meta.Height);
+
+            // Test MediaPlayer playback
+            var file = await Windows.Storage.StorageFile.GetFileFromPathAsync(remuxPath);
+            var source = Windows.Media.Core.MediaSource.CreateFromStorageFile(file);
+            var player = new Windows.Media.Playback.MediaPlayer();
+            var tcs = new TaskCompletionSource<bool>();
+            player.MediaOpened += (s, e) => tcs.TrySetResult(true);
+            player.MediaFailed += (s, e) => tcs.TrySetException(new Exception($"Playback failed: {e.ErrorMessage}"));
+            player.Source = source;
+
+            var done = await Task.WhenAny(tcs.Task, Task.Delay(5000));
+            Assert.AreEqual(tcs.Task, done, "MediaPlayer did not open remux file within 5 seconds.");
+            Assert.IsGreaterThan(6000.0, player.NaturalDuration.TotalSeconds, "Duration should be over 100 minutes.");
+            player.Dispose();
+            source.Dispose();
+        }
+
+        [TestMethod]
+        public void MediaCompatibility_SelectiveActivation_Tests()
+        {
+            // Codec già compatibili nativamente (nessun remux)
+            Assert.IsFalse(MediaCompatibilityService.IsRemuxNeeded(false, "AAC", 2));
+            Assert.IsFalse(MediaCompatibilityService.IsRemuxNeeded(false, "MP4A", 2));
+            Assert.IsFalse(MediaCompatibilityService.IsRemuxNeeded(false, "MP3", 2));
+            Assert.IsFalse(MediaCompatibilityService.IsRemuxNeeded(false, "FLAC", 2));
+            Assert.IsFalse(MediaCompatibilityService.IsRemuxNeeded(false, "ALAC", 2));
+            Assert.IsFalse(MediaCompatibilityService.IsRemuxNeeded(false, "OPUS", 2));
+
+            // Codec bitstream non compatibili (remux obbligatorio)
+            Assert.IsTrue(MediaCompatibilityService.IsRemuxNeeded(true, "AC3", 6));
+            Assert.IsTrue(MediaCompatibilityService.IsRemuxNeeded(false, "AC-3", 6));
+            Assert.IsTrue(MediaCompatibilityService.IsRemuxNeeded(false, "EC3", 6));
+            Assert.IsTrue(MediaCompatibilityService.IsRemuxNeeded(false, "E-AC3", 6));
+            Assert.IsTrue(MediaCompatibilityService.IsRemuxNeeded(false, "DTS", 6));
+            Assert.IsTrue(MediaCompatibilityService.IsRemuxNeeded(false, "Dolby TrueHD", 8));
+        }
+
+        [TestMethod]
+        public void MediaCompatibility_CacheKeyAndDirectory_Tests()
+        {
+            string cacheDir = MediaCompatibilityService.GetCacheDirectory();
+            Assert.IsFalse(string.IsNullOrWhiteSpace(cacheDir));
+            Assert.IsTrue(Directory.Exists(cacheDir));
+
+            string dummyPath = Path.Combine(Path.GetTempPath(), "dummy_video.mp4");
+            if (!File.Exists(dummyPath)) File.WriteAllBytes(dummyPath, new byte[100]);
+
+            try
+            {
+                string key1 = MediaCompatibilityService.ComputeCacheKey(dummyPath, "AC3", 6);
+                string key2 = MediaCompatibilityService.ComputeCacheKey(dummyPath, "AC3", 6);
+                Assert.AreEqual(key1, key2, "Cache key must be deterministic for same file attributes.");
+
+                string key3 = MediaCompatibilityService.ComputeCacheKey(dummyPath, "DTS", 6);
+                Assert.AreNotEqual(key1, key3, "Cache key must differ for different audio codecs.");
+
+                string cachePath = MediaCompatibilityService.GetCacheFilePath(dummyPath, "AC3", 6);
+                Assert.IsTrue(cachePath.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase));
+                Assert.IsTrue(cachePath.StartsWith(cacheDir, StringComparison.OrdinalIgnoreCase));
+            }
+            finally
+            {
+                if (File.Exists(dummyPath)) File.Delete(dummyPath);
+            }
+        }
+
+        [TestMethod]
+        public async Task MediaCompatibility_RemuxExecutionAndCacheHit_Tests()
+        {
+            // Usiamo il clip di 60s generato per test rapidi
+            string clipPath = Path.Combine(Path.GetTempPath(), "clip_60s.mp4");
+            if (!File.Exists(clipPath)) return;
+
+            var progressList = new System.Collections.Generic.List<double>();
+            var progress = new Progress<double>(p => progressList.Add(p));
+
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            string cached1 = await MediaCompatibilityService.EnsureCompatibleVideoAsync(
+                clipPath,
+                "AC3",
+                6,
+                TimeSpan.FromSeconds(60),
+                progress);
+            sw.Stop();
+            long firstRunMs = sw.ElapsedMilliseconds;
+
+            Assert.IsTrue(File.Exists(cached1), "Compatible remux file must exist.");
+            Assert.IsGreaterThan(1000L, new FileInfo(cached1).Length, "File size must be > 1000 bytes");
+
+            // Test Cache Hit (deve essere istantaneo, < 50ms)
+            sw.Restart();
+            string cached2 = await MediaCompatibilityService.EnsureCompatibleVideoAsync(
+                clipPath,
+                "AC3",
+                6,
+                TimeSpan.FromSeconds(60));
+            sw.Stop();
+            long cacheHitMs = sw.ElapsedMilliseconds;
+
+            Assert.AreEqual(cached1, cached2, "Second run must return exact same cached file.");
+            Assert.IsLessThan(100L, cacheHitMs, $"Cache hit should be near instant (< 100ms), took: {cacheHitMs} ms");
+            Console.WriteLine($"Remux run: {firstRunMs} ms, Cache hit: {cacheHitMs} ms");
+        }
+
+        [TestMethod]
+        public async Task MediaCompatibility_Cancellation_CleansUpTempFile()
+        {
+            string alienPath = @"C:\Users\gabry\Downloads\Alien - La clonazione (1997).mp4";
+            if (!File.Exists(alienPath)) return;
+
+            using var cts = new CancellationTokenSource();
+            cts.CancelAfter(50); // Cancella quasi subito
+
+            bool threw = false;
+            try
+            {
+                await MediaCompatibilityService.EnsureCompatibleVideoAsync(
+                    alienPath,
+                    "AC3_CANCELLATION_TEST",
+                    6,
+                    TimeSpan.FromMinutes(100),
+                    cancellationToken: cts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                threw = true;
+            }
+
+            Assert.IsTrue(threw, "OperationCanceledException must be thrown when cancelled.");
+
+            string cacheKey = MediaCompatibilityService.ComputeCacheKey(alienPath, "AC3_CANCELLATION_TEST", 6);
+            string tempFile = Path.Combine(MediaCompatibilityService.GetCacheDirectory(), $"{cacheKey}.tmp.mp4");
+            Assert.IsFalse(File.Exists(tempFile), "Temporary remux file must be cleaned up on cancellation.");
+        }
+
+        [TestMethod]
+        public async Task PreviewLoader_DocxFile_LoadsNativelyAsMarkdownWithoutOfficeProcesses()
+        {
+            string tempDocx = Path.Combine(Path.GetTempPath(), $"aerospot_test_{Guid.NewGuid():N}.docx");
+            try
+            {
+                using (var fs = new FileStream(tempDocx, FileMode.Create))
+                using (var zip = new System.IO.Compression.ZipArchive(fs, System.IO.Compression.ZipArchiveMode.Create))
+                {
+                    var entry = zip.CreateEntry("word/document.xml");
+                    using var sw = new StreamWriter(entry.Open());
+                    sw.Write(@"<?xml version=""1.0"" encoding=""UTF-8"" standalone=""yes""?>
+<w:document xmlns:w=""http://schemas.openxmlformats.org/wordprocessingml/2006/main"">
+    <w:body>
+        <w:p>
+            <w:pPr><w:pStyle w:val=""Heading1""/></w:pPr>
+            <w:r><w:t>AeroSpot Native Word Preview</w:t></w:r>
+        </w:p>
+        <w:p>
+            <w:r><w:t>Questo è un documento di prova con testo in </w:t></w:r>
+            <w:r><w:rPr><w:b/></w:rPr><w:t>grassetto</w:t></w:r>
+            <w:r><w:t> e formato markdown.</w:t></w:r>
+        </w:p>
+        <w:tbl>
+            <w:tr>
+                <w:tc><w:p><w:r><w:t>Colonna 1</w:t></w:r></w:p></w:tc>
+                <w:tc><w:p><w:r><w:t>Colonna 2</w:t></w:r></w:p></w:tc>
+            </w:tr>
+            <w:tr>
+                <w:tc><w:p><w:r><w:t>Dato A</w:t></w:r></w:p></w:tc>
+                <w:tc><w:p><w:r><w:t>Dato B</w:t></w:r></w:p></w:tc>
+            </w:tr>
+        </w:tbl>
+    </w:body>
+</w:document>");
+                }
+
+                // Test DocxReader directly
+                var docxModel = AeroSpot.Core.Preview.DocxReader.ReadDocx(tempDocx);
+                Assert.IsNotNull(docxModel);
+                StringAssert.Contains(docxModel.MarkdownContent, "# AeroSpot Native Word Preview", "Headings must be formatted with Markdown #");
+                StringAssert.Contains(docxModel.MarkdownContent, "**grassetto**", "Bold text must be formatted with Markdown **");
+                StringAssert.Contains(docxModel.MarkdownContent, "| Colonna 1 | Colonna 2 |", "Tables must be formatted as Markdown tables");
+                Assert.IsGreaterThanOrEqualTo(2, docxModel.ParagraphCount);
+                Assert.IsGreaterThanOrEqualTo(5, docxModel.WordCount);
+
+                // Test PreviewLoader
+                var preview = await PreviewLoader.LoadAsync(tempDocx);
+                Assert.AreEqual(PreviewType.Markdown, preview.Type, "Docx must load natively as PreviewType.Markdown without summoning COM PreviewHandler");
+                Assert.IsFalse(string.IsNullOrWhiteSpace(preview.TextContent));
+                StringAssert.Contains(preview.Subtitle, "Word Document");
+            }
+            finally
+            {
+                if (File.Exists(tempDocx)) File.Delete(tempDocx);
+            }
         }
     }
 

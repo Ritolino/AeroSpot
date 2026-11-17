@@ -72,5 +72,12 @@ namespace AeroSpot.Tests
             }
             Assert.IsTrue(threw, "Constructor must throw ArgumentNullException for null callback.");
         }
+
+        [TestMethod]
+        public void NotifyIconData_SizeCheck()
+        {
+            int size = System.Runtime.InteropServices.Marshal.SizeOf(typeof(Win32.NOTIFYICONDATA));
+            Assert.AreEqual(976, size, "Expected NOTIFYICONDATAW size on x64 to be 976 (or 968) bytes.");
+        }
     }
 }

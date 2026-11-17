@@ -13,24 +13,42 @@ namespace AeroSpot.Host.Native
         private readonly uint _quickLookKey;
         private readonly uint _quickLookModifiers;
         private readonly Action<string> _onPreviewRequested;
+        private readonly Action? _onClosePreviewRequested;
+        private readonly Action? _onCloseAllRequested;
+        private readonly Func<bool>? _isPreviewActiveFunc;
         private readonly Win32.HookProc _hookProcDelegate;
 
         private IntPtr _hookHandle = IntPtr.Zero;
+        private bool _isQuickLookKeyDown;
         private bool _suppressNextKeyUp;
         private bool _isDisposed;
 
         public bool IsHookInstalled => _hookHandle != IntPtr.Zero;
 
-        public KeyboardHookManager(uint quickLookKey, uint quickLookModifiers, Action<string> onPreviewRequested)
+        public KeyboardHookManager(
+            uint quickLookKey, 
+            uint quickLookModifiers, 
+            Action<string> onPreviewRequested, 
+            Action? onClosePreviewRequested = null, 
+            Func<bool>? isPreviewActiveFunc = null,
+            Action? onCloseAllRequested = null)
         {
             _quickLookKey = quickLookKey;
             _quickLookModifiers = quickLookModifiers;
             _onPreviewRequested = onPreviewRequested ?? throw new ArgumentNullException(nameof(onPreviewRequested));
+            _onClosePreviewRequested = onClosePreviewRequested;
+            _onCloseAllRequested = onCloseAllRequested;
+            _isPreviewActiveFunc = isPreviewActiveFunc;
             _hookProcDelegate = LowLevelKeyboardProc;
         }
 
-        public KeyboardHookManager(uint quickLookKey, Action<string> onPreviewRequested)
-            : this(quickLookKey, 0, onPreviewRequested)
+        public KeyboardHookManager(
+            uint quickLookKey, 
+            Action<string> onPreviewRequested, 
+            Action? onClosePreviewRequested = null, 
+            Func<bool>? isPreviewActiveFunc = null,
+            Action? onCloseAllRequested = null)
+            : this(quickLookKey, 0, onPreviewRequested, onClosePreviewRequested, isPreviewActiveFunc, onCloseAllRequested)
         {
         }
 
@@ -89,6 +107,13 @@ namespace AeroSpot.Host.Native
                     {
                         if (isKeyDown)
                         {
+                            if (_isQuickLookKeyDown)
+                            {
+                                // Auto-repeat soppresso: non avviare thread aggiuntivi se il tasto viene tenuto premuto
+                                return (IntPtr)1;
+                            }
+                            _isQuickLookKeyDown = true;
+
                             // Verifica corrispondenza tasti modificatori (Ctrl, Alt, Shift, Win)
                             bool ctrlDown = (Win32.GetAsyncKeyState(Win32.VK_CONTROL) & 0x8000) != 0;
                             bool altDown = (Win32.GetAsyncKeyState(Win32.VK_MENU) & 0x8000) != 0;
@@ -105,9 +130,22 @@ namespace AeroSpot.Host.Native
                                 return Win32.CallNextHookEx(_hookHandle, nCode, wParam, lParam);
                             }
 
-                            // 1. Verifica immediata: la finestra attiva è Explorer o Desktop?
+                            Win32.AllowSetForegroundWindow(Win32.ASFW_ANY);
+
                             IntPtr fgHwnd = Win32.GetForegroundWindow();
-                            if (ExplorerFocusResolver.IsExplorerOrDesktop(fgHwnd))
+                            bool isPreviewActive = _isPreviewActiveFunc?.Invoke() ?? false;
+                            bool isQuickLookWindow = IsQuickLookOrChildWindow(fgHwnd);
+
+                            // Scenario chiusura rapida quando la finestra attiva in primo piano è proprio QuickLook
+                            if (isPreviewActive && isQuickLookWindow)
+                            {
+                                _suppressNextKeyUp = true;
+                                _onClosePreviewRequested?.Invoke();
+                                return (IntPtr)1;
+                            }
+
+                            // 1. Verifica immediata: la finestra attiva è Explorer, Desktop o un Selettore File (Apri/Salva/Allega)?
+                            if (ExplorerFocusResolver.IsExplorerOrDesktop(fgHwnd) || ExplorerFocusResolver.IsFileDialog(fgHwnd))
                             {
                                 // 2. Verifica che l'utente non stia digitando o rinominando
                                 if (!ExplorerFocusResolver.IsUserTypingOrRenaming(fgHwnd))
@@ -125,6 +163,10 @@ namespace AeroSpot.Host.Native
                                             {
                                                 AppLogger.Info($"QuickLook triggerato da tastiera Shell per: {filePath}");
                                                 _onPreviewRequested(filePath);
+                                            }
+                                            else if (isPreviewActive)
+                                            {
+                                                _onClosePreviewRequested?.Invoke();
                                             }
                                             else
                                             {
@@ -151,16 +193,61 @@ namespace AeroSpot.Host.Native
                                 }
                             }
                         }
-                        else if (isKeyUp && _suppressNextKeyUp)
+                        else if (isKeyUp)
                         {
-                            _suppressNextKeyUp = false;
-                            return (IntPtr)1; // Sopprimi il corrispondente key-up per non lasciare eventi orfani
+                            _isQuickLookKeyDown = false;
+                            if (_suppressNextKeyUp)
+                            {
+                                _suppressNextKeyUp = false;
+                                return (IntPtr)1; // Sopprimi il corrispondente key-up per non lasciare eventi orfani
+                            }
+                        }
+                    }
+                    else if (kbd.vkCode == 0x1B) // VK_ESCAPE
+                    {
+                        if (isKeyDown)
+                        {
+                            IntPtr fgHwnd = Win32.GetForegroundWindow();
+                            bool isPreviewActive = _isPreviewActiveFunc?.Invoke() ?? false;
+                            if (isPreviewActive && IsQuickLookOrChildWindow(fgHwnd))
+                            {
+                                if (_onCloseAllRequested != null)
+                                {
+                                    _onCloseAllRequested.Invoke();
+                                }
+                                else
+                                {
+                                    _onClosePreviewRequested?.Invoke();
+                                }
+                                return (IntPtr)1;
+                            }
                         }
                     }
                 }
             }
 
             return Win32.CallNextHookEx(_hookHandle, nCode, wParam, lParam);
+        }
+
+        private static bool IsQuickLookOrChildWindow(IntPtr hWnd)
+        {
+            if (hWnd == IntPtr.Zero) return false;
+            try
+            {
+                Win32.GetWindowThreadProcessId(hWnd, out uint pid);
+                if (pid == 0) return false;
+
+                using var proc = Process.GetProcessById((int)pid);
+                string procName = proc.ProcessName;
+                if (string.Equals(procName, "AeroSpot.Worker", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(procName, "prevhost", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(procName, "msedgewebview2", StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+            catch { }
+            return false;
         }
 
         public void Dispose()

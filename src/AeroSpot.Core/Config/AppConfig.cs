@@ -5,21 +5,64 @@ using System.Text.Json;
 
 namespace AeroSpot.Core.Config
 {
+    public enum SpotlightHomeMode
+    {
+        MostFrequentlyOpened = 0,
+        MostFrequentSearches = 1,
+        RecentOpened = 2,
+        None = 3,
+        Alphabetical = 4
+    }
+
+    public enum IndexUpdateFrequency
+    {
+        EveryStartup = 0,
+        Every15Minutes = 1,
+        Every30Minutes = 2,
+        EveryHour = 3,
+        Every2Hours = 4,
+        ManualOnly = 5
+    }
+
     public sealed class AppConfig
     {
-        public int SchemaVersion { get; set; } = 2;
+        public int SchemaVersion { get; set; } = 4;
 
         public string Language { get; set; } = "auto";
-        public bool StartWithWindows { get; set; } = false;
+        public bool StartWithWindows { get; set; } = true;
+        public bool OpenFolderAfterConversion { get; set; } = true;
+        public bool IntegrateWindowsContextMenu { get; set; } = false;
+        public SpotlightHomeMode HomeDisplayMode { get; set; } = SpotlightHomeMode.MostFrequentSearches;
+        public IndexUpdateFrequency IndexUpdateFrequency { get; set; } = IndexUpdateFrequency.EveryHour;
+        public bool EnableRealtimeWatcher { get; set; } = true;
+
+        public bool EnableRecentHistory
+        {
+            get => HomeDisplayMode != SpotlightHomeMode.None;
+            set
+            {
+                if (!value) HomeDisplayMode = SpotlightHomeMode.None;
+                else if (HomeDisplayMode == SpotlightHomeMode.None) HomeDisplayMode = SpotlightHomeMode.MostFrequentSearches;
+            }
+        }
 
         public int WorkerIdleTimeoutSeconds { get; set; } = 30;
         public bool KeepWorkerWarm { get; set; } = true;
+
+        // Gestione aggiornamenti da GitHub
+        public string UpdateCheckFrequency { get; set; } = "Startup"; // Startup, Daily, Weekly, Monthly, Manual
+        public DateTime LastUpdateCheckUtc { get; set; } = DateTime.MinValue;
+        public string LastKnownVersion { get; set; } = string.Empty;
 
         // Customizable hotkeys
         public string SpotlightHotkeyText { get; set; } = "Alt + Space";
         public string QuickLookHotkeyText { get; set; } = "Space";
         public uint QuickLookKey { get; set; } = Native.Win32.VK_SPACE;
         public uint QuickLookModifiers { get; set; } = 0;
+
+        public string DeleteHotkeyText { get; set; } = "Canc";
+        public uint DeleteKey { get; set; } = Native.Win32.VK_DELETE;
+        public uint DeleteModifiers { get; set; } = 0;
 
         public uint HotkeyModifiers { get; set; } = Native.Win32.MOD_ALT | Native.Win32.MOD_NOREPEAT;
         public uint HotkeyKey { get; set; } = Native.Win32.VK_SPACE;
@@ -60,11 +103,36 @@ namespace AeroSpot.Core.Config
         public double SavedWidthGeneric { get; set; } = -1;
         public double SavedHeightGeneric { get; set; } = -1;
 
+        // QuickLook behavior: Always on top (true) vs Contextual Topmost (false, default: active on open, backgroundable on deactivation)
+        public bool QuickLookAlwaysOnTop { get; set; } = false;
+
         // Drive selection (default: system drive + detected local fixed drives)
         public List<string> IncludedDrives { get; set; } = GetDefaultIncludedDrives();
 
         // Excluded folders and directories
         public List<string> ExcludedDirectoryNames { get; set; } = GetDefaultExcludedDirectories();
+
+        // Spotlight search category hierarchy / priority order
+        public List<string> CategoryPriority { get; set; } = GetDefaultCategoryPriority();
+
+        // Gerarchia mista: da priorità a file o cartelle con corrispondenza esatta del nome rispetto a sole corrispondenze nel percorso
+        public bool PrioritizeExactNameMatches { get; set; } = true;
+
+        public static List<string> GetDefaultCategoryPriority()
+        {
+            return new List<string>
+            {
+                "Impostazioni",
+                "Applicazione",
+                "Documento",
+                "Immagine",
+                "Video",
+                "Audio",
+                "Cartella",
+                "Archivio",
+                "File"
+            };
+        }
 
         public static List<string> GetDefaultIncludedDrives()
         {
@@ -130,6 +198,11 @@ namespace AeroSpot.Core.Config
                     {
                         // Automatic migration from previous schemas (without SchemaVersion or SchemaVersion < 2)
                         bool needsSave = false;
+                        if (!json.Contains("\"SchemaVersion\"", StringComparison.OrdinalIgnoreCase))
+                        {
+                            cfg.SchemaVersion = 1;
+                        }
+
                         if (cfg.SchemaVersion < 2)
                         {
                             cfg.SchemaVersion = 2;
@@ -140,6 +213,24 @@ namespace AeroSpot.Core.Config
                             if (cfg.ExcludedDirectoryNames == null || cfg.ExcludedDirectoryNames.Count == 0)
                             {
                                 cfg.ExcludedDirectoryNames = GetDefaultExcludedDirectories();
+                            }
+                            needsSave = true;
+                        }
+
+                        if (cfg.SchemaVersion < 3)
+                        {
+                            cfg.SchemaVersion = 3;
+                            cfg.EnableRecentHistory = true;
+                            needsSave = true;
+                        }
+
+                        if (cfg.SchemaVersion < 4)
+                        {
+                            cfg.SchemaVersion = 4;
+                            cfg.HomeDisplayMode = cfg.EnableRecentHistory ? SpotlightHomeMode.MostFrequentSearches : SpotlightHomeMode.None;
+                            if (cfg.CategoryPriority != null && !cfg.CategoryPriority.Contains("Impostazioni", StringComparer.OrdinalIgnoreCase))
+                            {
+                                cfg.CategoryPriority.Insert(0, "Impostazioni");
                             }
                             needsSave = true;
                         }

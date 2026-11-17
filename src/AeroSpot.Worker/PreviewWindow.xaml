@@ -1,4 +1,4 @@
-﻿<Window x:Class="AeroSpot.Worker.PreviewWindow"
+<Window x:Class="AeroSpot.Worker.PreviewWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:loc="clr-namespace:AeroSpot.Worker.Localization"
@@ -7,8 +7,9 @@
         WindowStartupLocation="Manual"
         WindowStyle="None" AllowsTransparency="True"
         Background="Transparent" ShowInTaskbar="False"
-        Topmost="True" Focusable="True"
+        Focusable="True"
         UseLayoutRounding="True" SnapsToDevicePixels="True"
+        PreviewKeyDown="Window_PreviewKeyDown"
         KeyDown="Window_KeyDown"
         PreviewMouseWheel="Window_PreviewMouseWheel">
 
@@ -16,6 +17,7 @@
         <!-- Stile Pulsanti Fluent Trasparenti con hover scuro/traslucido e bordo grigio chiaro per evitare contorni bianchi/ciano -->
         <Style x:Key="TransportButtonStyle" TargetType="{x:Type Button}">
             <Setter Property="OverridesDefaultStyle" Value="True"/>
+            <Setter Property="Focusable" Value="False"/>
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="BorderBrush" Value="Transparent"/>
             <Setter Property="BorderThickness" Value="1"/>
@@ -129,20 +131,22 @@
             </Setter>
         </Style>
 
-        <!-- Barra di Scorrimento Sottile e Scura (macOS / Fluent dark gray) -->
+        <!-- Barra di Scorrimento Sottile e Scura (macOS / Fluent dark gray) con Hit-Test confortevole -->
         <Style x:Key="SlimDarkScrollBarThumb" TargetType="{x:Type Thumb}">
             <Setter Property="OverridesDefaultStyle" Value="True"/>
             <Setter Property="IsTabStop" Value="False"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="{x:Type Thumb}">
-                        <Border Background="#45454A" CornerRadius="3" Margin="1" />
+                        <Border Background="Transparent">
+                            <Border x:Name="ThumbVisual" Background="#45454A" CornerRadius="3.5" Margin="3,1,3,1" SnapsToDevicePixels="True" />
+                        </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter Property="Background" Value="#71717A"/>
+                                <Setter TargetName="ThumbVisual" Property="Background" Value="#71717A"/>
                             </Trigger>
                             <Trigger Property="IsDragging" Value="True">
-                                <Setter Property="Background" Value="#A1A1AA"/>
+                                <Setter TargetName="ThumbVisual" Property="Background" Value="#A1A1AA"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -172,15 +176,15 @@
                         <ControlTemplate.Triggers>
                             <Trigger Property="Orientation" Value="Vertical">
                                 <Setter TargetName="PART_Track" Property="IsDirectionReversed" Value="True"/>
-                                <Setter Property="Width" Value="7"/>
-                                <Setter Property="MinWidth" Value="7"/>
+                                <Setter Property="Width" Value="14"/>
+                                <Setter Property="MinWidth" Value="14"/>
                             </Trigger>
                             <Trigger Property="Orientation" Value="Horizontal">
                                 <Setter TargetName="PART_Track" Property="IsDirectionReversed" Value="False"/>
                                 <Setter TargetName="PART_PageUpButton" Property="Command" Value="{x:Static ScrollBar.PageLeftCommand}"/>
                                 <Setter TargetName="PART_PageDownButton" Property="Command" Value="{x:Static ScrollBar.PageRightCommand}"/>
-                                <Setter Property="Height" Value="7"/>
-                                <Setter Property="MinHeight" Value="7"/>
+                                <Setter Property="Height" Value="14"/>
+                                <Setter Property="MinHeight" Value="14"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -199,12 +203,88 @@
                 </Setter.Value>
             </Setter>
         </Style>
+
+        <!-- Stile ContextMenu Dark Fluent per QuickLook -->
+        <Style TargetType="{x:Type ContextMenu}">
+            <Setter Property="OverridesDefaultStyle" Value="True"/>
+            <Setter Property="SnapsToDevicePixels" Value="True"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type ContextMenu}">
+                        <Border Background="#1E232B" BorderBrush="#475569" BorderThickness="1" CornerRadius="8" Padding="5">
+                            <Border.Effect>
+                                <DropShadowEffect BlurRadius="16" ShadowDepth="4" Direction="270" Color="#000000" Opacity="0.6"/>
+                            </Border.Effect>
+                            <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Cycle"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style TargetType="{x:Type Separator}">
+            <Setter Property="OverridesDefaultStyle" Value="True"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type Separator}">
+                        <Border Height="1" Background="#334155" Margin="4,3"/>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style TargetType="{x:Type MenuItem}">
+            <Setter Property="OverridesDefaultStyle" Value="True"/>
+            <Setter Property="Foreground" Value="#F8FAFC"/>
+            <Setter Property="FontSize" Value="12.5"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type MenuItem}">
+                        <Border x:Name="ItemBorder" Background="Transparent" CornerRadius="4" Padding="10,6">
+                            <ContentPresenter ContentSource="Header"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="ItemBorder" Property="Background" Value="#334155"/>
+                                <Setter Property="Foreground" Value="#38BDF8"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="#64748B"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Window.Resources>
+
+    <Window.ContextMenu>
+        <ContextMenu x:Name="PreviewContextMenu" Opened="PreviewContextMenu_Opened">
+            <MenuItem x:Name="PreviewMenuOpenPath" Header="{loc:Loc Spotlight_Menu_OpenFilePath}" Click="PreviewMenuOpenPath_Click" FontWeight="SemiBold"/>
+            <MenuItem x:Name="PreviewMenuOpenDefault" Header="{loc:Loc Preview_Btn_OpenWithDefault}" Click="PreviewMenuOpenDefault_Click"/>
+            <MenuItem x:Name="PreviewMenuCopyPath" Header="{loc:Loc Spotlight_Hint_CopyPath}" Click="PreviewMenuCopyPath_Click"/>
+            <Separator x:Name="PreviewMenuSeparatorMedia"/>
+            <MenuItem x:Name="PreviewMenuConvertJpg" Header="{loc:Loc Spotlight_Menu_ConvertJpg}" Click="PreviewMenuConvertJpg_Click"/>
+            <MenuItem x:Name="PreviewMenuConvertPng" Header="{loc:Loc Spotlight_Menu_ConvertPng}" Click="PreviewMenuConvertPng_Click"/>
+            <MenuItem x:Name="PreviewMenuConvertPdf" Header="{loc:Loc Spotlight_Menu_ConvertPdf}" Click="PreviewMenuConvertPdf_Click"/>
+            <MenuItem x:Name="PreviewMenuConvertMp3" Header="{loc:Loc Spotlight_Menu_ConvertMp3}" Click="PreviewMenuConvertMp3_Click"/>
+            <MenuItem x:Name="PreviewMenuConvertWav" Header="{loc:Loc Spotlight_Menu_ConvertWav}" Click="PreviewMenuConvertWav_Click"/>
+            <MenuItem x:Name="PreviewMenuConvertMp4" Header="{loc:Loc Spotlight_Menu_ConvertMp4}" Click="PreviewMenuConvertMp4_Click"/>
+            <MenuItem x:Name="PreviewMenuRemoveBg" Header="{loc:Loc Spotlight_Menu_RemoveBg}" Click="PreviewMenuRemoveBg_Click"/>
+            <Separator/>
+            <MenuItem x:Name="PreviewMenuRememberSize" Header="{loc:Loc Preview_Btn_RememberSize_Tooltip}" Click="PreviewMenuRememberSize_Click"/>
+            <MenuItem x:Name="PreviewMenuFullscreen" Header="{loc:Loc Preview_Btn_Fullscreen}" Click="PreviewMenuFullscreen_Click"/>
+            <Separator/>
+            <MenuItem x:Name="PreviewMenuClose" Header="{loc:Loc Preview_Btn_Close}" Click="PreviewMenuClose_Click"/>
+        </ContextMenu>
+    </Window.ContextMenu>
 
     <!-- Ombra esterna sagomata con angoli arrotondati (elimina angoli retti dell'ombra) -->
     <Border Margin="14" CornerRadius="10">
         <Border.Effect>
-            <DropShadowEffect BlurRadius="28" ShadowDepth="4" Direction="270" Color="#000000" Opacity="0.75" />
+            <!-- Ombra Fluent equilibrata (Variante 2 predefinita - coordinata con Spotlight) -->
+            <DropShadowEffect BlurRadius="30" ShadowDepth="3" Direction="270" Color="#000000" Opacity="0.42" />
         </Border.Effect>
 
         <!-- Finestra principale AeroSpot Preview con bordo coerente per sfondi scuri e angoli arrotondati -->
@@ -240,23 +320,33 @@
                                        TextTrimming="CharacterEllipsis" />
                         </StackPanel>
 
-                        <!-- Pulsanti Finestra: Zoom, Memorizza Dimensioni, Fullscreen, Chiudi -->
+                        <!-- Pulsanti Finestra: Zoom, Esporta PDF, Memorizza Dimensioni, Fullscreen, Chiudi -->
                         <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                             <!-- Reset Zoom (appare se zoom != 1.0) -->
-                            <Button x:Name="BtnResetZoom" Content="1:1" Width="32" Height="26" Margin="0,0,6,0"
+                            <Button x:Name="BtnResetZoom" Content="1:1" Width="32" Height="26" Margin="0,0,6,0" Focusable="False"
                                     Style="{StaticResource TransportButtonStyle}" Foreground="#38BDF8"
                                     FontSize="11" FontWeight="SemiBold" Click="BtnResetZoom_Click"
                                     Visibility="Collapsed" ToolTip="{loc:Loc Preview_ResetZoom_Tooltip}" />
+                            <!-- Rotazione manuale 90° orario (solo vista, per Immagini e Video) -->
+                            <Button x:Name="BtnRotate" Content="⟳" Width="26" Height="26" Margin="0,0,6,0" Focusable="False"
+                                    Style="{StaticResource TransportButtonStyle}"
+                                    FontSize="14" Click="BtnRotate_Click" Visibility="Collapsed"
+                                    ToolTip="{loc:Loc Preview_Btn_Rotate_Tooltip}" />
+                            <!-- Esporta in PDF (visibile per Markdown, Testo e Docx) -->
+                            <Button x:Name="BtnExportPdf" Content="📄 PDF" Width="52" Height="26" Margin="0,0,6,0" Focusable="False"
+                                    Style="{StaticResource TransportButtonStyle}" Foreground="#38BDF8"
+                                    FontSize="11" FontWeight="SemiBold" Click="BtnExportPdf_Click"
+                                    Visibility="Collapsed" ToolTip="{loc:Loc Preview_Btn_ExportPdf_Tooltip}" />
                             <!-- Tasto Pin / Memorizza dimensioni persistenti per questo tipo di file -->
-                            <Button x:Name="BtnRememberSize" Content="📌" Width="26" Height="26" Margin="0,0,6,0"
+                            <Button x:Name="BtnRememberSize" Content="📌" Width="26" Height="26" Margin="0,0,6,0" Focusable="False"
                                     Style="{StaticResource TransportButtonStyle}"
                                     FontSize="11" Click="BtnRememberSize_Click" ToolTip="{loc:Loc Preview_Btn_RememberSize_Tooltip}" />
                             <!-- Schermo Intero ⛶ -->
-                            <Button x:Name="BtnFullscreen" Content="⛶" Width="26" Height="26" Margin="0,0,6,0"
+                            <Button x:Name="BtnFullscreen" Content="⛶" Width="26" Height="26" Margin="0,0,6,0" Focusable="False"
                                     Style="{StaticResource TransportButtonStyle}"
                                     FontSize="13" Click="BtnFullscreen_Click" ToolTip="{loc:Loc Preview_Btn_Fullscreen}" />
                             <!-- Pulsante di chiusura ✕ -->
-                            <Button Content="✕" Width="26" Height="26"
+                            <Button Content="✕" Width="26" Height="26" Focusable="False"
                                     Style="{StaticResource TransportButtonStyle}"
                                     FontSize="12" Click="CloseButton_Click" ToolTip="{loc:Loc Preview_Btn_Close}" />
                         </StackPanel>
@@ -450,6 +540,20 @@
                                             FontSize="16" Click="BtnFullscreen_Click" ToolTip="{loc:Loc Preview_Btn_Fullscreen}" />
                                 </StackPanel>
                             </Border>
+
+                            <!-- Overlay Elegante Conversione Audio AC-3 / Bitstream in corso -->
+                            <Border x:Name="VideoConversionOverlay" Visibility="Collapsed"
+                                    Background="#E60A0A0E" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+                                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                    <Border Width="44" Height="44" CornerRadius="22" Background="#2638BDF8" BorderBrush="#38BDF8" BorderThickness="1.5" HorizontalAlignment="Center" Margin="0,0,0,14">
+                                        <TextBlock Text="⚡" FontSize="20" Foreground="#38BDF8" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <TextBlock Text="Ottimizzazione audio per QuickLook..." FontSize="13.5" FontWeight="SemiBold" Foreground="#F8FAFC" HorizontalAlignment="Center" Margin="0,0,0,5"/>
+                                    <TextBlock x:Name="VideoConversionSubtext" Text="Conversione traccia multicanale in formato stereo ad alta fedeltà..." FontSize="11" Foreground="#94A3B8" HorizontalAlignment="Center" Margin="0,0,0,14"/>
+                                    <ProgressBar x:Name="VideoConversionProgress" Width="220" Height="4" Minimum="0" Maximum="100" Value="0"
+                                                 Foreground="#38BDF8" Background="#33FFFFFF" BorderThickness="0"/>
+                                </StackPanel>
+                            </Border>
                         </Grid>
                     </Border>
 
@@ -480,26 +584,7 @@
                         </FlowDocumentScrollViewer.Resources>
                     </FlowDocumentScrollViewer>
 
-                    <!-- Vista Documento PDF con Scorrimento Verticale Multi-Pagina e Zoom -->
-                    <ScrollViewer x:Name="PdfView" Visibility="Collapsed"
-                                  Background="#141414"
-                                  HorizontalScrollBarVisibility="Auto"
-                                  VerticalScrollBarVisibility="Auto"
-                                  UseLayoutRounding="True" SnapsToDevicePixels="True"
-                                  PreviewMouseWheel="PdfView_PreviewMouseWheel"
-                                  PreviewMouseLeftButtonDown="PdfView_PreviewMouseLeftButtonDown"
-                                  PreviewMouseMove="PdfView_PreviewMouseMove"
-                                  PreviewMouseLeftButtonUp="PdfView_PreviewMouseLeftButtonUp">
-                        <ScrollViewer.Resources>
-                            <Style TargetType="{x:Type ScrollBar}" BasedOn="{StaticResource SlimDarkScrollBar}" />
-                        </ScrollViewer.Resources>
-                        <StackPanel x:Name="PdfPagesPanel" HorizontalAlignment="Center" Margin="24,18,24,24"
-                                    UseLayoutRounding="True" SnapsToDevicePixels="True">
-                            <StackPanel.LayoutTransform>
-                                <ScaleTransform x:Name="PdfScaleTransform" ScaleX="1" ScaleY="1" />
-                            </StackPanel.LayoutTransform>
-                        </StackPanel>
-                    </ScrollViewer>
+
 
                     <!-- Vista Modelli 3D STL Interattiva -->
                     <Grid x:Name="StlView" Visibility="Collapsed" Background="#0A0F1D">
@@ -603,9 +688,218 @@
                         </DataGrid>
                     </Grid>
 
+                    <!-- Vista Documento HTML Nativa con Selettore Anteprima / Codice e Apertura Browser -->
+                    <Grid x:Name="HtmlView" Visibility="Collapsed" Background="#141414">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+
+                        <!-- Barra degli strumenti HTML -->
+                        <Border Grid.Row="0" Background="#111827" BorderBrush="#1F2937" BorderThickness="0,0,0,1" Padding="12,6">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+
+                                <!-- Toggle Mode: [ 🌐 Anteprima ] [ 📝 Codice ] -->
+                                <StackPanel Grid.Column="0" Orientation="Horizontal">
+                                    <Button x:Name="BtnHtmlModePreview" Content="🌐 Anteprima" Height="26" Padding="10,0"
+                                            Background="#0284C7" Foreground="#FFFFFF" FontWeight="SemiBold" FontSize="11.5"
+                                            Cursor="Hand" Click="BtnHtmlModePreview_Click">
+                                        <Button.Style>
+                                            <Style TargetType="Button">
+                                                <Setter Property="Template">
+                                                    <Setter.Value>
+                                                        <ControlTemplate TargetType="Button">
+                                                            <Border Background="{TemplateBinding Background}" CornerRadius="4,0,0,4">
+                                                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}"/>
+                                                            </Border>
+                                                        </ControlTemplate>
+                                                    </Setter.Value>
+                                                </Setter>
+                                            </Style>
+                                        </Button.Style>
+                                    </Button>
+                                    <Button x:Name="BtnHtmlModeCode" Content="📝 Codice" Height="26" Padding="10,0"
+                                            Background="#1E293B" Foreground="#94A3B8" FontWeight="SemiBold" FontSize="11.5"
+                                            Cursor="Hand" Click="BtnHtmlModeCode_Click">
+                                        <Button.Style>
+                                            <Style TargetType="Button">
+                                                <Setter Property="Template">
+                                                    <Setter.Value>
+                                                        <ControlTemplate TargetType="Button">
+                                                            <Border Background="{TemplateBinding Background}" CornerRadius="0,4,4,0">
+                                                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}"/>
+                                                            </Border>
+                                                        </ControlTemplate>
+                                                    </Setter.Value>
+                                                </Setter>
+                                            </Style>
+                                        </Button.Style>
+                                    </Button>
+                                </StackPanel>
+
+                                <!-- Action: [ ↗ Apri nel browser predefinito ] -->
+                                <Button Grid.Column="2" x:Name="BtnHtmlOpenBrowser" Content="↗ Apri nel Browser" Height="26" Padding="10,0"
+                                        Background="#1E293B" Foreground="#38BDF8" BorderBrush="#0284C7" BorderThickness="1"
+                                        FontSize="11.5" FontWeight="SemiBold" Cursor="Hand" Click="BtnHtmlOpenBrowser_Click">
+                                    <Button.Style>
+                                        <Style TargetType="Button">
+                                            <Setter Property="Template">
+                                                <Setter.Value>
+                                                    <ControlTemplate TargetType="Button">
+                                                        <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="4">
+                                                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}"/>
+                                                        </Border>
+                                                    </ControlTemplate>
+                                                </Setter.Value>
+                                            </Setter>
+                                            <Style.Triggers>
+                                                <Trigger Property="IsMouseOver" Value="True">
+                                                    <Setter Property="Background" Value="#0284C7"/>
+                                                    <Setter Property="Foreground" Value="#FFFFFF"/>
+                                                </Trigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                </Button>
+                            </Grid>
+                        </Border>
+
+                        <!-- Contenuto: Visualizzatore Documento HTML Nativo e Accelerato da GPU DirectX -->
+                        <FlowDocumentScrollViewer Grid.Row="1" x:Name="HtmlDocumentViewer"
+                                                  IsSelectionEnabled="True"
+                                                  IsToolBarVisible="False"
+                                                  Background="#141414"
+                                                  Foreground="#E2E8F0"
+                                                  VerticalScrollBarVisibility="Auto"
+                                                  HorizontalScrollBarVisibility="Disabled">
+                            <FlowDocumentScrollViewer.Resources>
+                                <Style TargetType="{x:Type ScrollBar}" BasedOn="{StaticResource SlimDarkScrollBar}" />
+                            </FlowDocumentScrollViewer.Resources>
+                        </FlowDocumentScrollViewer>
+
+                        <!-- Contenuto: Source Code TextBox (Codice Sorgente HTML) -->
+                        <TextBox Grid.Row="1" x:Name="HtmlCodeTextBox" Visibility="Collapsed"
+                                 Background="#141414" Foreground="#D4D4D4"
+                                 FontFamily="Cascadia Mono, Consolas, Courier New" FontSize="12.5"
+                                 AcceptsReturn="True" AcceptsTab="True" IsReadOnly="True"
+                                 HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
+                                 BorderThickness="0" Padding="16" SelectionBrush="#264F78">
+                            <TextBox.Resources>
+                                <Style TargetType="{x:Type ScrollBar}" BasedOn="{StaticResource SlimDarkScrollBar}" />
+                            </TextBox.Resources>
+                        </TextBox>
+                    </Grid>
+
+                    <!-- Vista Documenti PDF Nativa ad Alte Prestazioni (Google PDFium x64) a Scorrimento Continuo con Miniature -->
+                    <Grid x:Name="PdfView" Visibility="Collapsed" Background="#141414">
+                        <Grid.ColumnDefinitions>
+                            <!-- Colonna Sinistra: Barra Laterale Miniature e Navigatore Pagine -->
+                            <ColumnDefinition x:Name="PdfSidebarColumn" Width="Auto" />
+                            <!-- Colonna Destra: Visualizzatore Principale a Scorrimento Continuo -->
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+
+                        <!-- Barra Laterale Sinistra: Miniature e Contatore Pagine -->
+                        <Grid Grid.Column="0" x:Name="PdfSidebar" Width="144" Background="#11151E" Visibility="Collapsed">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <!-- Bordo di separazione sottile destro -->
+                            <Border Grid.RowSpan="2" HorizontalAlignment="Right" Width="1" Background="#1F2937" SnapsToDevicePixels="True" />
+
+                            <!-- Elenco Miniature Scorrevole -->
+                            <ScrollViewer Grid.Row="0" x:Name="PdfThumbnailsScrollViewer"
+                                          VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                                          Focusable="False"
+                                          ScrollChanged="PdfThumbnailsScrollViewer_ScrollChanged">
+                                <ScrollViewer.Resources>
+                                    <Style TargetType="{x:Type ScrollBar}" BasedOn="{StaticResource SlimDarkScrollBar}" />
+                                </ScrollViewer.Resources>
+                                <StackPanel x:Name="PdfThumbnailsStack" Orientation="Vertical" HorizontalAlignment="Center" Margin="0,10,0,10" />
+                            </ScrollViewer>
+
+                            <!-- Contatore Pagina e Frecce Su/Giu (Posizionato subito sotto l'elenco miniature) -->
+                            <Border Grid.Row="1" x:Name="PdfPageCapsule"
+                                    Margin="8,6,8,12" Padding="8,4"
+                                    Background="#D916161A" CornerRadius="16" BorderBrush="#33FFFFFF" BorderThickness="1"
+                                    HorizontalAlignment="Center" VerticalAlignment="Center">
+                                <Border.Effect>
+                                    <DropShadowEffect BlurRadius="12" ShadowDepth="2" Direction="270" Color="#000000" Opacity="0.4"/>
+                                </Border.Effect>
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <!-- Pagina Precedente / Freccia Su ▲ -->
+                                    <Button x:Name="BtnPdfPrevPage" Width="26" Height="26" Focusable="False"
+                                            Style="{StaticResource AppleCircularButtonStyle}"
+                                            Click="BtnPdfPrevPage_Click" ToolTip="Pagina Precedente (Page Up / Freccia Su)">
+                                        <Path Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                              Stretch="Uniform" Width="9" Height="9"
+                                              Data="M 0,7 L 6,1 L 12,7 L 10.5,8.5 L 6,4 L 1.5,8.5 Z" />
+                                    </Button>
+
+                                    <!-- Testo Pagina Corrente (es. 1 / 40) -->
+                                    <TextBlock x:Name="PdfPageIndicator" Text="1 / 1" Foreground="#CBD5E1"
+                                               FontFamily="Segoe UI, -apple-system, Cascadia Mono"
+                                               FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center" Margin="8,0" />
+
+                                    <!-- Pagina Successiva / Freccia Giu ▼ -->
+                                    <Button x:Name="BtnPdfNextPage" Width="26" Height="26" Focusable="False"
+                                            Style="{StaticResource AppleCircularButtonStyle}"
+                                            Click="BtnPdfNextPage_Click" ToolTip="Pagina Successiva (Page Down / Freccia Giù)">
+                                        <Path Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                              Stretch="Uniform" Width="9" Height="9"
+                                              Data="M 0,2.5 L 6,8.5 L 12,2.5 L 10.5,1 L 6,5.5 L 1.5,1 Z" />
+                                    </Button>
+                                </StackPanel>
+                            </Border>
+                        </Grid>
+
+                        <!-- Colonna Destra: Visualizzatore Pagine Principali -->
+                        <ScrollViewer Grid.Column="1" x:Name="PdfScrollViewer"
+                                      HorizontalScrollBarVisibility="Auto"
+                                      VerticalScrollBarVisibility="Auto"
+                                      Background="#141414"
+                                      Focusable="True"
+                                      ScrollChanged="PdfScrollViewer_ScrollChanged"
+                                      PreviewMouseWheel="PdfScrollViewer_PreviewMouseWheel"
+                                      PreviewMouseDown="PdfScrollViewer_PreviewMouseDown"
+                                      PreviewMouseMove="PdfScrollViewer_PreviewMouseMove"
+                                      PreviewMouseUp="PdfScrollViewer_PreviewMouseUp">
+                            <ScrollViewer.Resources>
+                                <Style TargetType="{x:Type ScrollBar}" BasedOn="{StaticResource SlimDarkScrollBar}" />
+                            </ScrollViewer.Resources>
+
+                            <!-- Contenitore Zoomabile con Pagine Impilate Verticalmente -->
+                            <Grid x:Name="PdfPagesContainer" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="24,18">
+                                <Grid.LayoutTransform>
+                                    <ScaleTransform x:Name="PdfScaleTransform" ScaleX="1.0" ScaleY="1.0" />
+                                </Grid.LayoutTransform>
+
+                                <StackPanel x:Name="PdfPagesStack" Orientation="Vertical" HorizontalAlignment="Center" />
+                            </Grid>
+                        </ScrollViewer>
+                    </Grid>
+
                     <!-- Vista Preview Handler Nativo (PDF, Office, RTF, ecc.) -->
                     <Grid x:Name="HandlerView" Visibility="Collapsed">
-                        <Border x:Name="HandlerHostBorder" Background="#141414" />
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <Border Grid.Row="0" x:Name="HandlerHostBorder" Background="#141414" />
+                        <ScrollBar Grid.Row="1" x:Name="HandlerHorizontalScrollBar"
+                                   Orientation="Horizontal"
+                                   Visibility="Collapsed"
+                                   Height="14"
+                                   Minimum="0" Maximum="1" ViewportSize="0.5"
+                                   Style="{StaticResource SlimDarkScrollBar}"
+                                   ValueChanged="HandlerHorizontalScrollBar_ValueChanged" />
                     </Grid>
 
                     <!-- Vista File Generico / Cartella -->
@@ -687,10 +981,10 @@
 
             <!-- Grip di ridimensionamento invisibili sui 4 lati e 4 angoli per ridimensionamento stile finestra standard (disabilitabili per cartelle) -->
             <Grid x:Name="ResizeThumbsContainer">
-                <Thumb Style="{StaticResource ResizeThumbStyle}" Width="6" HorizontalAlignment="Left" Margin="0,10,0,10" Cursor="SizeWE" DragDelta="ResizeLeft_DragDelta" Panel.ZIndex="100"/>
-                <Thumb Style="{StaticResource ResizeThumbStyle}" Width="6" HorizontalAlignment="Right" Margin="0,10,0,10" Cursor="SizeWE" DragDelta="ResizeRight_DragDelta" Panel.ZIndex="100"/>
-                <Thumb Style="{StaticResource ResizeThumbStyle}" Height="6" VerticalAlignment="Top" Margin="10,0,10,0" Cursor="SizeNS" DragDelta="ResizeTop_DragDelta" Panel.ZIndex="100"/>
-                <Thumb Style="{StaticResource ResizeThumbStyle}" Height="6" VerticalAlignment="Bottom" Margin="10,0,10,0" Cursor="SizeNS" DragDelta="ResizeBottom_DragDelta" Panel.ZIndex="100"/>
+                <Thumb Style="{StaticResource ResizeThumbStyle}" Width="4" HorizontalAlignment="Left" Margin="0,14,0,14" Cursor="SizeWE" DragDelta="ResizeLeft_DragDelta" Panel.ZIndex="100"/>
+                <Thumb Style="{StaticResource ResizeThumbStyle}" Width="4" HorizontalAlignment="Right" Margin="0,14,0,14" Cursor="SizeWE" DragDelta="ResizeRight_DragDelta" Panel.ZIndex="100"/>
+                <Thumb Style="{StaticResource ResizeThumbStyle}" Height="4" VerticalAlignment="Top" Margin="14,0,14,0" Cursor="SizeNS" DragDelta="ResizeTop_DragDelta" Panel.ZIndex="100"/>
+                <Thumb Style="{StaticResource ResizeThumbStyle}" Height="4" VerticalAlignment="Bottom" Margin="14,0,14,0" Cursor="SizeNS" DragDelta="ResizeBottom_DragDelta" Panel.ZIndex="100"/>
                 <Thumb Style="{StaticResource ResizeThumbStyle}" Width="14" Height="14" HorizontalAlignment="Left" VerticalAlignment="Top" Cursor="SizeNWSE" DragDelta="ResizeTopLeft_DragDelta" Panel.ZIndex="101"/>
                 <Thumb Style="{StaticResource ResizeThumbStyle}" Width="14" Height="14" HorizontalAlignment="Right" VerticalAlignment="Top" Cursor="SizeNESW" DragDelta="ResizeTopRight_DragDelta" Panel.ZIndex="101"/>
                 <Thumb Style="{StaticResource ResizeThumbStyle}" Width="14" Height="14" HorizontalAlignment="Left" VerticalAlignment="Bottom" Cursor="SizeNESW" DragDelta="ResizeBottomLeft_DragDelta" Panel.ZIndex="101"/>

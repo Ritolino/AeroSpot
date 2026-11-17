@@ -173,7 +173,7 @@ namespace AeroSpot.Core.Search
                                 convertedVal = inBase / uTo.FactorToBase;
                             }
 
-                            string formattedResult = FormatNumber(convertedVal);
+                            string formattedResult = FormatNumber(convertedVal, currentLanguage);
                             string resultWithUnit = $"{formattedResult} {uTo.Symbol}";
                             string copyBadge = currentLanguage == "it" ? "invio per copiare" : "enter to copy";
 
@@ -201,13 +201,13 @@ namespace AeroSpot.Core.Search
                 {
                     try
                     {
-                        if (EvaluateMathExpression(trimmed, out double mathResult))
+                        if (EvaluateMathExpression(trimmed, out double mathResult, out string explanation, currentLanguage))
                         {
-                            string formatted = FormatNumber(mathResult);
+                            string formatted = FormatNumber(mathResult, currentLanguage);
                             string title = formatted;
                             string copyBadge = currentLanguage == "it" ? "invio per copiare" : "enter to copy";
 
-                            return new ExpressionResult(title, string.Empty, copyBadge, formatted, isCalculator: true);
+                            return new ExpressionResult(title, explanation ?? string.Empty, copyBadge, formatted, isCalculator: true);
                         }
                     }
                     catch
@@ -236,168 +236,297 @@ namespace AeroSpot.Core.Search
             return c;
         }
 
-        private static string FormatNumber(double val)
+        private static string FormatNumber(double val, string currentLanguage = "it")
         {
             if (double.IsNaN(val)) return "NaN";
             if (double.IsPositiveInfinity(val)) return "∞";
             if (double.IsNegativeInfinity(val)) return "-∞";
 
+            var culture = string.Equals(currentLanguage, "it", StringComparison.OrdinalIgnoreCase)
+                ? CultureInfo.GetCultureInfo("it-IT")
+                : CultureInfo.InvariantCulture;
+
             // Se è un intero esatto
             if (Math.Abs(val % 1) < 1e-11)
             {
-                return val.ToString("F0", CultureInfo.CurrentCulture);
+                return val.ToString("F0", culture);
             }
 
             // Altrimenti fino a 6 cifre decimali significative rimuovendo gli zeri finali
-            string s = val.ToString("0.######", CultureInfo.CurrentCulture);
+            string s = val.ToString("0.######", culture);
             return s;
         }
 
-        // Parser matematico Shunting-Yard sicuro e leggero
-        public static bool EvaluateMathExpression(string expression, out double result)
+        private enum TokenType
         {
-            result = 0;
-            if (string.IsNullOrWhiteSpace(expression)) return false;
+            Number,
+            Plus,
+            Minus,
+            Multiply,
+            Divide,
+            Power,
+            Percent,
+            OpenParen,
+            CloseParen,
+            End
+        }
 
-            // Sostituisce 'x' o 'X' con '*' se circondata o usata come moltiplicazione
-            string normalized = expression
-                .Replace('x', '*')
-                .Replace('X', '*')
-                .Replace(',', '.');
+        private struct Token
+        {
+            public TokenType Type;
+            public double Value;
+            public string Raw;
+        }
 
-            var tokens = Tokenize(normalized);
-            if (tokens.Count == 0) return false;
+        private struct Operand
+        {
+            public double Value;
+            public bool IsPercent;
+        }
 
-            // Shunting Yard -> Postfix (RPN)
-            var outputQueue = new Queue<string>();
-            var operatorStack = new Stack<string>();
+        private sealed class MathParser
+        {
+            private readonly List<Token> _tokens;
+            private readonly string _language;
+            private int _pos;
+            private string _explanation = string.Empty;
 
-            string? lastToken = null;
-            for (int i = 0; i < tokens.Count; i++)
+            public MathParser(List<Token> tokens, string language = "it")
             {
-                string token = tokens[i];
+                _tokens = tokens;
+                _language = language;
+                _pos = 0;
+            }
 
-                if (double.TryParse(token, NumberStyles.Float, CultureInfo.InvariantCulture, out _))
-                {
-                    outputQueue.Enqueue(token);
-                }
-                else if (token == "(")
-                {
-                    operatorStack.Push(token);
-                }
-                else if (token == ")")
-                {
-                    bool foundLeft = false;
-                    while (operatorStack.Count > 0)
-                    {
-                        string op = operatorStack.Pop();
-                        if (op == "(")
-                        {
-                            foundLeft = true;
-                            break;
-                        }
-                        outputQueue.Enqueue(op);
-                    }
-                    if (!foundLeft) return false; // Parentesi sbilanciata
-                }
-                else if (IsOperator(token))
-                {
-                    // Gestione meno unario (es: -5 o 2 * -3)
-                    if (token == "-" && (lastToken == null || lastToken == "(" || IsOperator(lastToken)))
-                    {
-                        token = "u-"; // Operatore unario
-                    }
+            private Token Current => _pos < _tokens.Count ? _tokens[_pos] : new Token { Type = TokenType.End };
+            private Token Peek(int offset = 1) => (_pos + offset < _tokens.Count) ? _tokens[_pos + offset] : new Token { Type = TokenType.End };
 
-                    while (operatorStack.Count > 0 && IsOperator(operatorStack.Peek()))
+            private bool Match(TokenType type)
+            {
+                if (Current.Type == type)
+                {
+                    _pos++;
+                    return true;
+                }
+                return false;
+            }
+
+            private bool Check(TokenType type) => Current.Type == type;
+
+            private Token Consume(TokenType type)
+            {
+                if (Current.Type == type)
+                {
+                    var t = Current;
+                    _pos++;
+                    return t;
+                }
+                throw new InvalidOperationException($"Expected {type} but found {Current.Type}");
+            }
+
+            private bool IsModulo()
+            {
+                // % is modulo if followed by a number, '(', or unary '-'
+                var next = Peek();
+                return next.Type == TokenType.Number || next.Type == TokenType.OpenParen || next.Type == TokenType.Minus;
+            }
+
+            public double Parse() => Parse(out _);
+
+            public double Parse(out string explanation)
+            {
+                if (_tokens.Count == 0) throw new InvalidOperationException("Empty expression");
+                Operand res = Additive();
+                if (_pos < _tokens.Count)
+                {
+                    throw new InvalidOperationException("Unexpected token after expression: " + Current.Type);
+                }
+                if (res.IsPercent)
+                {
+                    double orig = res.Value;
+                    res.Value = res.Value / 100.0;
+                    if (string.IsNullOrEmpty(_explanation))
                     {
-                        string top = operatorStack.Peek();
-                        if (GetPrecedence(top) >= GetPrecedence(token) && token != "^")
+                        _explanation = $"{FormatNumber(orig, _language)}% = {FormatNumber(res.Value, _language)}";
+                    }
+                }
+                explanation = _explanation;
+                return res.Value;
+            }
+
+            private Operand Additive()
+            {
+                Operand left = Multiplicative();
+                if (left.IsPercent && (Check(TokenType.Plus) || Check(TokenType.Minus)))
+                {
+                    left.Value = left.Value / 100.0;
+                    left.IsPercent = false;
+                }
+
+                while (Check(TokenType.Plus) || Check(TokenType.Minus))
+                {
+                    TokenType op = Current.Type;
+                    _pos++;
+                    Operand right = Multiplicative();
+                    if (right.IsPercent)
+                    {
+                        double delta = left.Value * right.Value / 100.0;
+                        bool isIt = string.Equals(_language, "it", StringComparison.OrdinalIgnoreCase);
+                        string pctStr = FormatNumber(right.Value, _language);
+                        string deltaStr = FormatNumber(delta, _language);
+
+                        if (op == TokenType.Plus)
                         {
-                            outputQueue.Enqueue(operatorStack.Pop());
+                            left.Value = left.Value + delta;
+                            _explanation = $"+{pctStr}% (+{deltaStr})";
                         }
                         else
                         {
-                            break;
+                            left.Value = left.Value - delta;
+                            _explanation = isIt 
+                                ? $"Sconto {pctStr}% (-{deltaStr})" 
+                                : $"Discount {pctStr}% (-{deltaStr})";
                         }
+                        left.IsPercent = false;
                     }
-                    operatorStack.Push(token);
-                }
-                else
-                {
-                    return false;
-                }
-
-                lastToken = token;
-            }
-
-            while (operatorStack.Count > 0)
-            {
-                string op = operatorStack.Pop();
-                if (op is "(" or ")") return false;
-                outputQueue.Enqueue(op);
-            }
-
-            // Calcolo RPN
-            var evalStack = new Stack<double>();
-            while (outputQueue.Count > 0)
-            {
-                string token = outputQueue.Dequeue();
-                if (double.TryParse(token, NumberStyles.Float, CultureInfo.InvariantCulture, out double val))
-                {
-                    evalStack.Push(val);
-                }
-                else if (token == "u-")
-                {
-                    if (evalStack.Count < 1) return false;
-                    evalStack.Push(-evalStack.Pop());
-                }
-                else if (IsOperator(token))
-                {
-                    if (evalStack.Count < 2) return false;
-                    double b = evalStack.Pop();
-                    double a = evalStack.Pop();
-
-                    double res = token switch
+                    else
                     {
-                        "+" => a + b,
-                        "-" => a - b,
-                        "*" => a * b,
-                        "/" => b == 0 ? double.PositiveInfinity : a / b,
-                        "%" => a % b,
-                        "^" => Math.Pow(a, b),
-                        _ => 0
-                    };
-                    evalStack.Push(res);
+                        if (op == TokenType.Plus) left.Value += right.Value;
+                        else left.Value -= right.Value;
+                    }
                 }
+                return left;
             }
 
-            if (evalStack.Count == 1)
+            private Operand Multiplicative()
             {
-                result = evalStack.Pop();
-                return !double.IsNaN(result);
+                Operand left = Power();
+                while (Check(TokenType.Multiply) || Check(TokenType.Divide) || (Check(TokenType.Percent) && IsModulo()))
+                {
+                    if (Check(TokenType.Percent))
+                    {
+                        _pos++; // consume modulo
+                        Operand modRight = Power();
+                        if (modRight.Value == 0) throw new DivideByZeroException();
+                        left.Value = left.Value % modRight.Value;
+                        left.IsPercent = false;
+                        continue;
+                    }
+
+                    TokenType op = Current.Type;
+                    _pos++;
+                    Operand right = Power();
+
+                    bool isIt = string.Equals(_language, "it", StringComparison.OrdinalIgnoreCase);
+
+                    if (right.IsPercent)
+                    {
+                        double pct = right.Value / 100.0;
+                        string pctStr = FormatNumber(right.Value, _language);
+                        string baseStr = FormatNumber(left.Value, _language);
+
+                        if (op == TokenType.Multiply)
+                        {
+                            left.Value = left.Value * pct;
+                            _explanation = isIt
+                                ? $"{pctStr}% di {baseStr}"
+                                : $"{pctStr}% of {baseStr}";
+                        }
+                        else
+                        {
+                            left.Value = pct == 0 ? double.PositiveInfinity : left.Value / pct;
+                            _explanation = $"{baseStr} / {FormatNumber(pct, _language)}";
+                        }
+                        left.IsPercent = false;
+                    }
+                    else if (left.IsPercent)
+                    {
+                        double pct = left.Value / 100.0;
+                        string pctStr = FormatNumber(left.Value, _language);
+                        string numStr = FormatNumber(right.Value, _language);
+
+                        if (op == TokenType.Multiply)
+                        {
+                            left.Value = pct * right.Value;
+                            _explanation = isIt
+                                ? $"{pctStr}% di {numStr}"
+                                : $"{pctStr}% of {numStr}";
+                        }
+                        else
+                        {
+                            left.Value = right.Value == 0 ? double.PositiveInfinity : pct / right.Value;
+                            _explanation = $"{FormatNumber(pct, _language)} / {numStr}";
+                        }
+                        left.IsPercent = false;
+                    }
+                    else
+                    {
+                        if (op == TokenType.Multiply)
+                            left.Value = left.Value * right.Value;
+                        else
+                            left.Value = right.Value == 0 ? double.PositiveInfinity : left.Value / right.Value;
+                    }
+                }
+                return left;
             }
 
-            return false;
+            private Operand Power()
+            {
+                Operand left = Primary();
+                while (Match(TokenType.Power))
+                {
+                    Operand right = Primary();
+                    left.Value = Math.Pow(left.Value, right.Value);
+                    left.IsPercent = false;
+                }
+                return left;
+            }
+
+            private Operand Primary()
+            {
+                if (Match(TokenType.Minus))
+                {
+                    Operand val = Primary();
+                    val.Value = -val.Value;
+                    return val;
+                }
+                if (Match(TokenType.Plus))
+                {
+                    return Primary();
+                }
+                if (Match(TokenType.OpenParen))
+                {
+                    Operand val = Additive();
+                    Consume(TokenType.CloseParen);
+                    if (!IsModulo() && Match(TokenType.Percent))
+                    {
+                        val.IsPercent = true;
+                    }
+                    return val;
+                }
+                if (Check(TokenType.Number))
+                {
+                    Token num = Consume(TokenType.Number);
+                    bool isPct = false;
+                    if (!IsModulo() && Match(TokenType.Percent))
+                    {
+                        isPct = true;
+                    }
+                    return new Operand { Value = num.Value, IsPercent = isPct };
+                }
+                throw new InvalidOperationException($"Unexpected token in primary: {Current.Type}");
+            }
         }
 
-        private static bool IsOperator(string s) => s is "+" or "-" or "*" or "/" or "^" or "%" or "u-";
-
-        private static int GetPrecedence(string op) => op switch
+        private static List<Token>? Tokenize(string expr)
         {
-            "+" or "-" => 1,
-            "*" or "/" or "%" => 2,
-            "u-" => 3,
-            "^" => 4,
-            _ => 0
-        };
-
-        private static List<string> Tokenize(string expr)
-        {
-            var tokens = new List<string>();
+            var tokens = new List<Token>();
             int i = 0;
-            while (i < expr.Length)
+            string s = expr.Replace('x', '*').Replace('X', '*').Replace(',', '.');
+
+            while (i < s.Length)
             {
-                char c = expr[i];
+                char c = s[i];
                 if (char.IsWhiteSpace(c))
                 {
                     i++;
@@ -407,26 +536,64 @@ namespace AeroSpot.Core.Search
                 if (char.IsDigit(c) || c == '.')
                 {
                     int start = i;
-                    bool hasDot = c == '.';
-                    while (i + 1 < expr.Length && (char.IsDigit(expr[i + 1]) || (!hasDot && expr[i + 1] == '.')))
+                    bool hasDot = (c == '.');
+                    while (i + 1 < s.Length && (char.IsDigit(s[i + 1]) || (!hasDot && s[i + 1] == '.')))
                     {
-                        if (expr[i + 1] == '.') hasDot = true;
+                        if (s[i + 1] == '.') hasDot = true;
                         i++;
                     }
-                    tokens.Add(expr.Substring(start, i - start + 1));
-                    i++;
-                }
-                else if (c is '+' or '-' or '*' or '/' or '^' or '%' or '(' or ')')
-                {
-                    tokens.Add(c.ToString());
+                    string numStr = s.Substring(start, i - start + 1);
+                    if (!double.TryParse(numStr, NumberStyles.Float, CultureInfo.InvariantCulture, out double val))
+                    {
+                        return null;
+                    }
+                    tokens.Add(new Token { Type = TokenType.Number, Value = val, Raw = numStr });
                     i++;
                 }
                 else
                 {
+                    switch (c)
+                    {
+                        case '+': tokens.Add(new Token { Type = TokenType.Plus, Raw = "+" }); break;
+                        case '-': tokens.Add(new Token { Type = TokenType.Minus, Raw = "-" }); break;
+                        case '*': tokens.Add(new Token { Type = TokenType.Multiply, Raw = "*" }); break;
+                        case '/': tokens.Add(new Token { Type = TokenType.Divide, Raw = "/" }); break;
+                        case '^': tokens.Add(new Token { Type = TokenType.Power, Raw = "^" }); break;
+                        case '%': tokens.Add(new Token { Type = TokenType.Percent, Raw = "%" }); break;
+                        case '(': tokens.Add(new Token { Type = TokenType.OpenParen, Raw = "(" }); break;
+                        case ')': tokens.Add(new Token { Type = TokenType.CloseParen, Raw = ")" }); break;
+                        default: return null;
+                    }
                     i++;
                 }
             }
             return tokens;
+        }
+
+        public static bool EvaluateMathExpression(string expression, out double result)
+        {
+            return EvaluateMathExpression(expression, out result, out _, "it");
+        }
+
+        public static bool EvaluateMathExpression(string expression, out double result, out string explanation, string currentLanguage = "it")
+        {
+            result = 0;
+            explanation = string.Empty;
+            if (string.IsNullOrWhiteSpace(expression)) return false;
+
+            try
+            {
+                var tokens = Tokenize(expression);
+                if (tokens == null || tokens.Count == 0) return false;
+
+                var parser = new MathParser(tokens, currentLanguage);
+                result = parser.Parse(out explanation);
+                return !double.IsNaN(result);
+            }
+            catch
+            {
+                return false;
+            }
         }
     }
 }

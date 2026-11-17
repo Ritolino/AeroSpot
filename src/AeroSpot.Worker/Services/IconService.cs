@@ -36,6 +36,18 @@ namespace AeroSpot.Worker.Services
             {
                 return GetConversionIcon();
             }
+            else if (path.StartsWith("aerospot:settings", StringComparison.OrdinalIgnoreCase))
+            {
+                return GetAeroSpotSettingsIcon();
+            }
+            else if (category is "Impostazioni" or "Settings" || path.StartsWith("ms-settings:", StringComparison.OrdinalIgnoreCase))
+            {
+                return GetSettingsIcon();
+            }
+            else if (category is "Ricerca" or "Search")
+            {
+                return GetSearchIcon();
+            }
             else if (path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase))
             {
                 key = path;
@@ -123,6 +135,27 @@ namespace AeroSpot.Worker.Services
         }
 
         private static ImageSource? LoadShellItemIcon(string parsingName, int size = 32)
+        {
+            if (System.Threading.Thread.CurrentThread.GetApartmentState() == System.Threading.ApartmentState.STA)
+            {
+                return LoadShellItemIconInternal(parsingName, size);
+            }
+
+            ImageSource? result = null;
+            var thread = new System.Threading.Thread(() =>
+            {
+                result = LoadShellItemIconInternal(parsingName, size);
+            })
+            {
+                IsBackground = true
+            };
+            thread.SetApartmentState(System.Threading.ApartmentState.STA);
+            thread.Start();
+            thread.Join(1200);
+            return result;
+        }
+
+        private static ImageSource? LoadShellItemIconInternal(string parsingName, int size = 32)
         {
             try
             {
@@ -277,6 +310,111 @@ namespace AeroSpot.Worker.Services
                 rtb.Freeze();
                 _convIcon = rtb;
                 return _convIcon;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static ImageSource? _settingsIcon;
+        private static ImageSource? _aeroSpotSettingsIcon;
+
+        public static ImageSource? GetAeroSpotSettingsIcon()
+        {
+            if (_aeroSpotSettingsIcon != null) return _aeroSpotSettingsIcon;
+            try
+            {
+                var dv = new DrawingVisual();
+                using (var dc = dv.RenderOpen())
+                {
+                    var bgBrush = new SolidColorBrush(Color.FromRgb(12, 74, 110)); // #0C4A6E
+                    var borderPen = new Pen(new SolidColorBrush(Color.FromRgb(56, 189, 248)), 1.2); // #38BDF8
+                    dc.DrawRoundedRectangle(bgBrush, borderPen, new Rect(1, 1, 18, 18), 3, 3);
+
+                    var gearPen = new Pen(new SolidColorBrush(Color.FromRgb(56, 189, 248)), 1.4);
+                    dc.DrawEllipse(null, gearPen, new Point(10, 10), 3.5, 3.5);
+                    for (int i = 0; i < 4; i++)
+                    {
+                        double angle = i * Math.PI / 2.0;
+                        dc.DrawLine(gearPen, new Point(10 + Math.Cos(angle) * 4.2, 10 + Math.Sin(angle) * 4.2),
+                                             new Point(10 + Math.Cos(angle) * 6.2, 10 + Math.Sin(angle) * 6.2));
+                        double diag = angle + Math.PI / 4.0;
+                        dc.DrawLine(gearPen, new Point(10 + Math.Cos(diag) * 4.2, 10 + Math.Sin(diag) * 4.2),
+                                             new Point(10 + Math.Cos(diag) * 6.2, 10 + Math.Sin(diag) * 6.2));
+                    }
+                }
+                var rtb = new RenderTargetBitmap(20, 20, 96, 96, PixelFormats.Pbgra32);
+                rtb.Render(dv);
+                rtb.Freeze();
+                _aeroSpotSettingsIcon = rtb;
+                return _aeroSpotSettingsIcon;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        public static ImageSource? GetSettingsIcon()
+        {
+            if (_settingsIcon != null) return _settingsIcon;
+            try
+            {
+                var dv = new DrawingVisual();
+                using (var dc = dv.RenderOpen())
+                {
+                    var bgBrush = new SolidColorBrush(Color.FromRgb(45, 55, 72));
+                    var borderPen = new Pen(new SolidColorBrush(Color.FromRgb(167, 139, 250)), 1.2);
+                    dc.DrawRoundedRectangle(bgBrush, borderPen, new Rect(1, 1, 18, 18), 3, 3);
+
+                    var gearPen = new Pen(new SolidColorBrush(Color.FromRgb(167, 139, 250)), 1.4);
+                    dc.DrawEllipse(null, gearPen, new Point(10, 10), 3.5, 3.5);
+                    for (int i = 0; i < 4; i++)
+                    {
+                        double angle = i * Math.PI / 2.0;
+                        dc.DrawLine(gearPen, new Point(10 + Math.Cos(angle) * 4.2, 10 + Math.Sin(angle) * 4.2),
+                                             new Point(10 + Math.Cos(angle) * 6.2, 10 + Math.Sin(angle) * 6.2));
+                        double diag = angle + Math.PI / 4.0;
+                        dc.DrawLine(gearPen, new Point(10 + Math.Cos(diag) * 4.2, 10 + Math.Sin(diag) * 4.2),
+                                             new Point(10 + Math.Cos(diag) * 6.2, 10 + Math.Sin(diag) * 6.2));
+                    }
+                }
+                var rtb = new RenderTargetBitmap(20, 20, 96, 96, PixelFormats.Pbgra32);
+                rtb.Render(dv);
+                rtb.Freeze();
+                _settingsIcon = rtb;
+                return _settingsIcon;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static ImageSource? _searchIcon;
+
+        public static ImageSource? GetSearchIcon()
+        {
+            if (_searchIcon != null) return _searchIcon;
+            try
+            {
+                var dv = new DrawingVisual();
+                using (var dc = dv.RenderOpen())
+                {
+                    var bgBrush = new SolidColorBrush(Color.FromRgb(30, 41, 59));
+                    var borderPen = new Pen(new SolidColorBrush(Color.FromRgb(148, 163, 184)), 1.2);
+                    dc.DrawRoundedRectangle(bgBrush, borderPen, new Rect(1, 1, 18, 18), 3, 3);
+
+                    var lensPen = new Pen(new SolidColorBrush(Color.FromRgb(148, 163, 184)), 1.4);
+                    dc.DrawEllipse(null, lensPen, new Point(8.5, 8.5), 3.5, 3.5);
+                    dc.DrawLine(lensPen, new Point(11, 11), new Point(14.5, 14.5));
+                }
+                var rtb = new RenderTargetBitmap(20, 20, 96, 96, PixelFormats.Pbgra32);
+                rtb.Render(dv);
+                rtb.Freeze();
+                _searchIcon = rtb;
+                return _searchIcon;
             }
             catch
             {

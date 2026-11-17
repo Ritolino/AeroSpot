@@ -12,15 +12,24 @@ namespace AeroSpot.Core.Native
         public const uint MOD_NOREPEAT = 0x4000;
 
         public const uint VK_SPACE = 0x20;
+        public const uint VK_DELETE = 0x2E;
         public const uint VK_F12 = 0x7B;
         public const int VK_SHIFT = 0x10;
         public const int VK_CONTROL = 0x11;
         public const int VK_MENU = 0x12; // Alt
         public const int VK_LWIN = 0x5B;
         public const int VK_RWIN = 0x5C;
+        public const int VK_NUMPAD0 = 0x60;
+        public const int VK_ADD = 0x6B;
+        public const int VK_SUBTRACT = 0x6D;
+        public const int VK_OEM_PLUS = 0xBB;
+        public const int VK_OEM_MINUS = 0xBD;
 
         [DllImport("user32.dll")]
         public static extern short GetAsyncKeyState(int vKey);
+
+        [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+        public static extern uint RegisterWindowMessage(string lpString);
 
         public const uint WM_DESTROY = 0x0002;
         public const uint WM_CLOSE = 0x0010;
@@ -33,8 +42,12 @@ namespace AeroSpot.Core.Native
         public const uint WS_CHILD = 0x40000000;
         public const uint WS_VISIBLE = 0x10000000;
         public const uint WS_CLIPCHILDREN = 0x02000000;
+        public const uint WS_CLIPSIBLINGS = 0x04000000;
+        public const int GWL_STYLE = -16;
         public const int GWL_EXSTYLE = -20;
         public const int WS_EX_TOOLWINDOW = 0x00000080;
+        public const uint WM_MOUSEWHEEL = 0x020A;
+        public const uint GW_CHILD = 5;
 
         [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
         public static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
@@ -53,8 +66,22 @@ namespace AeroSpot.Core.Native
         }
 
         public const uint WM_RBUTTONUP = 0x0205;
+        public const uint WM_MOUSEMOVE = 0x0200;
+        public const uint WM_LBUTTONDOWN = 0x0201;
         public const uint WM_LBUTTONUP = 0x0202;
         public const uint WM_LBUTTONDBLCLK = 0x0203;
+        public const uint WM_MBUTTONDOWN = 0x0207;
+        public const uint WM_MBUTTONUP = 0x0208;
+        public const uint WM_SETREDRAW = 0x000B;
+
+        public const uint RDW_INVALIDATE = 0x0001;
+        public const uint RDW_ERASE = 0x0004;
+        public const uint RDW_ALLCHILDREN = 0x0080;
+        public const uint RDW_UPDATENOW = 0x0100;
+        public const uint RDW_FRAME = 0x0400;
+
+        [DllImport("user32.dll")]
+        public static extern bool RedrawWindow(IntPtr hWnd, IntPtr lprcUpdate, IntPtr hrgnUpdate, uint flags);
 
         public const uint NIM_ADD = 0x00000000;
         public const uint NIM_MODIFY = 0x00000001;
@@ -155,6 +182,12 @@ namespace AeroSpot.Core.Native
         [DllImport("user32.dll")]
         public static extern bool DestroyWindow(IntPtr hWnd);
 
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        public static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+
         [DllImport("user32.dll")]
         public static extern IntPtr DefWindowProc(IntPtr hWnd, uint uMsg, IntPtr wParam, IntPtr lParam);
 
@@ -179,6 +212,14 @@ namespace AeroSpot.Core.Native
         [DllImport("user32.dll", SetLastError = true)]
         public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
+        public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+        [DllImport("user32.dll")]
+        public static extern bool EnumChildWindows(IntPtr hWndParent, EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern IntPtr GetDlgItem(IntPtr hDlg, int nIDDlgItem);
+
         [DllImport("shell32.dll", CharSet = CharSet.Auto)]
         public static extern bool Shell_NotifyIcon(uint dwMessage, [In] ref NOTIFYICONDATA pnid);
 
@@ -194,10 +235,16 @@ namespace AeroSpot.Core.Native
         [DllImport("user32.dll")]
         public static extern bool GetCursorPos(out POINT lpPoint);
 
+        [DllImport("user32.dll")]
+        public static extern IntPtr WindowFromPoint(POINT Point);
+
         public const int DWMWA_CLOAK = 13;
 
         [DllImport("dwmapi.dll")]
         public static extern int DwmSetWindowAttribute(IntPtr hwnd, int dwAttribute, ref int pvAttribute, int cbAttribute);
+
+        [DllImport("dwmapi.dll")]
+        public static extern int DwmFlush();
 
         public static int SetWindowCloak(IntPtr hwnd, bool cloak)
         {
@@ -212,6 +259,37 @@ namespace AeroSpot.Core.Native
 
         [DllImport("user32.dll")]
         public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        public static extern IntPtr SetFocus(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        public static extern uint MapVirtualKey(uint uCode, uint uMapType);
+
+        public const int INPUT_KEYBOARD = 1;
+        public const uint KEYEVENTF_KEYUP = 0x0002;
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct INPUT
+        {
+            public int type;
+            public KEYBDINPUT ki;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct KEYBDINPUT
+        {
+            public ushort wVk;
+            public ushort wScan;
+            public uint dwFlags;
+            public uint time;
+            public IntPtr dwExtraInfo;
+            public int pad1;
+            public int pad2;
+        }
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
 
         [DllImport("user32.dll")]
         public static extern uint TrackPopupMenuEx(IntPtr hMenu, uint uFlags, int x, int y, IntPtr hWnd, IntPtr lpTPMParams);
@@ -267,11 +345,23 @@ namespace AeroSpot.Core.Native
         [DllImport("user32.dll", CharSet = CharSet.Auto)]
         public static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
 
+        public enum MonitorDpiType
+        {
+            MDT_EFFECTIVE_DPI = 0,
+            MDT_ANGULAR_DPI = 1,
+            MDT_RAW_DPI = 2,
+            MDT_DEFAULT = MDT_EFFECTIVE_DPI
+        }
+
+        [DllImport("SHCore.dll", SetLastError = true)]
+        public static extern int GetDpiForMonitor(IntPtr hmonitor, MonitorDpiType dpiType, out uint dpiX, out uint dpiY);
+
         [DllImport("psapi.dll", SetLastError = true)]
         public static extern bool EmptyWorkingSet(IntPtr hProcess);
 
         // --- Hook & Explorer Integration (Phase 6) ---
         public const int WH_KEYBOARD_LL = 13;
+        public const int WH_MOUSE_LL = 14;
         public const uint WM_KEYDOWN = 0x0100;
         public const uint WM_KEYUP = 0x0101;
         public const uint WM_SYSKEYDOWN = 0x0104;
@@ -279,6 +369,16 @@ namespace AeroSpot.Core.Native
         public const uint GA_ROOT = 2;
 
         public delegate IntPtr HookProc(int nCode, IntPtr wParam, IntPtr lParam);
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct MSLLHOOKSTRUCT
+        {
+            public POINT pt;
+            public uint mouseData;
+            public uint flags;
+            public uint time;
+            public UIntPtr dwExtraInfo;
+        }
 
         [StructLayout(LayoutKind.Sequential)]
         public struct KBDLLHOOKSTRUCT
@@ -340,6 +440,92 @@ namespace AeroSpot.Core.Native
         [DllImport("user32.dll")]
         public static extern bool IsWindow(IntPtr hWnd);
 
+        public static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
+        public static readonly IntPtr HWND_NOTOPMOST = new IntPtr(-2);
+
+        public const uint SWP_NOSIZE = 0x0001;
+        public const uint SWP_NOMOVE = 0x0002;
+        public const uint SWP_NOZORDER = 0x0004;
+        public const uint SWP_NOREDRAW = 0x0008;
+        public const uint SWP_NOACTIVATE = 0x0010;
+        public const uint SWP_SHOWWINDOW = 0x0040;
+        public const uint SWP_NOCOPYBITS = 0x0100;
+
+        public const int SW_SHOW = 5;
+        public const int SW_RESTORE = 9;
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+
+        [DllImport("user32.dll")]
+        public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+
+        [DllImport("kernel32.dll")]
+        public static extern uint GetCurrentThreadId();
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool BringWindowToTop(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+        [DllImport("user32.dll")]
+        public static extern bool IsIconic(IntPtr hWnd);
+
+        public static void ForceForegroundWindow(IntPtr hWnd, bool topmost = true)
+        {
+            if (hWnd == IntPtr.Zero) return;
+
+            try
+            {
+                if (IsIconic(hWnd))
+                {
+                    ShowWindow(hWnd, SW_RESTORE);
+                }
+
+                AllowSetForegroundWindow(ASFW_ANY);
+
+                IntPtr fgHwnd = GetForegroundWindow();
+                uint fgThreadId = fgHwnd != IntPtr.Zero ? GetWindowThreadProcessId(fgHwnd, out _) : 0;
+                uint curThreadId = GetCurrentThreadId();
+                bool attached = false;
+
+                if (fgThreadId != 0 && fgThreadId != curThreadId)
+                {
+                    attached = AttachThreadInput(fgThreadId, curThreadId, true);
+                }
+
+                try
+                {
+                    SetWindowPos(
+                        hWnd,
+                        topmost ? HWND_TOPMOST : HWND_NOTOPMOST,
+                        0, 0, 0, 0,
+                        SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+                    BringWindowToTop(hWnd);
+                    SetForegroundWindow(hWnd);
+                    SetFocus(hWnd);
+                }
+                finally
+                {
+                    if (attached)
+                    {
+                        AttachThreadInput(fgThreadId, curThreadId, false);
+                    }
+                }
+            }
+            catch { }
+        }
+
+        [DllImport("gdi32.dll", SetLastError = true)]
+        public static extern IntPtr CreateRectRgn(int nLeftRect, int nTopRect, int nRightRect, int nBottomRect);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern int SetWindowRgn(IntPtr hWnd, IntPtr hRgn, bool bRedraw);
+
+        [DllImport("user32.dll")]
+        public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+
         [DllImport("kernel32.dll", CharSet = CharSet.Auto)]
         public static extern IntPtr GetModuleHandle(string? lpModuleName);
 
@@ -360,6 +546,30 @@ namespace AeroSpot.Core.Native
 
         [DllImport("gdi32.dll")]
         public static extern bool DeleteObject(IntPtr hObject);
+
+        [DllImport("user32.dll")]
+        public static extern IntPtr GetDC(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        public static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
+
+        [DllImport("user32.dll")]
+        public static extern bool PrintWindow(IntPtr hwnd, IntPtr hdcBlt, uint nFlags);
+
+        [DllImport("gdi32.dll")]
+        public static extern uint GetPixel(IntPtr hdc, int nXPos, int nYPos);
+
+        [DllImport("gdi32.dll")]
+        public static extern IntPtr CreateCompatibleDC(IntPtr hdc);
+
+        [DllImport("gdi32.dll")]
+        public static extern IntPtr CreateCompatibleBitmap(IntPtr hdc, int nWidth, int nHeight);
+
+        [DllImport("gdi32.dll")]
+        public static extern IntPtr SelectObject(IntPtr hdc, IntPtr hgdiobj);
+
+        [DllImport("gdi32.dll")]
+        public static extern bool DeleteDC(IntPtr hdc);
 
         public static readonly Guid IID_IShellItemImageFactory = new Guid("bcc18b79-ba16-442f-80c4-8a59c30c463b");
 

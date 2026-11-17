@@ -198,5 +198,387 @@ namespace AeroSpot.Tests
             Assert.IsFalse(resultsSteam.Any(r => r.FullPath.IndexOf(@"\SteamLibrary\", StringComparison.OrdinalIgnoreCase) >= 0), "Nessun risultato deve trovarsi in SteamLibrary.");
             Assert.IsFalse(resultsEpic.Any(r => r.FullPath.IndexOf(@"\Epic Games\", StringComparison.OrdinalIgnoreCase) >= 0), "Nessun risultato deve trovarsi in Epic Games.");
         }
+
+        [TestMethod]
+        public void SqliteIndexDatabase_PurgeDisallowedDrives_RemovesUncheckedDrivesCompletely()
+        {
+            PathFilter.Configure(new[] { "C", "D", "E" });
+            string tempDb = Path.Combine(Path.GetTempPath(), $"aerospot_test_purge_{Guid.NewGuid():N}.db");
+            try
+            {
+                using var db = new SqliteIndexDatabase(tempDb);
+                db.Initialize();
+
+                var items = new List<IndexedItem>
+                {
+                    new IndexedItem { Title = "File Su C", FullPath = @"C:\Test\doc.txt", Category = "Documento", Extension = ".txt", ExecutionTarget = @"C:\Test\doc.txt" },
+                    new IndexedItem { Title = "File Su D", FullPath = @"D:\Games\game.exe", Category = "Applicazione", Extension = ".exe", ExecutionTarget = @"D:\Games\game.exe" },
+                    new IndexedItem { Title = "File Su E", FullPath = @"E:\Work\project.cs", Category = "Codice", Extension = ".cs", ExecutionTarget = @"E:\Work\project.cs" },
+                    new IndexedItem { Title = "App Windows", FullPath = @"shell:AppsFolder\App1", Category = "Applicazione", Extension = "", ExecutionTarget = @"shell:AppsFolder\App1", IsApp = true }
+                };
+
+                db.UpsertBatch(items);
+                Assert.AreEqual(4, db.GetTotalCount());
+
+                // Deseleziona D: (lasciando solo C: ed E:)
+                int purged = db.PurgeDisallowedDrives(new[] { "C", "E" });
+                Assert.AreEqual(1, purged, "Deve essere stato eliminato esattamente 1 record appartenente al disco D:.");
+                Assert.AreEqual(3, db.GetTotalCount(), "Devono rimanere esattamente 3 record nel database.");
+
+                var resultsD = db.Search("Games");
+                Assert.IsEmpty(resultsD, "Nessun elemento deve essere rimasto per D:.");
+
+                var resultsC = db.Search("doc");
+                Assert.IsTrue(resultsC.Any(r => r.FullPath.StartsWith("C:", StringComparison.OrdinalIgnoreCase)), "Gli elementi su C: devono rimanere intatti.");
+
+                var resultsE = db.Search("project");
+                Assert.IsTrue(resultsE.Any(r => r.FullPath.StartsWith("E:", StringComparison.OrdinalIgnoreCase)), "Gli elementi su E: devono rimanere intatti.");
+            }
+            finally
+            {
+                try
+                {
+                    if (File.Exists(tempDb)) File.Delete(tempDb);
+                    string wal = tempDb + "-wal";
+                    if (File.Exists(wal)) File.Delete(wal);
+                    string shm = tempDb + "-shm";
+                    if (File.Exists(shm)) File.Delete(shm);
+                }
+                catch { }
+            }
+        }
+
+        [TestMethod]
+        public void SqliteIndexDatabase_PurgeExcludedSegments_RemovesExcludedFolders()
+        {
+            string tempDb = Path.Combine(Path.GetTempPath(), $"aerospot_test_purge_ex_{Guid.NewGuid():N}.db");
+            try
+            {
+                using var db = new SqliteIndexDatabase(tempDb);
+                db.Initialize();
+
+                var items = new List<IndexedItem>
+                {
+                    new IndexedItem { Title = "Normal Doc", FullPath = @"C:\Users\Docs\file.txt", Category = "Documento", Extension = ".txt", ExecutionTarget = @"C:\Users\Docs\file.txt" },
+                    new IndexedItem { Title = "Steam Game", FullPath = @"E:\SteamLibrary\game.exe", Category = "Applicazione", Extension = ".exe", ExecutionTarget = @"E:\SteamLibrary\game.exe" },
+                    new IndexedItem { Title = "Node Package", FullPath = @"E:\Project\node_modules\pkg.js", Category = "Codice", Extension = ".js", ExecutionTarget = @"E:\Project\node_modules\pkg.js" }
+                };
+
+                // Inserimento bypassando PathFilter per simulare elementi già presenti prima di aggiungere nuove esclusioni
+                EnsureDirectInsert(db, items);
+                Assert.AreEqual(3, db.GetTotalCount());
+
+                // Spurga le esclusioni
+                int purged = db.PurgeExcludedSegments(new[] { @"\SteamLibrary\", @"\node_modules\" });
+                Assert.AreEqual(2, purged, "Devono essere stati rimossi esattamente i 2 record nelle cartelle escluse.");
+                Assert.AreEqual(1, db.GetTotalCount(), "Deve rimanere solo il file normale.");
+
+                var remaining = db.Search("file");
+                Assert.HasCount(1, remaining);
+                Assert.AreEqual(@"C:\Users\Docs\file.txt", remaining[0].FullPath);
+            }
+            finally
+            {
+                try
+                {
+                    if (File.Exists(tempDb)) File.Delete(tempDb);
+                    string wal = tempDb + "-wal";
+                    if (File.Exists(wal)) File.Delete(wal);
+                    string shm = tempDb + "-shm";
+                    if (File.Exists(shm)) File.Delete(shm);
+                }
+                catch { }
+            }
+        }
+
+        [TestMethod]
+        public void SearchRanker_CustomCategoryPriority_RanksHighPriorityCategoriesFirst()
+        {
+            var docItem = new IndexedItem
+            {
+                Title = "project_report.pdf",
+                FullPath = @"C:\Users\Docs\project_report.pdf",
+                Category = "Documento"
+            };
+            var imgItem = new IndexedItem
+            {
+                Title = "project_report.png",
+                FullPath = @"C:\Users\Docs\project_report.png",
+                Category = "Immagine"
+            };
+
+            // Custom priority 1: Image first, Document second
+            var priorityImgFirst = new List<string> { "Immagine", "Documento" };
+            double scoreImg1 = SearchRanker.CalculateScore(imgItem, "project", priorityImgFirst);
+            double scoreDoc1 = SearchRanker.CalculateScore(docItem, "project", priorityImgFirst);
+            Assert.IsGreaterThan(scoreDoc1, scoreImg1, $"Immagine ({scoreImg1}) deve avere punteggio superiore a Documento ({scoreDoc1}) se posizionata più in alto nella gerarchia.");
+
+            // Custom priority 2: Document first, Image second
+            var priorityDocFirst = new List<string> { "Documento", "Immagine" };
+            double scoreImg2 = SearchRanker.CalculateScore(imgItem, "project", priorityDocFirst);
+            double scoreDoc2 = SearchRanker.CalculateScore(docItem, "project", priorityDocFirst);
+            Assert.IsGreaterThan(scoreImg2, scoreDoc2, $"Documento ({scoreDoc2}) deve avere punteggio superiore a Immagine ({scoreImg2}) se posizionato più in alto nella gerarchia.");
+        }
+
+        [TestMethod]
+        public void SqliteIndexDatabase_SearchWithCategoryFilter_FiltersCorrectly()
+        {
+            string tempDb = Path.Combine(Path.GetTempPath(), $"AeroSpot_CatFilterTest_{Guid.NewGuid():N}.db");
+            try
+            {
+                using var db = new SqliteIndexDatabase(tempDb);
+                var items = new List<IndexedItem>
+                {
+                    new IndexedItem { FullPath = @"C:\Apps\calculator.exe", Title = "calculator.exe", Category = "Applicazione" },
+                    new IndexedItem { FullPath = @"C:\Photos\vacation.jpg", Title = "vacation.jpg", Category = "Immagine" },
+                    new IndexedItem { FullPath = @"C:\Music\song.mp3", Title = "song.mp3", Category = "Audio" },
+                    new IndexedItem { FullPath = @"C:\Docs\resume.pdf", Title = "resume.pdf", Category = "Documento" }
+                };
+                EnsureDirectInsert(db, items);
+
+                // Search "a" with no filter
+                var allResults = db.Search("a", 10);
+                Assert.IsGreaterThanOrEqualTo(allResults.Count, 2, "La ricerca senza filtro categoria deve restituire tutti i risultati corrispondenti.");
+
+                // Search with "Immagine" filter
+                var photoResults = db.Search("vacation", 10, categoryFilter: "Immagine");
+                Assert.HasCount(1, photoResults);
+                Assert.AreEqual("Immagine", photoResults[0].Category);
+
+                // Search with "Audio" filter
+                var audioResults = db.Search("song", 10, categoryFilter: "Audio");
+                Assert.HasCount(1, audioResults);
+                Assert.AreEqual("Audio", audioResults[0].Category);
+
+                // Search with "Documento" filter for an app name should return 0
+                var emptyDocResults = db.Search("calculator", 10, categoryFilter: "Documento");
+                Assert.IsEmpty(emptyDocResults, "Filtro Documento su un eseguibile deve restituire 0 risultati.");
+            }
+            finally
+            {
+                try
+                {
+                    if (File.Exists(tempDb)) File.Delete(tempDb);
+                    string wal = tempDb + "-wal";
+                    if (File.Exists(wal)) File.Delete(wal);
+                    string shm = tempDb + "-shm";
+                    if (File.Exists(shm)) File.Delete(shm);
+                }
+                catch { }
+            }
+        }
+
+        [TestMethod]
+        public void SqliteIndexDatabase_RecentHistory_RecordsOrdersAndClearsProperly()
+        {
+            string tempDb = Path.Combine(Path.GetTempPath(), $"recent_test_{Guid.NewGuid():N}.db");
+            try
+            {
+                using var db = new SqliteIndexDatabase(tempDb);
+                db.Initialize();
+
+                // Prepariamo 3 file reali temporanei per soddisfare il controllo di coerenza disco
+                string tempDir = Path.Combine(Path.GetTempPath(), $"recents_dir_{Guid.NewGuid():N}");
+                Directory.CreateDirectory(tempDir);
+                string fileA = Path.Combine(tempDir, "fileA.txt");
+                string fileB = Path.Combine(tempDir, "fileB.txt");
+                string fileC = Path.Combine(tempDir, "fileC.txt");
+                File.WriteAllText(fileA, "A");
+                File.WriteAllText(fileB, "B");
+                File.WriteAllText(fileC, "C");
+
+                var items = new List<IndexedItem>
+                {
+                    new IndexedItem { Title = "App Uno", FullPath = @"C:\Apps\App1.exe", ExecutionTarget = @"C:\Apps\App1.exe", Category = "Applicazione", Extension = ".exe", IsApp = true },
+                    new IndexedItem { Title = "File A", FullPath = fileA, ExecutionTarget = fileA, Category = "Documento", Extension = ".txt", IsApp = false },
+                    new IndexedItem { Title = "File B", FullPath = fileB, ExecutionTarget = fileB, Category = "Documento", Extension = ".txt", IsApp = false },
+                    new IndexedItem { Title = "File C", FullPath = fileC, ExecutionTarget = fileC, Category = "Documento", Extension = ".txt", IsApp = false },
+                };
+                EnsureDirectInsert(db, items);
+
+                // Registra prima A, poi C, poi B
+                db.RecordRecentItem(fileA);
+                System.Threading.Thread.Sleep(20);
+                db.RecordRecentItem(fileC);
+                System.Threading.Thread.Sleep(20);
+                db.RecordRecentItem(fileB);
+
+                var recents = db.GetRecentItems(10);
+                Assert.HasCount(3, recents);
+                Assert.AreEqual("File B", recents[0].Title, "L'ultimo aperto deve essere il primo nella lista.");
+                Assert.AreEqual("File C", recents[1].Title);
+                Assert.AreEqual("File A", recents[2].Title);
+
+                // Cliccando di nuovo su A, A diventa il primo
+                System.Threading.Thread.Sleep(20);
+                db.RecordRecentItem(fileA);
+                var updatedRecents = db.GetRecentItems(10);
+                Assert.HasCount(3, updatedRecents);
+                Assert.AreEqual("File A", updatedRecents[0].Title, "A è stato riaperto e deve trovarsi in prima posizione.");
+
+                // Search con query vuota ed enableRecentHistory=true deve restituire i recenti
+                var homeResults = db.Search(string.Empty, 10, enableRecentHistory: true);
+                Assert.HasCount(3, homeResults);
+                Assert.AreEqual("File A", homeResults[0].Title);
+
+                // Search con query vuota ma enableRecentHistory=false deve fare fallback alle app
+                var fallbackResults = db.Search(string.Empty, 10, enableRecentHistory: false);
+                Assert.HasCount(1, fallbackResults);
+                Assert.AreEqual("App Uno", fallbackResults[0].Title);
+
+                // Cancellazione cronologia
+                db.ClearRecentHistory();
+                var afterClearRecents = db.GetRecentItems(10);
+                Assert.IsEmpty(afterClearRecents, "Dopo ClearRecentHistory la cronologia deve essere vuota.");
+
+                // Dopo la cancellazione, la home con enableRecentHistory=true fa fallback alle app
+                var afterClearHome = db.Search(string.Empty, 10, enableRecentHistory: true);
+                Assert.HasCount(1, afterClearHome);
+                Assert.AreEqual("App Uno", afterClearHome[0].Title);
+
+                try { Directory.Delete(tempDir, true); } catch { }
+            }
+            finally
+            {
+                try
+                {
+                    if (File.Exists(tempDb)) File.Delete(tempDb);
+                    string wal = tempDb + "-wal";
+                    if (File.Exists(wal)) File.Delete(wal);
+                    string shm = tempDb + "-shm";
+                    if (File.Exists(shm)) File.Delete(shm);
+                }
+                catch { }
+            }
+        }
+
+        [TestMethod]
+        public void SettingsSearchCatalog_SearchesWindowsAndAeroSpot_InItalianAndEnglish()
+        {
+            // Test query obbligatorie da specifica C2:
+            // "tastiera", "keyboard", "wifi", "schermo", "display", "suono", "sound", "aggiornamenti"
+            var qTastiera = SettingsSearchCatalog.Search("tastiera", "it");
+            Assert.IsNotEmpty(qTastiera);
+            Assert.AreEqual("ms-settings:keyboard", qTastiera[0].Uri);
+
+            var qKeyboard = SettingsSearchCatalog.Search("keyboard", "en");
+            Assert.IsNotEmpty(qKeyboard);
+            Assert.AreEqual("ms-settings:keyboard", qKeyboard[0].Uri);
+
+            var qWifi = SettingsSearchCatalog.Search("wifi", "it");
+            Assert.IsNotEmpty(qWifi);
+            Assert.AreEqual("ms-settings:network-wifi", qWifi[0].Uri);
+
+            var qSchermo = SettingsSearchCatalog.Search("schermo", "it");
+            Assert.IsNotEmpty(qSchermo);
+            Assert.AreEqual("ms-settings:display", qSchermo[0].Uri);
+
+            var qDisplay = SettingsSearchCatalog.Search("display", "en");
+            Assert.IsNotEmpty(qDisplay);
+            Assert.AreEqual("ms-settings:display", qDisplay[0].Uri);
+
+            var qSuono = SettingsSearchCatalog.Search("suono", "it");
+            Assert.IsNotEmpty(qSuono);
+            Assert.AreEqual("ms-settings:sound", qSuono[0].Uri);
+
+            var qSound = SettingsSearchCatalog.Search("sound", "en");
+            Assert.IsNotEmpty(qSound);
+            Assert.AreEqual("ms-settings:sound", qSound[0].Uri);
+
+            var qUpdates = SettingsSearchCatalog.Search("aggiornamenti", "it");
+            Assert.IsNotEmpty(qUpdates);
+            Assert.AreEqual("ms-settings:windowsupdate", qUpdates[0].Uri);
+
+            // Almeno altre 10 ricerche concordate
+            Assert.AreEqual("ms-settings:bluetooth", SettingsSearchCatalog.Search("bluetooth", "it")[0].Uri);
+            Assert.AreEqual("ms-settings:printers", SettingsSearchCatalog.Search("stampante", "it")[0].Uri);
+            Assert.AreEqual("ms-settings:printers", SettingsSearchCatalog.Search("printer", "en")[0].Uri);
+            Assert.AreEqual("ms-settings:powersleep", SettingsSearchCatalog.Search("batteria", "it")[0].Uri);
+            Assert.AreEqual("ms-settings:powersleep", SettingsSearchCatalog.Search("battery", "en")[0].Uri);
+            Assert.AreEqual("ms-settings:dateandtime", SettingsSearchCatalog.Search("orologio", "it")[0].Uri);
+            Assert.AreEqual("ms-settings:mousetouchpad", SettingsSearchCatalog.Search("mouse", "it")[0].Uri);
+            Assert.AreEqual("ms-settings:privacy", SettingsSearchCatalog.Search("privacy", "it")[0].Uri);
+            Assert.AreEqual("ms-settings:notifications", SettingsSearchCatalog.Search("notifiche", "it")[0].Uri);
+            Assert.AreEqual("ms-settings:personalization-background", SettingsSearchCatalog.Search("sfondo", "it")[0].Uri);
+            Assert.AreEqual("ms-settings:storagesense", SettingsSearchCatalog.Search("disco", "it")[0].Uri);
+            Assert.AreEqual("ms-settings:easeofaccess-display", SettingsSearchCatalog.Search("accessibilita", "it")[0].Uri);
+
+            // Schede AeroSpot
+            var qAeroShortcuts = SettingsSearchCatalog.Search("scorciatoie", "it");
+            Assert.IsNotEmpty(qAeroShortcuts);
+            Assert.AreEqual("aerospot:settings:shortcuts", qAeroShortcuts[0].Uri);
+
+            var qAeroIndexing = SettingsSearchCatalog.Search("indicizzazione", "it");
+            Assert.IsNotEmpty(qAeroIndexing);
+            Assert.AreEqual("aerospot:settings:indexing", qAeroIndexing[0].Uri);
+
+            var qAeroInstructions = SettingsSearchCatalog.Search("istruzioni", "it");
+            Assert.IsNotEmpty(qAeroInstructions);
+            Assert.AreEqual("aerospot:settings:instructions", qAeroInstructions[0].Uri);
+        }
+
+        [TestMethod]
+        public void SearchRanker_ChronologicalTieBreaker_RanksRecentlyModifiedFilesFirst()
+        {
+            long now = DateTime.UtcNow.Ticks;
+            long oneDayAgo = now - TimeSpan.FromDays(1).Ticks;
+            long oneYearAgo = now - TimeSpan.FromDays(365).Ticks;
+
+            var itemOld01 = new IndexedItem("Capitolo 01", @"C:\Docs\Capitolo 01.docx", "Documento", @"C:\Docs\Capitolo 01.docx", isApp: false, lastModifiedUtcTicks: oneYearAgo);
+            var itemRecent12 = new IndexedItem("Capitolo 12", @"C:\Docs\Capitolo 12.docx", "Documento", @"C:\Docs\Capitolo 12.docx", isApp: false, lastModifiedUtcTicks: oneDayAgo);
+            var itemOld1 = new IndexedItem("Capitolo 1", @"C:\Docs\Capitolo 1.docx", "Documento", @"C:\Docs\Capitolo 1.docx", isApp: false, lastModifiedUtcTicks: oneYearAgo);
+
+            // Per la query "Capitolo", sia Capitolo 12 che Capitolo 01/1 sono match di prefisso di uguale classe
+            var ranked = SearchRanker.Rank(new[] { itemOld01, itemRecent12, itemOld1 }, "Capitolo");
+
+            Assert.IsGreaterThanOrEqualTo(ranked.Count, 3);
+            Assert.AreEqual("Capitolo 12", ranked[0].Title, "Il file 'Capitolo 12' modificato più di recente deve precedere 'Capitolo 01' e 'Capitolo 1'.");
+
+            // Verifica che una corrispondenza esatta mantenga comunque la precedenza assoluta
+            var itemExact = new IndexedItem("Capitolo", @"C:\Docs\Capitolo.docx", "Documento", @"C:\Docs\Capitolo.docx", isApp: false, lastModifiedUtcTicks: oneYearAgo);
+            var rankedWithExact = SearchRanker.Rank(new[] { itemOld01, itemRecent12, itemExact }, "Capitolo");
+            Assert.AreEqual("Capitolo", rankedWithExact[0].Title, "Il match esatto 'Capitolo' deve sempre avere la precedenza assoluta sui match di prefisso.");
+        }
+
+        [TestMethod]
+        public void SqliteIndexDatabase_ExcludesCalculatorAndConversionExpressionsFromSearchHistory()
+        {
+            string tempDb = Path.Combine(Path.GetTempPath(), $"AeroSpot_HistoryCalcTest_{Guid.NewGuid():N}.db");
+            try
+            {
+                using var db = new SqliteIndexDatabase(tempDb);
+                db.Initialize();
+
+                // Registra ricerche normali
+                db.RecordSearch("aero");
+                db.RecordSearch("documento importante");
+
+                // Registra espressioni calcolatrice e conversioni
+                db.RecordSearch("2 + 2");
+                db.RecordSearch("150 / 3");
+                db.RecordSearch("100 * 5");
+                db.RecordSearch("10 cm in mm");
+
+                var frequentSearches = db.GetMostFrequentSearches(20);
+
+                Assert.Contains("aero", frequentSearches);
+                Assert.Contains("documento importante", frequentSearches);
+                Assert.DoesNotContain("2 + 2", frequentSearches);
+                Assert.DoesNotContain("150 / 3", frequentSearches);
+                Assert.DoesNotContain("100 * 5", frequentSearches);
+                Assert.DoesNotContain("10 cm in mm", frequentSearches);
+            }
+            finally
+            {
+                try { if (File.Exists(tempDb)) File.Delete(tempDb); } catch { }
+            }
+        }
+
+        private static void EnsureDirectInsert(SqliteIndexDatabase db, List<IndexedItem> items)
+        {
+            // Disattiva momentaneamente i filtri rigidi per il setup del test
+            PathFilter.Configure(new[] { "C", "D", "E" }, Array.Empty<string>());
+            db.UpsertBatch(items);
+        }
     }
 }

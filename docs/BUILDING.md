@@ -1,85 +1,93 @@
 # Building & Packaging AeroSpot
 
-Questo documento descrive i requisiti, i comandi di compilazione, la procedura di packaging e l'architettura dei prerequisiti per **AeroSpot**.
+This document describes system requirements, build commands, packaging procedures, and runtime architecture for **AeroSpot**.
 
 ---
 
-## 1. Requisiti di Sistema per lo Sviluppo
+## 1. System Requirements for Development
 
-- **Sistema Operativo:** Windows 10 (versione 19041 o successiva) o Windows 11 (consigliato 23H2+).
-- **Architettura:** `win-x64`.
-- **SDK Richiesto:** [.NET 10.0 SDK](https://dotnet.microsoft.com/download) (verificato con `10.0.402` o superiore).
-- **Shell:** PowerShell 7 o Windows PowerShell 5.1.
-- **Strumenti opzionali:** Visual Studio 2026 / Visual Studio Code con estensione C# Dev Kit.
+- **Operating System:** Windows 10 (version 19041 or higher) or Windows 11 (23H2+ recommended).
+- **Architecture:** `win-x64`.
+- **Required SDK:** [.NET 10.0 SDK](https://dotnet.microsoft.com/download) (verified with `10.0.402` or higher).
+- **Inno Setup (optional):** Inno Setup 6.x (only required for compiling the `Setup.exe` installer).
+- **Shell:** PowerShell 7 or Windows PowerShell 5.1.
+- **Recommended IDE:** Visual Studio 2026 / Visual Studio Code with C# Dev Kit extension.
 
 ---
 
-## 2. Compilazione Rapida e Test
+## 2. Quick Build and Testing
 
-Dalla directory radice del repository:
+From the project root directory:
 
-### Ripristino e Compilazione Debug / Release
+### Restore and Release Build
 ```powershell
-# Ripristino pacchetti e dipendenze
+# Restore NuGet packages
 dotnet restore AeroSpot.sln
 
-# Compilazione in modalità Release
+# Build solution in Release configuration
 dotnet build -c Release AeroSpot.sln
 ```
 
-### Esecuzione della Suite di Test Unitari e di Integrazione
+### Running the Test Suite
 ```powershell
 dotnet test -c Release AeroSpot.sln --no-restore
 ```
-*Tutti i test devono passare con 0 errori e 0 avvisi.*
+*All tests must pass with 0 errors and 0 warnings.*
 
 ---
 
-## 3. Pubblicazione Automatica (Release Packaging)
+## 3. Automated Packaging and Release
 
-AeroSpot viene distribuito in modalità **Self-Contained (Modalità A)**:
-- Il runtime .NET 10 completo è incluso all'interno della cartella applicativa.
-- **Nessun prerequisito** da scaricare o installare sul sistema dell'utente finale.
-- Nessuna richiesta di privilegi di amministratore.
-- **Runtime Condiviso:** sia `AeroSpot.Host.exe` che `AeroSpot.Worker.exe` risiedono nella medesima directory, condividendo gli assembly del CoreCLR e di WPF una sola volta senza duplicazioni di spazio su disco.
+AeroSpot is distributed in **Self-Contained (ReadyToRun win-x64)** mode with a shared runtime across processes:
+- Full .NET 10 runtime bundled within the application folder.
+- **Zero prerequisites** required on the end-user machine.
+- No administrator privileges required.
+- **Shared Runtime:** `AeroSpot.Host.exe`, `AeroSpot.Worker.exe`, and `AeroSpot.Tools.exe` reside in the `app\` subfolder, sharing CoreCLR and WPF runtime binaries without duplicating disk space.
 
-### Esecuzione dello Script di Pubblicazione Ufficiale
+### Running the Official Build Script
 
-È disponibile lo script automatico:
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\build-release.ps1
 ```
 
-### Parametri Supportati dallo Script:
-| Parametro | Predefinito | Descrizione |
+### Script Parameters:
+| Parameter | Default | Description |
 |---|---|---|
-| `-Configuration` | `Release` | Configurazione di compilazione (`Release` o `Debug`). |
-| `-Runtime` | `win-x64` | Runtime Identifier target per l'architettura Windows a 64 bit. |
-| `-ReadyToRun` | `$true` | Precompilazione AOT (ReadyToRun) per eliminare i picchi di latenza JIT al primo avvio. |
-| `-OutDir` | `bin\Release\publish` | Cartella di output dei binari finali. |
-| `-SkipTests` | `$false` | Ignora l'esecuzione preventiva dei test unitari (sconsigliato). |
-| `-CreateZip` | `$true` | Comprime automaticamente l'output nello zip pronto per GitHub Releases. |
+| `-Configuration` | `Release` | Build configuration (`Release` or `Debug`). |
+| `-Runtime` | `win-x64` | Target Windows 64-bit Runtime Identifier. |
+| `-ReadyToRun` | `$true` | ReadyToRun AOT precompilation to eliminate initial JIT latency spikes. |
+| `-OutDir` | `bin\Release\publish` | Final output directory for compiled binaries. |
+| `-SkipTests` | `$false` | Skips unit test execution (not recommended). |
+| `-CreateZip` | `$true` | Automatically compresses output into the portable release zip. |
+| `-GenerateInstaller` | `$false` | Invokes Inno Setup `iscc.exe` to compile `Setup.exe`. |
+
+### Local SSD Deployment (C:\Programmi_miei\AeroSpot)
+To rapidly update the local standalone installation on the primary SSD while strictly preserving user database and preferences (`Data\`):
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\deploy-local.ps1
+```
+The script gracefully terminates running processes, compiles the latest release, synchronizes binaries with Robocopy excluding `Data\`, and restarts the application.
 
 ---
 
-## 4. Benchmark e Scelta ReadyToRun
+## 4. Benchmarking and ReadyToRun Rationale
 
-Sono stati misurati rigorosamente i due approcci di pubblicazione self-contained su Windows 11 Build 26300 con 10 esecuzioni indipendenti a freddo dell'applicazione completa (inizializzazione CoreCLR + parsing XAML di MainWindow e PreviewWindow):
+Both publication approaches were measured on Windows 11 Build 26300 across 10 cold-start runs of the application (CoreCLR bootstrap + MainWindow/PreviewWindow XAML parsing):
 
-| Metrica | Senza ReadyToRun (JIT puro) | Con ReadyToRun (AOT + JIT) | Differenza |
+| Metric | Without ReadyToRun (Pure JIT) | With ReadyToRun (AOT + JIT) | Difference |
 |---|---|---|---|
-| **Spazio su disco scompattato** | 166.64 MB | 197.20 MB | +30.56 MB |
-| **Dimensione Archivio ZIP** | 67.66 MB | 76.33 MB | +8.67 MB |
-| **Avvio a freddo (Min)** | 1015 ms | 1013 ms | -2 ms |
-| **Avvio a freddo (Mediana)** | 1019 ms | 1015 ms | -4 ms |
-| **Avvio a freddo (Max / 1° avvio)** | **4080 ms** | **1041 ms** | **-3039 ms (-74%)** |
+| **Uncompressed Disk Space** | 166.64 MB | 197.20 MB | +30.56 MB |
+| **ZIP Archive Size** | 67.66 MB | 76.33 MB | +8.67 MB |
+| **Cold Start (Min)** | 1015 ms | 1013 ms | -2 ms |
+| **Cold Start (Median)** | 1019 ms | 1015 ms | -4 ms |
+| **Cold Start (Max / First Run)** | **4080 ms** | **1041 ms** | **-3039 ms (-74%)** |
 
-**Conclusioni e Scelta Operativa:**
-Senza ReadyToRun, il primissimo avvio da disco sconta un picco JIT di oltre 4 secondi. Con ReadyToRun, la latenza di avvio iniziale scende a 1.04 secondi con una deviazione standard quasi nulla. L'aumento della dimensione dell'archivio zip di appena ~8.6 MB ripaga ampiamente l'esperienza utente istantanea tipica di AeroSpot. Lo script di compilazione predefinisce pertanto `ReadyToRun = $true`.
+**Conclusion:**
+Without ReadyToRun, the initial run from disk incurs a JIT compile spike exceeding 4 seconds. With ReadyToRun enabled, launch latency drops to 1.04 seconds with near-zero standard deviation. The ~8.6 MB zip size increase is justified by the sub-second responsiveness expected of AeroSpot. The build script defaults to `ReadyToRun = $true`.
 
 ---
 
-## 5. Modalità Portable e File Chiave
+## 5. Portable Mode and Key Files
 
-- **Modalità Portable:** per utilizzare AeroSpot in modalità 100% isolata (es. su chiavetta USB o cartella sincronizzata), è sufficiente creare un file vuoto denominato `portable.txt` nella stessa cartella degli eseguibili. AeroSpot memorizzerà database SQLite, impostazioni e log esclusivamente nella sottocartella `Data\`.
-- **Pulizia del Registro:** eseguendo `AeroSpot.Host.exe --cleanup`, qualsiasi voce eventualmente registrata all'avvio di Windows viene rimossa istantaneamente prima di cancellare la cartella.
+- **Portable Mode:** To run AeroSpot in fully isolated portable mode (e.g., USB drive or cloud-synced folder), place `portable.txt` in the root folder of the package. AeroSpot will store SQLite index, settings, and logs strictly in the local `Data\` subfolder.
+- **Registry Cleanup:** Running `AeroSpot.Host.exe --cleanup` immediately removes startup and shell registry entries prior to directory deletion.

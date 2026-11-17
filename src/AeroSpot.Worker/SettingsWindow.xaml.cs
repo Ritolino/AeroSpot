@@ -7,8 +7,11 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Threading.Tasks;
 using AeroSpot.Core.Config;
 using AeroSpot.Core.Native;
+using AeroSpot.Core.Search;
+using AeroSpot.Core.Logging;
 
 namespace AeroSpot.Worker
 {
@@ -42,16 +45,79 @@ namespace AeroSpot.Worker
         public bool IsCustom { get; set; } = false;
     }
 
+    public sealed class CategoryHierarchyItem : System.ComponentModel.INotifyPropertyChanged
+    {
+        private int _rank;
+        private bool _isBeingDragged;
+        private bool _isDropTarget;
+
+        public string Key { get; set; } = string.Empty;
+        public string Title { get; set; } = string.Empty;
+        public string Subtitle { get; set; } = string.Empty;
+        public string Icon { get; set; } = string.Empty;
+        public int Rank
+        {
+            get => _rank;
+            set
+            {
+                if (_rank != value)
+                {
+                    _rank = value;
+                    PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(Rank)));
+                    PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(RankText)));
+                }
+            }
+        }
+        public string RankText => $"#{Rank}";
+
+        public bool IsBeingDragged
+        {
+            get => _isBeingDragged;
+            set
+            {
+                if (_isBeingDragged != value)
+                {
+                    _isBeingDragged = value;
+                    PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(IsBeingDragged)));
+                }
+            }
+        }
+
+        public bool IsDropTarget
+        {
+            get => _isDropTarget;
+            set
+            {
+                if (_isDropTarget != value)
+                {
+                    _isDropTarget = value;
+                    PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(IsDropTarget)));
+                }
+            }
+        }
+
+        public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
+    }
+
     public partial class SettingsWindow : Window
     {
         private AppConfig _config;
         private readonly ObservableCollection<DriveItem> _drives = new ObservableCollection<DriveItem>();
         private readonly ObservableCollection<ExclusionItem> _exclusions = new ObservableCollection<ExclusionItem>();
+        private readonly ObservableCollection<CategoryHierarchyItem> _hierarchyItems = new ObservableCollection<CategoryHierarchyItem>();
+        private Point _dragStartPoint;
 
         private uint _spotlightKey;
         private uint _spotlightModifiers;
         private uint _quickLookKey;
         private uint _quickLookModifiers;
+        private uint _deleteKey;
+        private uint _deleteModifiers;
+
+        private string? _latestReleaseUrl;
+        private string? _downloadedUpdatePath;
+        private CancellationTokenSource? _updateCts;
+        private System.Windows.Threading.DispatcherTimer? _saveCloseTimer;
 
         public event Action<AppConfig>? ConfigSaved;
 
@@ -62,6 +128,7 @@ namespace AeroSpot.Worker
 
             ListDrives.ItemsSource = _drives;
             ListExclusions.ItemsSource = _exclusions;
+            HierarchyListBox.ItemsSource = _hierarchyItems;
 
             LoadSettingsIntoUi();
 
@@ -70,6 +137,40 @@ namespace AeroSpot.Worker
             {
                 if (e.ChangedButton == MouseButton.Left) DragMove();
             };
+
+            HierarchyListBox.LostMouseCapture += (s, e) =>
+            {
+                if (_isDragging) EndDrag();
+            };
+
+            IsVisibleChanged += (s, e) =>
+            {
+                if (IsVisible)
+                {
+                    ResetStatusMessage();
+                }
+            };
+        }
+
+        public void ResetStatusMessage()
+        {
+            _saveCloseTimer?.Stop();
+            _saveCloseTimer = null;
+            if (TxtStatus != null)
+            {
+                TxtStatus.Text = string.Empty;
+                TxtStatus.Visibility = Visibility.Collapsed;
+            }
+            if (TxtClearRecentHistoryStatus != null)
+            {
+                TxtClearRecentHistoryStatus.Text = string.Empty;
+                TxtClearRecentHistoryStatus.Visibility = Visibility.Collapsed;
+            }
+            if (TxtUpdateStatus != null)
+            {
+                TxtUpdateStatus.Text = string.Empty;
+                TxtUpdateStatus.Visibility = Visibility.Collapsed;
+            }
         }
 
         public void ReloadSettings()
@@ -80,6 +181,8 @@ namespace AeroSpot.Worker
 
         private void LoadSettingsIntoUi()
         {
+            ResetStatusMessage();
+
             // 0. Language
             string lang = _config.Language?.ToLowerInvariant() ?? "auto";
             switch (lang)
@@ -111,41 +214,16 @@ namespace AeroSpot.Worker
                 ? _config.QuickLookHotkeyText
                 : defaultQuickLookText;
 
-            // 3. Drives
-            _drives.Clear();
-            try
-            {
-                string format = AeroSpot.Core.Localization.LocalizationService.Get("Settings_Drives_Item_Format");
-                string defaultLabel = AeroSpot.Core.Localization.LocalizationService.Get("Settings_Drives_Default_Label");
+            // 2b. Hotkey Delete (Cestino in Spotlight)
+            _deleteKey = _config.DeleteKey;
+            _deleteModifiers = _config.DeleteModifiers;
+            string defaultDeleteText = "Canc";
+            TxtDeleteHotkey.Text = !string.IsNullOrWhiteSpace(_config.DeleteHotkeyText)
+                ? _config.DeleteHotkeyText
+                : defaultDeleteText;
 
-                var detectedDrives = DriveInfo.GetDrives();
-                foreach (var d in detectedDrives)
-                {
-                    try
-                    {
-                        if (!d.IsReady) continue;
-                        string letter = d.Name.TrimEnd('\\', ':').ToUpperInvariant();
-                        string volumeLabel = string.Empty;
-                        try { if (!string.IsNullOrWhiteSpace(d.VolumeLabel)) volumeLabel = d.VolumeLabel; } catch { }
-                        string sizeGb = "N/D";
-                        try { sizeGb = $"{d.TotalSize / (1024.0 * 1024 * 1024):F1} GB"; } catch { }
-                        bool isIncluded = _config.IncludedDrives.Any(x => string.Equals(x.TrimEnd('\\', ':'), letter, StringComparison.OrdinalIgnoreCase));
-
-                        string displayLabel = string.IsNullOrWhiteSpace(volumeLabel) ? defaultLabel : volumeLabel;
-
-                        _drives.Add(new DriveItem
-                        {
-                            Letter = letter,
-                            VolumeLabel = volumeLabel,
-                            SizeText = sizeGb,
-                            DisplayName = string.Format(format, letter, displayLabel, sizeGb),
-                            IsIncluded = isIncluded
-                        });
-                    }
-                    catch { }
-                }
-            }
-            catch { }
+            // 3. Drives (caricamento asincrono per non bloccare mai l'apertura della finestra)
+            LoadDrivesAsync();
 
             // 4. Exclusions
             _exclusions.Clear();
@@ -194,7 +272,11 @@ namespace AeroSpot.Worker
             TxtTimeoutSeconds.Text = _config.WorkerIdleTimeoutSeconds.ToString();
 
             // 6. Windows Startup (M4.2)
-            ChkStartWithWindows.IsChecked = StartupManager.IsStartupEnabled();
+            ChkStartWithWindows.IsChecked = StartupManager.IsStartupEnabled() || (_config.StartWithWindows && StartupManager.IsStartupApprovedByUser());
+
+            // 6b. Conversion & Shell Integration
+            ChkOpenFolderAfterConversion.IsChecked = _config.OpenFolderAfterConversion;
+            ChkIntegrateWindowsContextMenu.IsChecked = _config.IntegrateWindowsContextMenu || AeroSpot.Core.Native.ShellContextMenuIntegration.IsRegistered();
 
             // 7. QuickLook Remember Size by Category
             ChkRememberImages.IsChecked = _config.RememberSizeImages;
@@ -203,18 +285,211 @@ namespace AeroSpot.Worker
             ChkRememberPdf.IsChecked = _config.RememberSizePdf;
             ChkRememberDocs.IsChecked = _config.RememberSizeDocuments;
             ChkRememberGeneric.IsChecked = _config.RememberSizeGeneric;
+            ChkAlwaysOnTop.IsChecked = _config.QuickLookAlwaysOnTop;
 
             // 8. Data Directory & Index Size (P6)
             TxtDataDirectoryPath.Text = AppDataPath.GetDataDirectory();
             TxtDataModeInfo.Text = AppDataPath.IsPortable
                 ? AeroSpot.Core.Localization.LocalizationService.Get("Settings_DataDir_Mode_Portable")
                 : AeroSpot.Core.Localization.LocalizationService.Get("Settings_DataDir_Mode_Standard");
-            UpdateIndexDiskUsage();
+            UpdateIndexDiskUsageAsync();
 
             // 8. Version Info
             var ver = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
             string verStr = ver != null ? $"{ver.Major}.{ver.Minor}.{ver.Build}" : "1.0.0";
-            TxtAppVersionInfo.Text = AeroSpot.Core.Localization.LocalizationService.Get("Instructions_Version", verStr, "2026.10.20");
+            TxtAppVersionInfo.Text = AeroSpot.Core.Localization.LocalizationService.Get("Instructions_Version", verStr, "17.11.2026");
+
+            // 8b. Aggiornamenti dell'applicazione (GitHub Release Checker)
+            TxtCurrentAppVersion.Text = "v" + AeroSpot.Core.Services.UpdateService.CurrentVersion;
+            string freq = _config.UpdateCheckFrequency ?? "Startup";
+            foreach (ComboBoxItem item in CmbUpdateFrequency.Items)
+            {
+                if (string.Equals(item.Tag?.ToString(), freq, StringComparison.OrdinalIgnoreCase))
+                {
+                    CmbUpdateFrequency.SelectedItem = item;
+                    break;
+                }
+            }
+            if (_config.LastUpdateCheckUtc != DateTime.MinValue)
+            {
+                TxtLastCheckedTime.Text = string.Format(
+                    AeroSpot.Core.Localization.LocalizationService.Get("Settings_Updates_LastChecked"),
+                    _config.LastUpdateCheckUtc.ToLocalTime().ToString("g"));
+            }
+            else
+            {
+                TxtLastCheckedTime.Text = AeroSpot.Core.Localization.LocalizationService.Get("Settings_Updates_NeverChecked");
+            }
+
+            if (TxtClearRecentHistoryStatus != null)
+            {
+                TxtClearRecentHistoryStatus.Text = string.Empty;
+            }
+            if (CmbHomeDisplayMode != null)
+            {
+                CmbHomeDisplayMode.SelectedItem = _config.HomeDisplayMode switch
+                {
+                    SpotlightHomeMode.MostFrequentSearches => CmbItemMostFrequentSearches,
+                    SpotlightHomeMode.MostFrequentlyOpened => CmbItemMostFrequentItems,
+                    SpotlightHomeMode.RecentOpened => CmbItemRecentOpened,
+                    SpotlightHomeMode.Alphabetical => CmbItemAlphabetical,
+                    SpotlightHomeMode.None => CmbItemNone,
+                    _ => CmbItemMostFrequentSearches
+                };
+            }
+
+            if (CmbIndexFrequency != null)
+            {
+                int targetFreqTag = (int)_config.IndexUpdateFrequency;
+                foreach (ComboBoxItem item in CmbIndexFrequency.Items)
+                {
+                    if (item.Tag?.ToString() == targetFreqTag.ToString())
+                    {
+                        CmbIndexFrequency.SelectedItem = item;
+                        break;
+                    }
+                }
+                if (CmbIndexFrequency.SelectedItem == null && CmbIndexFrequency.Items.Count > 0)
+                {
+                    CmbIndexFrequency.SelectedIndex = 0;
+                }
+            }
+
+            // 9. Spotlight Category Hierarchy
+            PopulateHierarchyItems(_config.CategoryPriority);
+            ChkPrioritizeExactMatches.IsChecked = _config.PrioritizeExactNameMatches;
+        }
+
+        private async void BtnCheckUpdates_Click(object sender, RoutedEventArgs e)
+        {
+            BtnCheckUpdates.IsEnabled = false;
+            BtnViewReleaseNotes.Visibility = Visibility.Collapsed;
+            BtnApplyUpdate.Visibility = Visibility.Collapsed;
+            TxtUpdateStatus.Visibility = Visibility.Visible;
+            TxtUpdateStatus.Text = AeroSpot.Core.Localization.LocalizationService.Get("Settings_Updates_Checking");
+            PbUpdateDownload.Visibility = Visibility.Visible;
+            PbUpdateDownload.IsIndeterminate = true;
+
+            _updateCts?.Cancel();
+            _updateCts = new CancellationTokenSource();
+
+            try
+            {
+                var result = await AeroSpot.Core.Services.UpdateService.CheckForUpdatesAsync(ct: _updateCts.Token);
+                _config.LastUpdateCheckUtc = DateTime.UtcNow;
+                _config.Save();
+
+                TxtLastCheckedTime.Text = string.Format(
+                    AeroSpot.Core.Localization.LocalizationService.Get("Settings_Updates_LastChecked"),
+                    _config.LastUpdateCheckUtc.ToLocalTime().ToString("g"));
+
+                if (result.IsSuccess)
+                {
+                    if (result.HasUpdate)
+                    {
+                        _latestReleaseUrl = result.ReleaseUrl;
+                        BtnViewReleaseNotes.Visibility = Visibility.Visible;
+
+                        if (!string.IsNullOrEmpty(result.DownloadUrl))
+                        {
+                            TxtUpdateStatus.Text = string.Format(
+                                AeroSpot.Core.Localization.LocalizationService.Get("Settings_Updates_Available"),
+                                result.LatestVersion) + " " + string.Format(AeroSpot.Core.Localization.LocalizationService.Get("Settings_Updates_Downloading"), 0);
+
+                            PbUpdateDownload.IsIndeterminate = false;
+                            PbUpdateDownload.Value = 0;
+
+                            var progress = new Progress<double>(pct =>
+                            {
+                                PbUpdateDownload.Value = pct;
+                                TxtUpdateStatus.Text = string.Format(
+                                    AeroSpot.Core.Localization.LocalizationService.Get("Settings_Updates_Available"),
+                                    result.LatestVersion) + " " + string.Format(AeroSpot.Core.Localization.LocalizationService.Get("Settings_Updates_Downloading"), (int)pct);
+                            });
+
+                            string fileName = result.AssetFileName ?? $"AeroSpot-Setup-v{result.LatestVersion}.exe";
+                            string downloadedPath = await AeroSpot.Core.Services.UpdateService.DownloadUpdateAsync(
+                                result.DownloadUrl, fileName, progress, ct: _updateCts.Token);
+
+                            _downloadedUpdatePath = downloadedPath;
+                            TxtUpdateStatus.Text = AeroSpot.Core.Localization.LocalizationService.Get("Settings_Updates_Ready");
+                            PbUpdateDownload.Visibility = Visibility.Collapsed;
+                            BtnApplyUpdate.Visibility = Visibility.Visible;
+                        }
+                        else
+                        {
+                            TxtUpdateStatus.Text = string.Format(
+                                AeroSpot.Core.Localization.LocalizationService.Get("Settings_Updates_Available"),
+                                result.LatestVersion);
+                            PbUpdateDownload.Visibility = Visibility.Collapsed;
+                        }
+                    }
+                    else
+                    {
+                        TxtUpdateStatus.Text = string.Format(
+                            AeroSpot.Core.Localization.LocalizationService.Get("Settings_Updates_UpToDate"),
+                            AeroSpot.Core.Services.UpdateService.CurrentVersion);
+                        PbUpdateDownload.Visibility = Visibility.Collapsed;
+                    }
+                }
+                else
+                {
+                    TxtUpdateStatus.Text = AeroSpot.Core.Localization.LocalizationService.Get("Settings_Updates_Error") +
+                        (string.IsNullOrEmpty(result.ErrorMessage) ? "" : $" ({result.ErrorMessage})");
+                    PbUpdateDownload.Visibility = Visibility.Collapsed;
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                TxtUpdateStatus.Text = "";
+                PbUpdateDownload.Visibility = Visibility.Collapsed;
+            }
+            catch (Exception ex)
+            {
+                TxtUpdateStatus.Text = AeroSpot.Core.Localization.LocalizationService.Get("Settings_Updates_Error") + $" ({ex.Message})";
+                PbUpdateDownload.Visibility = Visibility.Collapsed;
+            }
+            finally
+            {
+                BtnCheckUpdates.IsEnabled = true;
+            }
+        }
+
+        private void BtnApplyUpdate_Click(object sender, RoutedEventArgs e)
+        {
+            if (!string.IsNullOrEmpty(_downloadedUpdatePath))
+            {
+                try
+                {
+                    AeroSpot.Core.Services.UpdateService.ApplyUpdate(_downloadedUpdatePath, () =>
+                    {
+                        System.Windows.Application.Current?.Dispatcher.Invoke(() =>
+                        {
+                            System.Windows.Application.Current.Shutdown(0);
+                        });
+                    });
+                }
+                catch (Exception ex)
+                {
+                    TxtUpdateStatus.Text = "Errore durante l'avvio dell'aggiornamento: " + ex.Message;
+                }
+            }
+        }
+
+        private void BtnViewReleaseNotes_Click(object sender, RoutedEventArgs e)
+        {
+            if (!string.IsNullOrEmpty(_latestReleaseUrl))
+            {
+                try
+                {
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = _latestReleaseUrl,
+                        UseShellExecute = true
+                    });
+                }
+                catch { }
+            }
         }
 
         private void BtnOpenInstructions_Click(object sender, RoutedEventArgs e)
@@ -270,31 +545,140 @@ namespace AeroSpot.Worker
             catch { }
         }
 
-        private void UpdateIndexDiskUsage()
+        private async void LoadDrivesAsync()
+        {
+            var included = _config.IncludedDrives ?? new List<string>();
+            string format = AeroSpot.Core.Localization.LocalizationService.Get("Settings_Drives_Item_Format");
+            string defaultLabel = AeroSpot.Core.Localization.LocalizationService.Get("Settings_Drives_Default_Label");
+
+            var driveItems = await System.Threading.Tasks.Task.Run(() =>
+            {
+                var list = new List<DriveItem>();
+                try
+                {
+                    var detectedDrives = DriveInfo.GetDrives();
+                    foreach (var d in detectedDrives)
+                    {
+                        try
+                        {
+                            if (!d.IsReady) continue;
+                            string letter = d.Name.TrimEnd('\\', ':').ToUpperInvariant();
+                            string volumeLabel = string.Empty;
+                            try { if (!string.IsNullOrWhiteSpace(d.VolumeLabel)) volumeLabel = d.VolumeLabel; } catch { }
+                            string sizeGb = "N/D";
+                            try { sizeGb = $"{d.TotalSize / (1024.0 * 1024 * 1024):F1} GB"; } catch { }
+                            bool isIncluded = included.Any(x => string.Equals(x.TrimEnd('\\', ':'), letter, StringComparison.OrdinalIgnoreCase));
+
+                            string displayLabel = string.IsNullOrWhiteSpace(volumeLabel) ? defaultLabel : volumeLabel;
+
+                            list.Add(new DriveItem
+                            {
+                                Letter = letter,
+                                VolumeLabel = volumeLabel,
+                                SizeText = sizeGb,
+                                DisplayName = string.Format(format, letter, displayLabel, sizeGb),
+                                IsIncluded = isIncluded
+                            });
+                        }
+                        catch { }
+                    }
+                }
+                catch { }
+                return list;
+            });
+
+            void UpdateUI()
+            {
+                _drives.Clear();
+                foreach (var item in driveItems)
+                {
+                    _drives.Add(item);
+                }
+            }
+
+            if (Dispatcher.CheckAccess())
+            {
+                UpdateUI();
+            }
+            else
+            {
+                try { Dispatcher.Invoke(UpdateUI); } catch { }
+            }
+        }
+
+        private async void UpdateIndexDiskUsageAsync()
         {
             try
             {
-                string dbPath = AeroSpot.Core.Config.AppDataPath.GetDatabasePath();
-                string? dir = Path.GetDirectoryName(dbPath);
-                long totalBytes = 0;
-                if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
+                long totalBytes = await System.Threading.Tasks.Task.Run(() =>
                 {
-                    var di = new DirectoryInfo(dir);
-                    foreach (var f in di.GetFiles("index.db*"))
+                    try
                     {
-                        totalBytes += f.Length;
+                        string dbPath = AeroSpot.Core.Config.AppDataPath.GetDatabasePath();
+                        string? dir = Path.GetDirectoryName(dbPath);
+                        long total = 0;
+                        if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
+                        {
+                            var di = new DirectoryInfo(dir);
+                            foreach (var f in di.GetFiles("index.db*"))
+                            {
+                                total += f.Length;
+                            }
+                        }
+                        return total;
                     }
-                }
+                    catch
+                    {
+                        return 0L;
+                    }
+                });
 
                 string sizeFormatted = Services.PreviewLoader.FormatFileSize(totalBytes);
                 string label = AeroSpot.Core.Localization.LocalizationService.CurrentLanguage == "it"
                     ? $"Spazio indice: {sizeFormatted}"
                     : $"Index disk size: {sizeFormatted}";
-                TxtIndexDiskUsage.Text = label;
+
+                void ApplyLabel(string text)
+                {
+                    if (TxtIndexDiskUsage != null)
+                    {
+                        TxtIndexDiskUsage.Text = text;
+                    }
+                }
+
+                if (Dispatcher.CheckAccess())
+                {
+                    ApplyLabel(label);
+                }
+                else
+                {
+                    try { Dispatcher.Invoke(() => ApplyLabel(label)); } catch { }
+                }
             }
             catch
             {
-                TxtIndexDiskUsage.Text = string.Empty;
+                try
+                {
+                    if (Dispatcher.CheckAccess())
+                    {
+                        if (TxtIndexDiskUsage != null) TxtIndexDiskUsage.Text = string.Empty;
+                    }
+                    else
+                    {
+                        Dispatcher.Invoke(() => { if (TxtIndexDiskUsage != null) TxtIndexDiskUsage.Text = string.Empty; });
+                    }
+                }
+                catch { }
+            }
+        }
+
+        private void BtnToggleHistoryInfo_Click(object sender, RoutedEventArgs e)
+        {
+            if (BorderHistoryInfo != null)
+            {
+                BorderHistoryInfo.Visibility = BorderHistoryInfo.Visibility == Visibility.Visible
+                    ? Visibility.Collapsed
+                    : Visibility.Visible;
             }
         }
 
@@ -309,7 +693,7 @@ namespace AeroSpot.Worker
                         ? AeroSpot.Core.Localization.LocalizationService.Get("Settings_DataDir_Mode_Portable")
                         : AeroSpot.Core.Localization.LocalizationService.Get("Settings_DataDir_Mode_Standard");
                 }
-                UpdateIndexDiskUsage();
+                UpdateIndexDiskUsageAsync();
                 RefreshDriveItemDisplayNames();
 
                 // Aggiorna etichette hotkey predefinite se non personalizzate
@@ -353,13 +737,71 @@ namespace AeroSpot.Worker
             catch { }
         }
 
+        private async void BtnReindexFromSettings_Click(object sender, RoutedEventArgs e)
+        {
+            if (BtnReindexFromSettings != null)
+            {
+                BtnReindexFromSettings.Content = AeroSpot.Core.Localization.LocalizationService.Get("Spotlight_Btn_Reindexing");
+                BtnReindexFromSettings.IsEnabled = false;
+            }
+
+            try
+            {
+                await Task.Run(() =>
+                {
+                    App.MainLauncherWindow?.ViewModel.TriggerFullReindex(force: true);
+                });
+
+                if (BtnReindexFromSettings != null)
+                {
+                    BtnReindexFromSettings.Content = AeroSpot.Core.Localization.LocalizationService.Get("Spotlight_Btn_Reindexed");
+                    await Task.Delay(2500);
+                    BtnReindexFromSettings.Content = AeroSpot.Core.Localization.LocalizationService.Get("Settings_DataDir_Btn_ReindexNow");
+                    BtnReindexFromSettings.IsEnabled = true;
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warn($"BtnReindexFromSettings_Click: {ex.Message}");
+                if (BtnReindexFromSettings != null)
+                {
+                    BtnReindexFromSettings.Content = AeroSpot.Core.Localization.LocalizationService.Get("Settings_DataDir_Btn_ReindexNow");
+                    BtnReindexFromSettings.IsEnabled = true;
+                }
+            }
+        }
+
+        private void BtnClearAllHistory_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                using var db = new SqliteIndexDatabase();
+                db.ClearAllHistory();
+                if (TxtClearRecentHistoryStatus != null)
+                {
+                    TxtClearRecentHistoryStatus.Text = AeroSpot.Core.Localization.LocalizationService.Get("Settings_RecentHistory_Cleared");
+                    TxtClearRecentHistoryStatus.Visibility = Visibility.Visible;
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warn($"Errore nella cancellazione della cronologia da Impostazioni: {ex.Message}");
+            }
+        }
+
         private void BtnClose_Click(object sender, RoutedEventArgs e)
         {
+            _saveCloseTimer?.Stop();
+            _saveCloseTimer = null;
+            if (TxtStatus != null) TxtStatus.Text = string.Empty;
             Hide();
         }
 
         private void BtnCancel_Click(object sender, RoutedEventArgs e)
         {
+            _saveCloseTimer?.Stop();
+            _saveCloseTimer = null;
+            if (TxtStatus != null) TxtStatus.Text = string.Empty;
             Hide();
         }
 
@@ -488,6 +930,29 @@ namespace AeroSpot.Worker
             }
         }
 
+        private void DeleteBorder_Click(object sender, MouseButtonEventArgs e)
+        {
+            TxtDeleteHotkey.Focus();
+        }
+
+        private void DeleteHotkey_PreviewKeyDown(object sender, KeyEventArgs e)
+        {
+            HandleHotkeyInput(e, out uint key, out uint mod, out string text);
+            if (key != 0)
+            {
+                _deleteKey = key;
+                _deleteModifiers = mod;
+                TxtDeleteHotkey.Text = text;
+                Keyboard.ClearFocus();
+                e.Handled = true;
+            }
+            else if (e.Key == Key.Escape)
+            {
+                Keyboard.ClearFocus();
+                e.Handled = true;
+            }
+        }
+
         private static void HandleHotkeyInput(KeyEventArgs e, out uint vk, out uint mod, out string displayText)
         {
             vk = 0;
@@ -562,6 +1027,7 @@ namespace AeroSpot.Worker
                 _config.Save();
                 LoadSettingsIntoUi();
                 TxtStatus.Text = "✓ " + AeroSpot.Core.Localization.LocalizationService.Get("Settings_Status_Saved");
+                TxtStatus.Visibility = Visibility.Visible;
                 ConfigSaved?.Invoke(_config);
             }
         }
@@ -583,6 +1049,10 @@ namespace AeroSpot.Worker
             _config.QuickLookModifiers = _quickLookModifiers;
             _config.QuickLookHotkeyText = TxtQuickLookHotkey.Text;
 
+            _config.DeleteKey = _deleteKey;
+            _config.DeleteModifiers = _deleteModifiers;
+            _config.DeleteHotkeyText = TxtDeleteHotkey.Text;
+
             // Salva Drives
             var selectedDrives = _drives.Where(d => d.IsIncluded).Select(d => d.Letter).ToList();
             if (selectedDrives.Count == 0)
@@ -593,6 +1063,22 @@ namespace AeroSpot.Worker
 
             // Salva Esclusioni
             _config.ExcludedDirectoryNames = _exclusions.Where(x => x.IsExcluded).Select(x => x.Name).ToList();
+
+            // Aggiorna PathFilter e purga immediatamente dal database i file di dischi o percorsi esclusi
+            PathFilter.Configure(_config.IncludedDrives, _config.ExcludedDirectoryNames);
+            Task.Run(() =>
+            {
+                try
+                {
+                    using var db = new SqliteIndexDatabase();
+                    db.PurgeDisallowedDrives(_config.IncludedDrives);
+                    db.PurgeExcludedSegments(_config.ExcludedDirectoryNames);
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Warn($"Spurgo dischi da Impostazioni fallito: {ex.Message}");
+                }
+            });
 
             // Salva Prestazioni & Memoria
             _config.KeepWorkerWarm = ChkKeepWorkerWarm.IsChecked == true;
@@ -606,6 +1092,19 @@ namespace AeroSpot.Worker
             _config.StartWithWindows = enableStartup;
             StartupManager.SetStartupEnabled(enableStartup);
 
+            // Salva opzioni conversione e integrazione shell
+            _config.OpenFolderAfterConversion = ChkOpenFolderAfterConversion.IsChecked == true;
+            bool integrateMenu = ChkIntegrateWindowsContextMenu.IsChecked == true;
+            _config.IntegrateWindowsContextMenu = integrateMenu;
+            if (integrateMenu)
+            {
+                AeroSpot.Core.Native.ShellContextMenuIntegration.Register(AppDomain.CurrentDomain.BaseDirectory, _config.Language);
+            }
+            else
+            {
+                AeroSpot.Core.Native.ShellContextMenuIntegration.Unregister();
+            }
+
             // Salva opzioni persistenza dimensioni QuickLook
             _config.RememberSizeImages = ChkRememberImages.IsChecked == true;
             _config.RememberSizeVideos = ChkRememberVideos.IsChecked == true;
@@ -613,24 +1112,468 @@ namespace AeroSpot.Worker
             _config.RememberSizePdf = ChkRememberPdf.IsChecked == true;
             _config.RememberSizeDocuments = ChkRememberDocs.IsChecked == true;
             _config.RememberSizeGeneric = ChkRememberGeneric.IsChecked == true;
+            _config.QuickLookAlwaysOnTop = ChkAlwaysOnTop.IsChecked == true;
+
+            // Salva gerarchia Spotlight
+            _config.CategoryPriority = _hierarchyItems.Select(x => x.Key).ToList();
+            _config.PrioritizeExactNameMatches = ChkPrioritizeExactMatches.IsChecked == true;
+
+            // Salva frequenza aggiornamenti automatici
+            if (CmbUpdateFrequency.SelectedItem is ComboBoxItem selectedFreqItem)
+            {
+                _config.UpdateCheckFrequency = selectedFreqItem.Tag?.ToString() ?? "Startup";
+            }
+
+            // Salva modalità home Spotlight e cronologia
+            if (CmbHomeDisplayMode?.SelectedItem is ComboBoxItem selectedHomeItem)
+            {
+                if (selectedHomeItem == CmbItemMostFrequentSearches) _config.HomeDisplayMode = SpotlightHomeMode.MostFrequentSearches;
+                else if (selectedHomeItem == CmbItemMostFrequentItems) _config.HomeDisplayMode = SpotlightHomeMode.MostFrequentlyOpened;
+                else if (selectedHomeItem == CmbItemRecentOpened) _config.HomeDisplayMode = SpotlightHomeMode.RecentOpened;
+                else if (selectedHomeItem == CmbItemAlphabetical) _config.HomeDisplayMode = SpotlightHomeMode.Alphabetical;
+                else if (selectedHomeItem == CmbItemNone) _config.HomeDisplayMode = SpotlightHomeMode.None;
+
+                _config.EnableRecentHistory = _config.HomeDisplayMode != SpotlightHomeMode.None;
+            }
+
+            // Salva frequenza aggiornamento automatico indice
+            if (CmbIndexFrequency?.SelectedItem is ComboBoxItem selectedIndexFreqItem &&
+                int.TryParse(selectedIndexFreqItem.Tag?.ToString(), out int freqTag))
+            {
+                _config.IndexUpdateFrequency = (IndexUpdateFrequency)freqTag;
+            }
 
             // Scrivi su disco
             _config.Save();
 
             TxtStatus.Text = "✓ " + AeroSpot.Core.Localization.LocalizationService.Get("Settings_Status_Saved");
+            TxtStatus.Visibility = Visibility.Visible;
             ConfigSaved?.Invoke(_config);
 
-            var timer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-            timer.Tick += (s, ev) =>
+            _saveCloseTimer?.Stop();
+            _saveCloseTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+            _saveCloseTimer.Tick += (s, ev) =>
             {
-                timer.Stop();
+                ResetStatusMessage();
+                UpdateLayout();
                 Hide();
             };
-            timer.Start();
+            _saveCloseTimer.Start();
         }
+
+        #region Schede di Navigazione e Gerarchia Spotlight
+
+        private void TabBtnGeneral_Click(object sender, RoutedEventArgs e)
+        {
+            SelectTab(0);
+        }
+
+        private void TabBtnQuickLook_Click(object sender, RoutedEventArgs e)
+        {
+            SelectTab(1);
+        }
+
+        private void TabBtnSpot_Click(object sender, RoutedEventArgs e)
+        {
+            SelectTab(2);
+        }
+
+        public void SelectTab(int tabIndex)
+        {
+            if (GeneralSettingsPanel != null) GeneralSettingsPanel.Visibility = tabIndex == 0 ? Visibility.Visible : Visibility.Collapsed;
+            if (QuickLookSettingsPanel != null) QuickLookSettingsPanel.Visibility = tabIndex == 1 ? Visibility.Visible : Visibility.Collapsed;
+            if (SpotSettingsPanel != null) SpotSettingsPanel.Visibility = tabIndex == 2 ? Visibility.Visible : Visibility.Collapsed;
+
+            var activeBrush = new SolidColorBrush(Color.FromRgb(0x02, 0x84, 0xC7));
+            var inactiveBrush = Brushes.Transparent;
+            var activeText = new SolidColorBrush(Colors.White);
+            var inactiveText = new SolidColorBrush(Color.FromRgb(0x94, 0xA3, 0xB8));
+
+            if (TabBtnGeneral != null)
+            {
+                TabBtnGeneral.Background = tabIndex == 0 ? activeBrush : inactiveBrush;
+                TabBtnGeneral.Foreground = tabIndex == 0 ? activeText : inactiveText;
+            }
+
+            if (TabBtnQuickLook != null)
+            {
+                TabBtnQuickLook.Background = tabIndex == 1 ? activeBrush : inactiveBrush;
+                TabBtnQuickLook.Foreground = tabIndex == 1 ? activeText : inactiveText;
+            }
+
+            if (TabBtnSpot != null)
+            {
+                TabBtnSpot.Background = tabIndex == 2 ? activeBrush : inactiveBrush;
+                TabBtnSpot.Foreground = tabIndex == 2 ? activeText : inactiveText;
+            }
+        }
+
+        public void SelectTab(string? tabName)
+        {
+            switch (tabName?.ToLowerInvariant())
+            {
+                case "quicklook":
+                case "preview":
+                case "previews":
+                    SelectTab(1);
+                    break;
+                case "spot":
+                case "spotlight":
+                case "search":
+                case "indexing":
+                case "hierarchy":
+                    SelectTab(2);
+                    break;
+                default:
+                    SelectTab(0);
+                    break;
+            }
+        }
+
+        private void PopulateHierarchyItems(List<string>? priorityList)
+        {
+            _hierarchyItems.Clear();
+            var allKnown = AppConfig.GetDefaultCategoryPriority();
+            var orderedKeys = new List<string>();
+
+            if (priorityList != null)
+            {
+                foreach (var k in priorityList)
+                {
+                    if (allKnown.Contains(k, StringComparer.OrdinalIgnoreCase) && !orderedKeys.Contains(k, StringComparer.OrdinalIgnoreCase))
+                    {
+                        orderedKeys.Add(k);
+                    }
+                }
+            }
+
+            foreach (var k in allKnown)
+            {
+                if (!orderedKeys.Contains(k, StringComparer.OrdinalIgnoreCase))
+                {
+                    orderedKeys.Add(k);
+                }
+            }
+
+            bool isIt = (AeroSpot.Core.Localization.LocalizationService.CurrentLanguage?.ToLowerInvariant() ?? "it") != "en";
+
+            int rank = 1;
+            foreach (var key in orderedKeys)
+            {
+                var item = CreateHierarchyItem(key, rank++, isIt);
+                _hierarchyItems.Add(item);
+            }
+        }
+
+        private static CategoryHierarchyItem CreateHierarchyItem(string key, int rank, bool isIt)
+        {
+            return key.ToLowerInvariant() switch
+            {
+                "impostazioni" or "settings" => new CategoryHierarchyItem
+                {
+                    Key = "Impostazioni",
+                    Rank = rank,
+                    Icon = "⚙️",
+                    Title = isIt ? "Impostazioni di Windows e AeroSpot" : "Windows & AeroSpot Settings",
+                    Subtitle = isIt ? "Pagine di impostazione di sistema e dell'app" : "System and app settings pages"
+                },
+                "applicazione" => new CategoryHierarchyItem
+                {
+                    Key = "Applicazione",
+                    Rank = rank,
+                    Icon = "🚀",
+                    Title = isIt ? "Applicazioni ed Eseguibili" : "Applications & Executables",
+                    Subtitle = ".exe, .lnk, .bat, .cmd, .msi"
+                },
+                "documento" => new CategoryHierarchyItem
+                {
+                    Key = "Documento",
+                    Rank = rank,
+                    Icon = "📄",
+                    Title = isIt ? "Documenti e Fogli di Calcolo" : "Documents & Spreadsheets",
+                    Subtitle = ".pdf, .docx, .xlsx, .pptx, .txt, .csv, .md"
+                },
+                "immagine" => new CategoryHierarchyItem
+                {
+                    Key = "Immagine",
+                    Rank = rank,
+                    Icon = "🖼️",
+                    Title = isIt ? "Immagini e Foto" : "Images & Photos",
+                    Subtitle = ".png, .jpg, .jpeg, .gif, .webp, .svg, .bmp, .ico"
+                },
+                "video" => new CategoryHierarchyItem
+                {
+                    Key = "Video",
+                    Rank = rank,
+                    Icon = "🎬",
+                    Title = isIt ? "Video e Filmati" : "Videos & Movies",
+                    Subtitle = ".mp4, .mkv, .avi, .mov, .wmv, .webm"
+                },
+                "audio" => new CategoryHierarchyItem
+                {
+                    Key = "Audio",
+                    Rank = rank,
+                    Icon = "🎵",
+                    Title = isIt ? "File Audio e Musica" : "Audio & Music Files",
+                    Subtitle = ".mp3, .wav, .flac, .aac, .m4a, .ogg, .wma"
+                },
+                "cartella" => new CategoryHierarchyItem
+                {
+                    Key = "Cartella",
+                    Rank = rank,
+                    Icon = "📁",
+                    Title = isIt ? "Cartelle e Directory" : "Folders & Directories",
+                    Subtitle = isIt ? "Cartelle di sistema e dell'utente" : "User and system folders"
+                },
+                "archivio" => new CategoryHierarchyItem
+                {
+                    Key = "Archivio",
+                    Rank = rank,
+                    Icon = "📦",
+                    Title = isIt ? "Archivi compressi" : "Compressed Archives",
+                    Subtitle = ".zip, .rar, .7z, .tar, .gz, .iso"
+                },
+                _ => new CategoryHierarchyItem
+                {
+                    Key = "File",
+                    Rank = rank,
+                    Icon = "📎",
+                    Title = isIt ? "Altri File e Formati Generici" : "Other Files & Formats",
+                    Subtitle = isIt ? "Qualsiasi altra estensione non catalogata" : "Any other uncategorized extensions"
+                }
+            };
+        }
+
+        private bool _isDragging;
+        private Point _dragOffset;
+        private ListBoxItem? _draggedContainer;
+        private CategoryHierarchyItem? _currentDraggedItem;
+        private CategoryHierarchyItem? _currentDropTarget;
+
+        private void BtnResetHierarchy_Click(object sender, RoutedEventArgs e)
+        {
+            PopulateHierarchyItems(AppConfig.GetDefaultCategoryPriority());
+            ChkPrioritizeExactMatches.IsChecked = true;
+        }
+
+        private void UpdateHierarchyRanks()
+        {
+            for (int i = 0; i < _hierarchyItems.Count; i++)
+            {
+                _hierarchyItems[i].Rank = i + 1;
+            }
+        }
+
+        private void HierarchyListBox_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
+        {
+            if (!e.Handled)
+            {
+                SpotSettingsPanel.ScrollToVerticalOffset(SpotSettingsPanel.VerticalOffset - (e.Delta * 0.6));
+                e.Handled = true;
+            }
+        }
+
+        private void HierarchyListBox_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            var dep = e.OriginalSource as DependencyObject;
+            var itemContainer = FindVisualParent<ListBoxItem>(dep);
+            if (itemContainer != null && itemContainer.DataContext is CategoryHierarchyItem item)
+            {
+                _dragStartPoint = e.GetPosition(HierarchyListBox);
+                _draggedContainer = itemContainer;
+                _currentDraggedItem = item;
+                _dragOffset = e.GetPosition(itemContainer);
+            }
+        }
+
+        private void HierarchyListBox_PreviewMouseMove(object sender, MouseEventArgs e)
+        {
+            if (e.LeftButton == MouseButtonState.Pressed && _currentDraggedItem != null && !_isDragging)
+            {
+                Point currentPos = e.GetPosition(HierarchyListBox);
+                Vector diff = _dragStartPoint - currentPos;
+
+                if (Math.Abs(diff.X) > SystemParameters.MinimumHorizontalDragDistance ||
+                    Math.Abs(diff.Y) > SystemParameters.MinimumVerticalDragDistance)
+                {
+                    StartDrag();
+                }
+            }
+
+            if (_isDragging && _currentDraggedItem != null)
+            {
+                // 1. Sposta l'elemento fantasma in tempo reale seguendo il cursore
+                Point canvasPos = e.GetPosition(DragCanvas);
+                Canvas.SetLeft(GhostVisual, canvasPos.X - _dragOffset.X);
+                Canvas.SetTop(GhostVisual, canvasPos.Y - _dragOffset.Y);
+
+                // 2. Identifica la destinazione corretta sotto il cursore
+                Point listPos = e.GetPosition(HierarchyListBox);
+                int targetIndex = GetItemIndexAtPosition(listPos);
+
+                if (targetIndex >= 0 && targetIndex < _hierarchyItems.Count)
+                {
+                    var targetItem = _hierarchyItems[targetIndex];
+                    if (targetItem != _currentDropTarget)
+                    {
+                        if (_currentDropTarget != null)
+                        {
+                            _currentDropTarget.IsDropTarget = false;
+                        }
+                        if (targetItem != _currentDraggedItem)
+                        {
+                            _currentDropTarget = targetItem;
+                            _currentDropTarget.IsDropTarget = true;
+                        }
+                        else
+                        {
+                            _currentDropTarget = null;
+                        }
+                    }
+                }
+                else
+                {
+                    if (_currentDropTarget != null)
+                    {
+                        _currentDropTarget.IsDropTarget = false;
+                        _currentDropTarget = null;
+                    }
+                }
+
+                // 3. Auto-scroll fluido quando ci si avvicina ai bordi superiore/inferiore del pannello
+                Point scrollPos = e.GetPosition(SpotSettingsPanel);
+                if (scrollPos.Y < 40 && SpotSettingsPanel.VerticalOffset > 0)
+                {
+                    SpotSettingsPanel.ScrollToVerticalOffset(SpotSettingsPanel.VerticalOffset - 8);
+                }
+                else if (scrollPos.Y > SpotSettingsPanel.ActualHeight - 40)
+                {
+                    SpotSettingsPanel.ScrollToVerticalOffset(SpotSettingsPanel.VerticalOffset + 8);
+                }
+            }
+        }
+
+        private void StartDrag()
+        {
+            if (_currentDraggedItem == null) return;
+            _isDragging = true;
+            _currentDraggedItem.IsBeingDragged = true;
+
+            // Configura il clone fantasma compatto (~230x36 px)
+            GhostRankText.Text = _currentDraggedItem.RankText;
+            GhostIconText.Text = _currentDraggedItem.Icon;
+            GhostTitleText.Text = _currentDraggedItem.Title;
+
+            GhostVisual.Width = 230;
+            GhostVisual.Height = 36;
+
+            // Limita l'offset in modo che il fantasma compatto rimanga vicino al cursore del mouse
+            _dragOffset.X = Math.Min(_dragOffset.X, 160);
+            _dragOffset.Y = Math.Min(_dragOffset.Y, 18);
+
+            GhostVisual.Visibility = Visibility.Visible;
+            Mouse.OverrideCursor = Cursors.SizeAll;
+            HierarchyListBox.CaptureMouse();
+        }
+
+        private int GetItemIndexAtPosition(Point listPos)
+        {
+            for (int i = 0; i < _hierarchyItems.Count; i++)
+            {
+                if (HierarchyListBox.ItemContainerGenerator.ContainerFromIndex(i) is ListBoxItem container)
+                {
+                    Point itemPos = container.TranslatePoint(new Point(0, 0), HierarchyListBox);
+                    if (listPos.Y >= itemPos.Y && listPos.Y <= itemPos.Y + container.ActualHeight)
+                    {
+                        return i;
+                    }
+                }
+            }
+
+            if (_hierarchyItems.Count > 0 && HierarchyListBox.ItemContainerGenerator.ContainerFromIndex(0) is ListBoxItem firstContainer)
+            {
+                Point firstPos = firstContainer.TranslatePoint(new Point(0, 0), HierarchyListBox);
+                if (listPos.Y < firstPos.Y) return 0;
+            }
+
+            int lastIdx = _hierarchyItems.Count - 1;
+            if (lastIdx >= 0 && HierarchyListBox.ItemContainerGenerator.ContainerFromIndex(lastIdx) is ListBoxItem lastContainer)
+            {
+                Point lastPos = lastContainer.TranslatePoint(new Point(0, 0), HierarchyListBox);
+                if (listPos.Y > lastPos.Y + lastContainer.ActualHeight) return lastIdx;
+            }
+
+            return -1;
+        }
+
+        private void HierarchyListBox_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            if (_isDragging)
+            {
+                if (_currentDropTarget != null && _currentDraggedItem != null)
+                {
+                    int oldIndex = _hierarchyItems.IndexOf(_currentDraggedItem);
+                    int newIndex = _hierarchyItems.IndexOf(_currentDropTarget);
+                    if (oldIndex >= 0 && newIndex >= 0 && oldIndex != newIndex)
+                    {
+                        _hierarchyItems.Move(oldIndex, newIndex);
+                        UpdateHierarchyRanks();
+                    }
+                }
+                EndDrag();
+            }
+            else
+            {
+                _currentDraggedItem = null;
+                _draggedContainer = null;
+            }
+        }
+
+        private void EndDrag()
+        {
+            if (_currentDraggedItem != null)
+            {
+                _currentDraggedItem.IsBeingDragged = false;
+                _currentDraggedItem = null;
+            }
+            if (_currentDropTarget != null)
+            {
+                _currentDropTarget.IsDropTarget = false;
+                _currentDropTarget = null;
+            }
+            _draggedContainer = null;
+            GhostVisual.Visibility = Visibility.Collapsed;
+            Mouse.OverrideCursor = null;
+            HierarchyListBox.ReleaseMouseCapture();
+            _isDragging = false;
+        }
+
+        private void HierarchyListBox_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.Escape && _isDragging)
+            {
+                EndDrag();
+                e.Handled = true;
+            }
+        }
+
+        private static T? FindVisualParent<T>(DependencyObject? child) where T : DependencyObject
+        {
+            while (child != null)
+            {
+                if (child is T parent) return parent;
+                child = VisualTreeHelper.GetParent(child);
+            }
+            return null;
+        }
+
+        #endregion
 
         protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
         {
+            ResetStatusMessage();
+            UpdateLayout();
+
             if (!App.IsShuttingDown)
             {
                 e.Cancel = true;

@@ -11,6 +11,8 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="FFMpegCore" Version="5.5.0" />
+    <PackageReference Include="Docnet.Core" Version="2.6.0" />
     <PackageReference Include="MSTest" Version="4.0.2" />
   </ItemGroup>
 

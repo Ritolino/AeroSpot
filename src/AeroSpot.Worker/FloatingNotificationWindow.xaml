@@ -1,0 +1,127 @@
+<Window x:Class="AeroSpot.Worker.FloatingNotificationWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="AeroSpot Notification"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        Topmost="True"
+        ShowInTaskbar="False"
+        ShowActivated="False"
+        SizeToContent="WidthAndHeight"
+        ResizeMode="NoResize">
+
+    <Window.Resources>
+        <!-- Stile pulsante compatto dark -->
+        <Style x:Key="ToastBtnStyle" TargetType="Button">
+            <Setter Property="Background" Value="#2D3748"/>
+            <Setter Property="Foreground" Value="#F8FAFC"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="8,4"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#3B82F6"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+    </Window.Resources>
+
+    <Border x:Name="RootBorder"
+            Background="#181D24"
+            BorderBrush="#334155"
+            BorderThickness="1"
+            CornerRadius="12"
+            Padding="14,12"
+            Margin="10"
+            MinWidth="320"
+            MaxWidth="420">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="20" ShadowDepth="4" Direction="270" Color="#000000" Opacity="0.55"/>
+        </Border.Effect>
+
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <!-- Riga 1: Icona, Titolo e Chiudi -->
+            <Grid Grid.Row="0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <TextBlock x:Name="TxtIcon" Text="✨" FontSize="16" VerticalAlignment="Center" Margin="0,0,10,0"/>
+
+                <TextBlock x:Name="TxtTitle"
+                           Grid.Column="1"
+                           Text="Elaborazione..."
+                           FontWeight="SemiBold"
+                           FontSize="13"
+                           Foreground="#F8FAFC"
+                           VerticalAlignment="Center"
+                           TextTrimming="CharacterEllipsis"/>
+
+                <Button Grid.Column="2"
+                        Content="✕"
+                        Width="20"
+                        Height="20"
+                        Background="Transparent"
+                        Foreground="#94A3B8"
+                        BorderThickness="0"
+                        Cursor="Hand"
+                        Click="BtnClose_Click"
+                        FontSize="11"
+                        VerticalAlignment="Center"/>
+            </Grid>
+
+            <!-- Riga 2: Barra di avanzamento fluida -->
+            <Grid Grid.Row="1" Margin="0,10,0,0" x:Name="ProgressContainer">
+                <ProgressBar x:Name="ProgressBar"
+                             Height="4"
+                             Minimum="0"
+                             Maximum="100"
+                             Value="0"
+                             Foreground="#3B82F6"
+                             Background="#1E293B"
+                             BorderThickness="0"/>
+            </Grid>
+
+            <!-- Riga 3: Dettaglio / Azione Apri cartella -->
+            <Grid Grid.Row="2" Margin="0,8,0,0" x:Name="ActionContainer">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <TextBlock x:Name="TxtDetail"
+                           Text="Inizializzazione in corso..."
+                           FontSize="11"
+                           Foreground="#94A3B8"
+                           VerticalAlignment="Center"
+                           TextTrimming="CharacterEllipsis"/>
+
+                <Button x:Name="BtnShowInFolder"
+                        Grid.Column="1"
+                        Content="Mostra file"
+                        Style="{StaticResource ToastBtnStyle}"
+                        Visibility="Collapsed"
+                        Click="BtnShowInFolder_Click"/>
+            </Grid>
+        </Grid>
+    </Border>
+</Window>
