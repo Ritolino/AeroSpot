@@ -19,7 +19,7 @@ AeroSpot is distributed in two editions built from the exact same compiled binar
 | Edition | Recommended For | Key Characteristics | Download Link |
 | :--- | :--- | :--- | :--- |
 | **🪟 Setup Installer** *(Coming Soon)* | Everyday users | Per-user installation without UAC in `{localappdata}\Programs\AeroSpot`, Start Menu & Desktop shortcuts, automatic update support | *Coming Soon* |
-| **📦 Portable Package (.zip)** | Developers, USB drives | No installation required: extract and run `AeroSpot.exe`. User data saved strictly in local `Data\` subfolder | [**Download AeroSpot v1.6.0 Portable (.zip)**](https://github.com/Ritolino/AeroSpot/releases/download/v1.6.0/AeroSpot-v1.6.0-win-x64-portable.zip) |
+| **📦 Portable Package (.zip)** | Developers, USB drives | No installation required: extract and run `AeroSpot.exe`. User data saved strictly in local `Data\` subfolder | [**Download AeroSpot v1.6.1 Portable (.zip)**](https://github.com/Ritolino/AeroSpot/releases/download/v1.6.1/AeroSpot-v1.6.1-win-x64-portable.zip) |
 
 ---
 
@@ -33,16 +33,16 @@ AeroSpot is distributed in two editions built from the exact same compiled binar
   - Global hotkey callable instantly from any application or full-screen window.
   - **Zero-Lag Smooth Typing**: Background task decoupling for UI icons and result mapping ensures buttery-smooth 60/144 fps typing with zero keystroke stalls.
   - **Category Quick Filters & Tab Cycling**: Centered filter pills underneath the search box (`All`, `Apps`, `Photos`, `Docs`, `Video`, `Audio`, `Folders`, `Settings`). Pressing `Tab` or `Shift+Tab` cycles immediately through filters without losing typing focus from the search input. Resets automatically to `All` upon closing Spotlight.
-  - **Drag & Drop with Translucent Ghost Adorner**: Directly drag search result items onto Desktop, File Explorer folders, or chat apps (WhatsApp, Telegram, browser dropzones) with a sleek semi-transparent thumbnail card following the cursor.
+  - **Drag & Drop with Translucent Ghost Adorner**: Directly drag search result items onto Desktop, File Explorer folders, or chat apps (WhatsApp, Telegram, browser dropzones) with a sleek semi-transparent thumbnail card following the cursor and configurable default action (*Windows Default*, *Always Copy*, *Always Move*).
   - **Quick Recycle Bin Deletion (`Del`)**: Press `Del` (or use context menu) to send selected items to Windows Recycle Bin with system confirmation dialog and instantaneous differential index removal.
   - **Built-in Calculator & Unit Converter**: Real-time evaluation of math formulas (`2+2`, `sqrt(144)`), percentage discount/markup breakdown with contextual subtitles (e.g. `600 - 60%` = `240`, *"Discount 60% (-360)"*), and instant conversion of volume, mass, length, and temperature.
-  - **Context Menu on Every Result**: Right-click to reveal file location in File Explorer, copy path, preview, recycle, or trigger quick conversions (JPG, PNG, PDF for images and `.md`/`.txt`/`.docx` documents, MP4, MP3, WAV, AI background removal).
+  - **Context Menu on Every Result**: Right-click to reveal file location in File Explorer, copy path, preview, recycle, or trigger quick conversions (JPG, PNG, PDF for images and `.md`/`.txt`/`.docx`/`.rtf`/`.odt` documents, MP4, MP3, WAV, AI background removal).
   - **3-Tab Settings & Customizable Result Hierarchy**: Clean *General*, *QuickLook*, and *Spot* settings tabs with Spotlight deep-linking, drag-and-drop category ordering, and an option to always prioritize exact name matches.
 - **👁 Instant QuickLook Previews (`Space`)**:
-  - Works natively inside **File Explorer**, on the **Desktop**, across Spotlight search results, and inside **Open / Save / Attach dialogs (`#32770`)** of external apps (WhatsApp, Chrome, Notepad, Discord) via UI Automation with zero DLL injection.
-  - **DWM Cloaking Anti-Flicker & Contextual Layering**: Zero ghost frames, zero black flash, automatic foreground activation, manual **90° rotation (`⟳`)** with dynamic window aspect-ratio adaptation (no letterboxing), and an optional *Always on top* toggle.
-  - **Zero-Office Native Word Viewer (`.docx`, `.docm`, `.dotx`)**: Blazing-fast (~5–15 ms) native OpenXML reader with Fluent typography, tables, and zero background `WINWORD.EXE` processes.
-  - **Direct PDF Export**: Built-in **📄 PDF** toolbar button to instantly convert and export Markdown (`.md`), text (`.txt`), and Word documents (`.docx`) to PDF.
+  - Works natively inside **File Explorer** (including Windows 11 multi-tab active tab resolution), on the **Desktop**, across Spotlight search results, and inside **Open / Save / Attach dialogs (`#32770`)** of external apps (WhatsApp, Chrome, Notepad, Discord) via UI Automation with zero DLL injection.
+  - **DWM Cloaking Anti-Flicker & Contextual Layering**: Zero ghost frames, zero black flash, automatic foreground activation, manual **90° rotation (`⟳`)** with dynamic window aspect-ratio adaptation (no letterboxing), universal **`R`** view/zoom reset, and an optional *Always on top* toggle.
+  - **Zero-Office Native Document Viewers (`.docx`, `.docm`, `.dotx`, `.rtf`, `.odt`)**: Blazing-fast (~5–15 ms) native OpenXML, RTF, and OpenDocument readers with Fluent typography, tables, and zero background `WINWORD.EXE` processes.
+  - **Direct PDF Export**: Built-in **📄 PDF** toolbar button to instantly convert and export Markdown (`.md`), text (`.txt`), Word (`.docx`), RTF (`.rtf`), and ODT (`.odt`) documents to PDF.
   - **Native Web & HTML Viewer**: Real browser rendering with full CSS, fonts, and images via isolated WebBrowser component with source code inspection toggle.
   - **High-Speed Native Google PDFium Engine**: Sub-50ms ultra-fast preview powered by the native Google PDFium C++ engine (`Docnet.Core`, QuickLook Store standard) on pure white paper with elegant drop shadow, **continuous vertical scrolling** with stacked pages, **left sidebar page thumbnail gallery** for rapid visual browsing and instant click-to-page jump with dynamic highlight, async lazy-loading with LRU cache (max 16 pages in RAM), left-click hand tool panning (`Cursors.SizeAll`), cursor-anchored `Ctrl + MouseWheel` zoom at **60 FPS with 1:1 reset button**, floating page capsule repositioned at bottom-left (`▲ 1 / 40 ▼`), keyboard shortcuts (`PageUp`/`PageDown`/`Home`/`End`), and zero external browser subprocesses spawned.
   - **Excel Spreadsheet Viewer**: Zero-dependency OpenXML reader (`.xlsx`, `.xlsm`, `.xltx`) supporting multi-sheet tabs and Dark Fluent data grid without requiring Office installed.
@@ -59,8 +59,8 @@ AeroSpot is distributed in two editions built from the exact same compiled binar
   - **Convert to MP4 / Extract MP3 & WAV**: Convert non-MP4 videos (MKV, AVI, MOV, WMV, WEBM) to compatible MP4 via FFmpeg or extract audio via Windows Media Foundation.
   - **Remove Background (AI)**: DirectX 12 neural segmentation via DirectML. Compact model (~44 MB) is downloaded on-demand only upon first use and stored locally.
   - **Automatic Folder Opening**: Automatically opens File Explorer and highlights the newly generated file upon conversion completion.
-- **🔄 Auto-Updater & GitHub Release Checks**:
-  - Automated or manual check for official releases via secure GitHub Releases HTTPS REST API.
+- **🔄 1-Click Auto-Updater & GitHub Release Checks**:
+  - Automated or manual check for official releases via secure GitHub Releases HTTPS REST API, with an interactive floating pill (`"🚀 Update now"`) and 1-click self-updating for Portable `.zip` (preserving `Data\` and `portable.txt`) and Setup `.exe`.
   - Configurable frequencies: *Manual*, *On startup*, *Daily*, *Weekly*, *Monthly*.
   - Automated SHA-256 cryptographic verification against `SHA256SUMS.txt` prior to execution.
 - **🌐 Dual-Language UI (Italiano & English)**:

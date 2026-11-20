@@ -99,7 +99,7 @@ namespace AeroSpot.Core.Search
 
                     // Purga immediata di file ombra e spazzatura macOS/Windows se presenti nell'indice esistente
                     using var purgeCmd = _connection.CreateCommand();
-                    purgeCmd.CommandText = "DELETE FROM IndexedItems WHERE Title LIKE '._%' OR Title = '.DS_Store' OR Title = 'Thumbs.db' OR Title = 'desktop.ini' OR Title LIKE '~$%';";
+                    purgeCmd.CommandText = "DELETE FROM IndexedItems WHERE Title LIKE '._%' OR Title = '.DS_Store' OR Title = 'Thumbs.db' OR Title = 'desktop.ini' OR Title LIKE '~$%' OR lower(Extension) IN ('.lnk', '.url') OR lower(FullPath) LIKE '%.lnk' OR lower(FullPath) LIKE '%.url';";
                     purgeCmd.ExecuteNonQuery();
 
                     // Pulizia retroattiva: elimina eventuali espressioni di calcolo salvate in precedenza nella cronologia
@@ -278,11 +278,22 @@ namespace AeroSpot.Core.Search
                 foreach (var seg in excludedSegments)
                 {
                     if (string.IsNullOrWhiteSpace(seg)) continue;
-                    string pattern = $"%{seg.Trim()}%";
+                    string trimmedSeg = seg.Trim();
+                    string pattern = $"%{trimmedSeg}%";
 
                     using var cmd = _connection.CreateCommand();
                     cmd.Transaction = tx;
-                    cmd.CommandText = "DELETE FROM IndexedItems WHERE FullPath LIKE $pat;";
+                    if (string.Equals(trimmedSeg, @"\bin\", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(trimmedSeg, @"\obj\", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(trimmedSeg, "bin", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(trimmedSeg, "obj", StringComparison.OrdinalIgnoreCase))
+                    {
+                        cmd.CommandText = "DELETE FROM IndexedItems WHERE FullPath LIKE $pat AND FullPath NOT LIKE '%:\\Program Files\\%' AND FullPath NOT LIKE '%:\\Program Files (x86)\\%';";
+                    }
+                    else
+                    {
+                        cmd.CommandText = "DELETE FROM IndexedItems WHERE FullPath LIKE $pat;";
+                    }
                     cmd.Parameters.AddWithValue("$pat", pattern);
                     totalPurged += cmd.ExecuteNonQuery();
                 }
@@ -315,7 +326,7 @@ namespace AeroSpot.Core.Search
             lock (_lock)
             {
                 using var cmd = _connection!.CreateCommand();
-                cmd.CommandText = "DELETE FROM IndexedItems WHERE Title LIKE '._%' OR Title = '.DS_Store' OR Title = 'Thumbs.db' OR Title = 'desktop.ini' OR Title LIKE '~$%';";
+                cmd.CommandText = "DELETE FROM IndexedItems WHERE Title LIKE '._%' OR Title = '.DS_Store' OR Title = 'Thumbs.db' OR Title = 'desktop.ini' OR Title LIKE '~$%' OR lower(Extension) IN ('.lnk', '.url') OR lower(FullPath) LIKE '%.lnk' OR lower(FullPath) LIKE '%.url';";
                 int purged = cmd.ExecuteNonQuery();
                 if (purged > 0)
                 {
@@ -367,7 +378,7 @@ namespace AeroSpot.Core.Search
                     return apps;
                 }
             }
-            return Search(query, maxResults, null, null, true, enableRecentHistory ? Config.SpotlightHomeMode.RecentOpened : Config.SpotlightHomeMode.None);
+            return Search(query, maxResults, null, null, false, enableRecentHistory ? Config.SpotlightHomeMode.RecentOpened : Config.SpotlightHomeMode.None);
         }
 
         public List<IndexedItem> Search(string query, int maxResults, string? categoryFilter, List<string>? categoryPriority, bool prioritizeExactMatches, bool enableRecentHistory)
@@ -375,7 +386,7 @@ namespace AeroSpot.Core.Search
             return Search(query, maxResults, categoryFilter, categoryPriority, prioritizeExactMatches, enableRecentHistory ? Config.SpotlightHomeMode.RecentOpened : Config.SpotlightHomeMode.None);
         }
 
-        public List<IndexedItem> Search(string query, int maxResults = 10, string? categoryFilter = null, List<string>? categoryPriority = null, bool prioritizeExactMatches = true, Config.SpotlightHomeMode homeMode = Config.SpotlightHomeMode.RecentOpened)
+        public List<IndexedItem> Search(string query, int maxResults = 10, string? categoryFilter = null, List<string>? categoryPriority = null, bool prioritizeExactMatches = false, Config.SpotlightHomeMode homeMode = Config.SpotlightHomeMode.RecentOpened)
         {
             EnsureOpen();
             var candidates = new List<IndexedItem>();
@@ -465,16 +476,42 @@ namespace AeroSpot.Core.Search
                         ";
                     }
                     cmd.Parameters.AddWithValue("$limit", maxResults);
+
+                    using var reader = cmd.ExecuteReader();
+                    while (reader.Read())
+                    {
+                        candidates.Add(new IndexedItem
+                        {
+                            Id = reader.GetInt64(0),
+                            Title = reader.GetString(1),
+                            FullPath = reader.GetString(2),
+                            Category = reader.GetString(3),
+                            Extension = reader.GetString(4),
+                            ExecutionTarget = reader.GetString(5),
+                            LastModifiedUtcTicks = reader.GetInt64(6),
+                            IsApp = reader.GetInt32(7) == 1
+                        });
+                    }
                 }
                 else
                 {
-                    string[] terms = query.Trim().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-                    var whereClauses = new List<string>();
+                    string trimmedQuery = query.Trim();
+                    string[] terms = trimmedQuery.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                    var titleWhereClauses = new List<string>();
 
                     for (int i = 0; i < terms.Length; i++)
                     {
                         string paramName = $"$term{i}";
-                        whereClauses.Add($"(Title LIKE {paramName} OR FullPath LIKE {paramName})");
+                        if (terms.Length == 1 && terms[0].Length >= 2 && terms[0].Length <= 5)
+                        {
+                            string acrPattern = string.Join("%", terms[0].ToCharArray()) + "%";
+                            cmd.Parameters.AddWithValue("$acr0", acrPattern);
+                            titleWhereClauses.Add($"(Title LIKE {paramName} OR (IsApp = 1 AND Title LIKE $acr0))");
+                        }
+                        else
+                        {
+                            titleWhereClauses.Add($"Title LIKE {paramName}");
+                        }
                         cmd.Parameters.AddWithValue(paramName, $"%{terms[i]}%");
                     }
 
@@ -482,37 +519,108 @@ namespace AeroSpot.Core.Search
                     {
                         if (string.Equals(categoryFilter, "Applicazione", StringComparison.OrdinalIgnoreCase))
                         {
-                            whereClauses.Add("(IsApp = 1 OR Category = 'Applicazione')");
+                            titleWhereClauses.Add("(IsApp = 1 OR Category = 'Applicazione')");
                         }
                         else
                         {
-                            whereClauses.Add("Category = $catFilter");
+                            titleWhereClauses.Add("Category = $catFilter");
                             cmd.Parameters.AddWithValue("$catFilter", categoryFilter);
                         }
                     }
 
+                    cmd.Parameters.AddWithValue("$exactQuery", trimmedQuery);
+                    cmd.Parameters.AddWithValue("$prefixQuery", $"{trimmedQuery}%");
+
+                    // Fase 1: Candidati il cui Nome (Title) contiene tutti i termini cercati (non vengono mai saturati da match sul solo percorso)
                     cmd.CommandText = $@"
                         SELECT Id, Title, FullPath, Category, Extension, ExecutionTarget, LastModifiedUtcTicks, IsApp
                         FROM IndexedItems
-                        WHERE {string.Join(" AND ", whereClauses)}
-                        LIMIT 150;
+                        WHERE {string.Join(" AND ", titleWhereClauses)}
+                        ORDER BY
+                            CASE WHEN Title = $exactQuery COLLATE NOCASE THEN 0
+                                 WHEN Title LIKE $prefixQuery THEN 1
+                                 ELSE 2 END,
+                            IsApp DESC,
+                            LastModifiedUtcTicks DESC
+                        LIMIT 250;
                     ";
-                }
 
-                using var reader = cmd.ExecuteReader();
-                while (reader.Read())
-                {
-                    candidates.Add(new IndexedItem
+                    var seenIds = new HashSet<long>();
+                    using (var reader = cmd.ExecuteReader())
                     {
-                        Id = reader.GetInt64(0),
-                        Title = reader.GetString(1),
-                        FullPath = reader.GetString(2),
-                        Category = reader.GetString(3),
-                        Extension = reader.GetString(4),
-                        ExecutionTarget = reader.GetString(5),
-                        LastModifiedUtcTicks = reader.GetInt64(6),
-                        IsApp = reader.GetInt32(7) == 1
-                    });
+                        while (reader.Read())
+                        {
+                            long id = reader.GetInt64(0);
+                            seenIds.Add(id);
+                            candidates.Add(new IndexedItem
+                            {
+                                Id = id,
+                                Title = reader.GetString(1),
+                                FullPath = reader.GetString(2),
+                                Category = reader.GetString(3),
+                                Extension = reader.GetString(4),
+                                ExecutionTarget = reader.GetString(5),
+                                LastModifiedUtcTicks = reader.GetInt64(6),
+                                IsApp = reader.GetInt32(7) == 1
+                            });
+                        }
+                    }
+
+                    // Fase 2 (Fallback sul FullPath): eseguita solo se i match sul Nome sono inferiori a maxResults (o 15)
+                    int minTitleCandidates = Math.Max(maxResults, 15);
+                    if (candidates.Count < minTitleCandidates)
+                    {
+                        using var pathCmd = _connection!.CreateCommand();
+                        var pathWhereClauses = new List<string>();
+
+                        for (int i = 0; i < terms.Length; i++)
+                        {
+                            string paramName = $"$pterm{i}";
+                            pathWhereClauses.Add($"(Title LIKE {paramName} OR FullPath LIKE {paramName})");
+                            pathCmd.Parameters.AddWithValue(paramName, $"%{terms[i]}%");
+                        }
+
+                        if (hasFilter)
+                        {
+                            if (string.Equals(categoryFilter, "Applicazione", StringComparison.OrdinalIgnoreCase))
+                            {
+                                pathWhereClauses.Add("(IsApp = 1 OR Category = 'Applicazione')");
+                            }
+                            else
+                            {
+                                pathWhereClauses.Add("Category = $catFilter");
+                                pathCmd.Parameters.AddWithValue("$catFilter", categoryFilter);
+                            }
+                        }
+
+                        pathCmd.CommandText = $@"
+                            SELECT Id, Title, FullPath, Category, Extension, ExecutionTarget, LastModifiedUtcTicks, IsApp
+                            FROM IndexedItems
+                            WHERE {string.Join(" AND ", pathWhereClauses)}
+                            ORDER BY IsApp DESC, LastModifiedUtcTicks DESC
+                            LIMIT 100;
+                        ";
+
+                        using var pathReader = pathCmd.ExecuteReader();
+                        while (pathReader.Read())
+                        {
+                            long id = pathReader.GetInt64(0);
+                            if (seenIds.Add(id))
+                            {
+                                candidates.Add(new IndexedItem
+                                {
+                                    Id = id,
+                                    Title = pathReader.GetString(1),
+                                    FullPath = pathReader.GetString(2),
+                                    Category = pathReader.GetString(3),
+                                    Extension = pathReader.GetString(4),
+                                    ExecutionTarget = pathReader.GetString(5),
+                                    LastModifiedUtcTicks = pathReader.GetInt64(6),
+                                    IsApp = pathReader.GetInt32(7) == 1
+                                });
+                            }
+                        }
+                    }
                 }
             }
 

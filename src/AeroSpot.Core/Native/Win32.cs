@@ -440,6 +440,9 @@ namespace AeroSpot.Core.Native
         [DllImport("user32.dll")]
         public static extern bool IsWindow(IntPtr hWnd);
 
+        [DllImport("user32.dll")]
+        public static extern bool IsWindowVisible(IntPtr hWnd);
+
         public static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
         public static readonly IntPtr HWND_NOTOPMOST = new IntPtr(-2);
 

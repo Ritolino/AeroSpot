@@ -158,7 +158,7 @@ if (Test-Path $appDocs) { Remove-Item -Recurse -Force $appDocs }
 # Inclusione file portabilità dentro app/
 New-Item -ItemType File -Path (Join-Path $appDir "portable.txt") -Force | Out-Null
 
-$licenseCandidate = Join-Path (Split-Path -Parent $repoRoot) "GitHub\LICENSE"
+$licenseCandidate = Join-Path $repoRoot "LICENSE"
 if (Test-Path $licenseCandidate) {
     Copy-Item -Path $licenseCandidate -Destination (Join-Path $appDir "LICENSE") -Force
 }
@@ -235,9 +235,7 @@ Write-Host "Dimensione totale cartella non compressa: $totalSizeMb MB ($totalSiz
 # 5. Generazione Archivio ZIP e Checksum SHA-256
 if ($CreateZip) {
     Write-Host "`n[5/5] Compressione archivio ZIP di distribuzione..." -ForegroundColor Yellow
-    $parent = Split-Path -Parent $repoRoot
-    $candidate = Join-Path $parent "GitHub\release"
-    $distDir = if (Test-Path (Split-Path -Parent $candidate)) { $candidate } else { Join-Path $repoRoot "GitHub\release" }
+    $distDir = Join-Path $repoRoot "release"
     if (-not (Test-Path $distDir)) {
         New-Item -ItemType Directory -Force -Path $distDir | Out-Null
     }

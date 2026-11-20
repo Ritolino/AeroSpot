@@ -13,6 +13,7 @@ namespace AeroSpot.Worker
     {
         private DispatcherTimer? _autoCloseTimer;
         private string? _targetFilePath;
+        private Action? _customAction;
         private readonly IntPtr _targetMonitor;
 
         public FloatingNotificationWindow()
@@ -112,10 +113,13 @@ namespace AeroSpot.Worker
         {
             Dispatcher.Invoke(() =>
             {
+                _autoCloseTimer?.Stop();
                 if (title != null) TxtTitle.Text = title;
                 if (icon != null) TxtIcon.Text = icon;
                 TxtDetail.Text = detailText;
 
+                ProgressContainer.Visibility = Visibility.Visible;
+                BtnShowInFolder.Visibility = Visibility.Collapsed;
                 ProgressBar.IsIndeterminate = percentage < 0;
                 if (percentage >= 0)
                 {
@@ -127,13 +131,37 @@ namespace AeroSpot.Worker
             });
         }
 
-        public void SetSuccess(string title, string detailText, string? resultFilePath = null)
+        public void SetAction(string title, string detailText, string actionButtonText, Action onActionClicked, string icon = "★", int autoCloseMs = 15000)
         {
             Dispatcher.Invoke(() =>
             {
+                _targetFilePath = null;
+                _customAction = onActionClicked;
+                TxtIcon.Text = icon;
+                TxtTitle.Text = title;
+                TxtDetail.Text = detailText;
+                ProgressContainer.Visibility = Visibility.Collapsed;
+                BtnShowInFolder.Content = actionButtonText;
+                BtnShowInFolder.Visibility = Visibility.Visible;
+
+                UpdateLayout();
+                PositionInBottomRight();
+                if (autoCloseMs > 0)
+                {
+                    ScheduleAutoClose(autoCloseMs);
+                }
+            });
+        }
+
+        public void SetSuccess(string title, string detailText, string? resultFilePath = null, int autoCloseMs = 4000)
+        {
+            Dispatcher.Invoke(() =>
+            {
+                _customAction = null;
                 TxtIcon.Text = "✓";
                 TxtTitle.Text = title;
                 TxtDetail.Text = detailText;
+                ProgressContainer.Visibility = Visibility.Visible;
                 ProgressBar.IsIndeterminate = false;
                 ProgressBar.Value = 100;
                 ProgressBar.Foreground = System.Windows.Media.Brushes.MediumSeaGreen;
@@ -141,12 +169,17 @@ namespace AeroSpot.Worker
                 _targetFilePath = resultFilePath;
                 if (!string.IsNullOrEmpty(resultFilePath) && File.Exists(resultFilePath))
                 {
+                    BtnShowInFolder.Content = AeroSpot.Core.Localization.LocalizationService.Get("Notification_OpenFolder");
                     BtnShowInFolder.Visibility = Visibility.Visible;
+                }
+                else
+                {
+                    BtnShowInFolder.Visibility = Visibility.Collapsed;
                 }
 
                 UpdateLayout();
                 PositionInBottomRight();
-                ScheduleAutoClose(4000);
+                ScheduleAutoClose(autoCloseMs);
             });
         }
 
@@ -154,12 +187,15 @@ namespace AeroSpot.Worker
         {
             Dispatcher.Invoke(() =>
             {
+                _customAction = null;
                 TxtIcon.Text = "⚠️";
                 TxtTitle.Text = title;
                 TxtDetail.Text = errorMessage;
+                ProgressContainer.Visibility = Visibility.Visible;
                 ProgressBar.IsIndeterminate = false;
                 ProgressBar.Value = 100;
                 ProgressBar.Foreground = System.Windows.Media.Brushes.Crimson;
+                BtnShowInFolder.Visibility = Visibility.Collapsed;
 
                 UpdateLayout();
                 PositionInBottomRight();
@@ -187,6 +223,16 @@ namespace AeroSpot.Worker
 
         private void BtnShowInFolder_Click(object sender, RoutedEventArgs e)
         {
+            if (_customAction != null)
+            {
+                _autoCloseTimer?.Stop();
+                var action = _customAction;
+                _customAction = null;
+                BtnShowInFolder.Visibility = Visibility.Collapsed;
+                action.Invoke();
+                return;
+            }
+
             if (!string.IsNullOrEmpty(_targetFilePath) && File.Exists(_targetFilePath))
             {
                 try

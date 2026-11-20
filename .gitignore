@@ -3,8 +3,22 @@
 [Oo]bj/
 dist/
 release/
+_temp/
 _Cleanup_*/
 _backups/
+*.exe
+*.msi
+*.zip
+*.pdb
+
+# Local AI coordination & planning docs (/ideazione)
+AGENTS.md
+00_MAIN_BRIEF.md
+ROADMAP.md
+DECISIONS.md
+IMPLEMENTAZIONI.md
+.agents/
+briefing/
 
 # User data and portable state
 Data/

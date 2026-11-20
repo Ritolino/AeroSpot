@@ -158,5 +158,52 @@ namespace AeroSpot.Tests
             var enResults = SettingsSearchCatalog.Search("always on top", "en");
             Assert.IsTrue(enResults.Any(r => r.Uri == "aerospot:settings:quicklook"), "La ricerca 'always on top' deve rimandare a quicklook.");
         }
+
+        [TestMethod]
+        public void AppConfig_DragDropMode_DefaultsAndRoundtripsJson()
+        {
+            var cfg = new AeroSpot.Core.Config.AppConfig();
+            Assert.AreEqual(AeroSpot.Core.Config.SpotlightDragDropMode.WindowsDefault, cfg.DragDropMode);
+
+            cfg.DragDropMode = AeroSpot.Core.Config.SpotlightDragDropMode.AlwaysCopy;
+            string json = System.Text.Json.JsonSerializer.Serialize(cfg);
+            var deserialized = System.Text.Json.JsonSerializer.Deserialize<AeroSpot.Core.Config.AppConfig>(json);
+            Assert.IsNotNull(deserialized);
+            Assert.AreEqual(AeroSpot.Core.Config.SpotlightDragDropMode.AlwaysCopy, deserialized.DragDropMode);
+
+            cfg.DragDropMode = AeroSpot.Core.Config.SpotlightDragDropMode.AlwaysMove;
+            json = System.Text.Json.JsonSerializer.Serialize(cfg);
+            deserialized = System.Text.Json.JsonSerializer.Deserialize<AeroSpot.Core.Config.AppConfig>(json);
+            Assert.IsNotNull(deserialized);
+            Assert.AreEqual(AeroSpot.Core.Config.SpotlightDragDropMode.AlwaysMove, deserialized.DragDropMode);
+        }
+
+        [TestMethod]
+        public void SettingsWindow_DragDropMode_BindsThreeOptions()
+        {
+            Exception? threadEx = null;
+            var t = new Thread(() =>
+            {
+                try
+                {
+                    var window = new SettingsWindow();
+                    Assert.IsNotNull(window.CmbDragDropMode, "CmbDragDropMode deve essere presente nella scheda Spot.");
+                    Assert.AreEqual(3, window.CmbDragDropMode.Items.Count, "CmbDragDropMode deve contenere esattamente 3 opzioni.");
+                }
+                catch (Exception ex)
+                {
+                    threadEx = ex;
+                }
+            });
+
+            t.SetApartmentState(ApartmentState.STA);
+            t.Start();
+            t.Join(TimeSpan.FromSeconds(5));
+
+            if (threadEx != null)
+            {
+                throw new AssertFailedException("SettingsWindow DragDropMode test failed: " + threadEx.Message, threadEx);
+            }
+        }
     }
 }

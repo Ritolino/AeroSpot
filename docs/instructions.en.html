@@ -256,7 +256,7 @@
 <ul>
 <li><strong>📁 Open file location:</strong> Opens File Explorer and directly selects and highlights the item.</li>
 <li><strong>🖼 Convert to JPG / PNG:</strong> Converts images (individually or in batch when selecting multiple files of the same format) into high-quality JPEG (using DPI-independent pixel-level white compositing for transparency) or lossless transparent PNG.</li>
-<li><strong>📄 Convert to PDF / Combine photos into single PDF:</strong> Converts images or text/Word documents (<code>.md</code>, <code>.txt</code>, <code>.docx</code>) into native PDFs; selecting multiple photos combines them seamlessly into one ordered <strong>multi-page PDF document</strong>.</li>
+<li><strong>📄 Convert to PDF / Combine photos into single PDF:</strong> Converts images or text/Word documents (<code>.md</code>, <code>.txt</code>, <code>.docx</code>, <code>.rtf</code>, <code>.odt</code>) into native PDFs; selecting multiple photos combines them seamlessly into one ordered <strong>multi-page PDF document</strong>.</li>
 <li><strong>📑 Merge selected PDFs:</strong> Selecting two or more <code>.pdf</code> files in File Explorer merges them into a single unified document preserving all vector graphics and selectable text.</li>
 <li><strong>🎬 Convert to MP4 / 🎵 Extract MP3 &amp; WAV:</strong> Converts non-MP4 videos (MKV, AVI, MOV, WMV, WEBM) to compatible MP4 via FFmpeg or extracts high-quality MP3/WAV audio.</li>
 <li><strong>✨ Remove Background (AI):</strong> Cuts out photo backgrounds (single or multi-file batch) using a local Onnx/DirectML neural model with DirectX 12 GPU acceleration and CPU fallback. Downloaded on-demand upon first use (~44 MB).</li>
@@ -341,9 +341,9 @@
 <td>Monospace typography (<em>Cascadia Mono</em> / <em>Consolas</em>), automatic encoding detection (UTF-8, UTF-16, ANSI), line count, and safe 100 KB truncation limit to protect RAM.</td>
 </tr>
 <tr>
-<td><strong>Office Documents</strong></td>
-<td><code>.docx</code>, <code>.docm</code>, <code>.dotx</code>, <code>.pptx</code>, <code>.rtf</code></td>
-<td>Native zero-Office OpenXML reader (~5–15 ms) for <code>.docx</code>/<code>.docm</code>/<code>.dotx</code> with Fluent typography and PDF export; out-of-process COM hosting (<code>prevhost.exe</code>) for <code>.pptx</code> and <code>.rtf</code>.</td>
+<td><strong>Office &amp; RTF/ODT Documents</strong></td>
+<td><code>.docx</code>, <code>.docm</code>, <code>.dotx</code>, <code>.rtf</code>, <code>.odt</code></td>
+<td>Native zero-Office in-process readers (~5–15 ms) for <code>.docx</code>/<code>.docm</code>/<code>.dotx</code>, <code>.rtf</code>, and <code>.odt</code> with Dark Fluent typography and 1-click PDF export (zero background <code>WINWORD.EXE</code> processes).</td>
 </tr>
 <tr>
 <td><strong>Folders</strong></td>

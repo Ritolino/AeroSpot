@@ -676,6 +676,27 @@ namespace AeroSpot.Worker.ViewModels
             }
 
             int insertTopIndex = actionItem != null ? 1 : 0;
+            if (_config.PrioritizeExactNameMatches)
+            {
+                string trimmedQ = query.Trim();
+                string normQuery = string.Join(" ", trimmedQ.Split(new[] { ' ', '-', '_', '.' }, StringSplitOptions.RemoveEmptyEntries));
+                while (insertTopIndex < items.Count)
+                {
+                    string itemTitle = items[insertTopIndex].Title ?? string.Empty;
+                    string itemTitleNoExt = itemTitle.Contains('.') ? Path.GetFileNameWithoutExtension(itemTitle) : itemTitle;
+                    string normItemTitle = string.Join(" ", itemTitleNoExt.Split(new[] { ' ', '-', '_', '.' }, StringSplitOptions.RemoveEmptyEntries));
+                    if (string.Equals(itemTitle, trimmedQ, StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(itemTitleNoExt, trimmedQ, StringComparison.OrdinalIgnoreCase) ||
+                        (!string.IsNullOrEmpty(normQuery) && string.Equals(normItemTitle, normQuery, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        insertTopIndex++;
+                    }
+                    else
+                    {
+                        break;
+                    }
+                }
+            }
 
             foreach (var setting in settingsMatches)
             {
@@ -842,6 +863,37 @@ namespace AeroSpot.Worker.ViewModels
             if (_config.HomeDisplayMode != AeroSpot.Core.Config.SpotlightHomeMode.None && !string.IsNullOrWhiteSpace(fullPath))
             {
                 _db.RecordRecentItem(fullPath);
+            }
+        }
+
+        public void NotifyItemMovedOrDeleted(SearchResultItem? item)
+        {
+            if (item == null || item.IsActionItem || string.IsNullOrWhiteSpace(item.TargetPath))
+            {
+                return;
+            }
+
+            string path = item.TargetPath;
+            if (!File.Exists(path) && !Directory.Exists(path))
+            {
+                try
+                {
+                    _db.DeleteBatch(new[] { path });
+                }
+                catch { }
+
+                _cachedHomeItems?.Remove(item);
+                FilteredResults.Remove(item);
+                if (FilteredResults.Count > 0)
+                {
+                    SelectedIndex = Math.Clamp(SelectedIndex, 0, FilteredResults.Count - 1);
+                    SelectedItem = FilteredResults[SelectedIndex];
+                }
+                else
+                {
+                    SelectedIndex = -1;
+                    SelectedItem = null;
+                }
             }
         }
 

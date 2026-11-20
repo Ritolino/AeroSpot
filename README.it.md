@@ -19,7 +19,7 @@ AeroSpot è distribuito in due edizioni costruite a partire dagli stessi binari 
 | Edizione | Per chi è consigliata | Caratteristiche | Download |
 | :--- | :--- | :--- | :--- |
 | **🪟 Setup Installer** *(In arrivo)* | Utenti quotidiani | Installazione per-utente senza UAC in `{localappdata}\Programs\AeroSpot`, collegamenti Start e Desktop, aggiornamento automatico | *In arrivo* |
-| **📦 Pacchetto Portable (.zip)** | Sviluppatori, chiavette USB | Nessuna installazione richiesta: estrai ed esegui `AeroSpot.exe`. Dati salvati nella cartella locale `Data\` | [**Scarica AeroSpot v1.6.0 Portable (.zip)**](https://github.com/Ritolino/AeroSpot/releases/download/v1.6.0/AeroSpot-v1.6.0-win-x64-portable.zip) |
+| **📦 Pacchetto Portable (.zip)** | Sviluppatori, chiavette USB | Nessuna installazione richiesta: estrai ed esegui `AeroSpot.exe`. Dati salvati nella cartella locale `Data\` | [**Scarica AeroSpot v1.6.1 Portable (.zip)**](https://github.com/Ritolino/AeroSpot/releases/download/v1.6.1/AeroSpot-v1.6.1-win-x64-portable.zip) |
 
 ---
 
@@ -33,16 +33,16 @@ AeroSpot è distribuito in due edizioni costruite a partire dagli stessi binari 
   - Scorciatoia globale richiamabile all'istante da qualsiasi schermata o applicazione.
   - **Digitazione a Latenza Zero**: Il thread UI non si blocca mai durante la digitazione; icone ed elementi grafici vengono composti asincronamente in background mentre le query SQLite FTS5 vengono eseguite in tempo reale.
   - **Filtri Rapidi per Categoria & Navigazione Tab**: Barra pillole centrata sotto la casella di ricerca (`Tutti`, `App`, `Foto`, `Documenti`, `Video`, `Audio`, `Cartelle`, `Impostazioni`). Premendo `Tab` o `Shift+Tab` si scorrono ciclicamente i filtri all'istante senza perdere il focus dalla casella di digitazione. I filtri si resettano automaticamente su `Tutti` alla chiusura.
-  - **Drag & Drop con Miniatura Fantasma**: Trascina direttamente i file trovati verso il Desktop, Esplora Risorse o chat esterne (WhatsApp, Telegram, browser), con una miniatura elegante semitrasparente che segue fedelmente il cursore del mouse.
+  - **Drag & Drop con Miniatura Fantasma**: Trascina direttamente i file trovati verso il Desktop, Esplora Risorse o chat esterne (WhatsApp, Telegram, browser), con una miniatura elegante semitrasparente che segue fedelmente il cursore del mouse e comportamento configurabile (*Segui Windows*, *Copia sempre*, *Sposta sempre*).
   - **Eliminazione Rapida nel Cestino (`Canc`)**: Tasto `Canc` o voce del menu contestuale per inviare i file eliminati nel Cestino di sistema di Windows con dialogo di conferma e rimozione istantanea dall'indice.
   - **Calcolatrice e Convertitore di Unità**: Calcoli al volo (`2+2`, `sqrt(144)`), scomposizione sconti e maggiorazioni percentuali con sottotitoli contestuali (es. `600 - 60%` = `240`, *"Sconto 60% (-360)"*) e conversioni istantanee di volume, massa, lunghezza e temperatura.
-  - **Menu Contestuale su Ogni Risultato**: Clic destro per "Vai al percorso file" in Esplora risorse, copia percorso, anteprima, cestino e conversioni rapide (JPG, PNG, PDF per immagini e documenti `.md`/`.txt`/`.docx`, MP4, MP3, WAV, rimozione sfondo AI).
+  - **Menu Contestuale su Ogni Risultato**: Clic destro per "Vai al percorso file" in Esplora risorse, copia percorso, anteprima, cestino e conversioni rapide (JPG, PNG, PDF per immagini e documenti `.md`/`.txt`/`.docx`/`.rtf`/`.odt`, MP4, MP3, WAV, rimozione sfondo AI).
   - **Impostazioni in 3 Sezioni & Gerarchia Personalizzabile**: Schede pulite *Generali*, *QuickLook* e *Spot* con collegamento diretto da Spotlight, riordino categorie drag-and-drop e opzione per privilegiare la corrispondenza esatta del nome.
 - **👁 Anteprime Immediate QuickLook (`Spazio`)**:
-  - Funziona nativamente in **Esplora Risorse**, sul **Desktop**, nei risultati di Spotlight e all'interno delle **finestre di dialogo Apri / Salva / Allega (`#32770`)** di app terze (WhatsApp, Chrome, Blocco Note, Discord) tramite UI Automation senza injection di DLL.
-  - **Architettura DWM Cloaking & Layering Contestuale**: Zero frame fantasma, zero flash nero, attivazione automatica in primo piano, pulsante **rotazione manuale 90° (`⟳`)** con adattamento dinamico delle proporzioni finestra (zero bande nere) e opzione *Sempre in primo piano*.
-  - **Visualizzatore Word Nativo Zero-Office (`.docx`, `.docm`, `.dotx`)**: Lettore nativo OpenXML ultra-rapido (~5–15 ms) con tipografia Fluent, tabelle e zero processi zombie `WINWORD.EXE` in background.
-  - **Esportazione Diretta in PDF**: Pulsante **📄 PDF** integrato nella barra strumenti per convertire ed esportare all'istante file Markdown (`.md`), testo (`.txt`) e documenti Word (`.docx`).
+  - Funziona nativamente in **Esplora Risorse** (con supporto multi-scheda attiva di Windows 11), sul **Desktop**, nei risultati di Spotlight e all'interno delle **finestre di dialogo Apri / Salva / Allega (`#32770`)** di app terze (WhatsApp, Chrome, Blocco Note, Discord) tramite UI Automation senza injection di DLL.
+  - **Architettura DWM Cloaking & Layering Contestuale**: Zero frame fantasma, zero flash nero, attivazione automatica in primo piano, pulsante **rotazione manuale 90° (`⟳`)** con adattamento dinamico delle proporzioni finestra (zero bande nere), scorciatoia universale **`R`** per reset vista/zoom e opzione *Sempre in primo piano*.
+  - **Visualizzatori Documenti Nativi Zero-Office (`.docx`, `.docm`, `.dotx`, `.rtf`, `.odt`)**: Lettori nativi OpenXML, RTF e OpenDocument ultra-rapidi (~5–15 ms) con tipografia Fluent, tabelle e zero processi zombie `WINWORD.EXE` in background.
+  - **Esportazione Diretta in PDF**: Pulsante **📄 PDF** integrato nella barra strumenti per convertire ed esportare all'istante file Markdown (`.md`), testo (`.txt`), Word (`.docx`), RTF (`.rtf`) e ODT (`.odt`).
   - **Visualizzatore Web & HTML Nativo**: Rendering reale con layout, CSS ed immagini tramite motore browser nativo isolato e pulsante per esaminare il codice sorgente.
   - **Documenti PDF ad Alta Velocità (Google PDFium x64)**: Visualizzazione ultra-rapida sub-50ms tramite motore nativo C++ Google PDFium (`Docnet.Core`, standard QuickLook Store) su autentico foglio bianco candido con ombra elegante, **scorrimento continuo verticale** con pagine impilate, **barra laterale sinistra con miniature delle pagine** per navigazione rapida e salto istantaneo al clic con evidenziazione dinamica, caricamento asincrono con cache LRU (max 16 pagine in RAM), pan a manina con trascinamento tasto sinistro (`Cursors.SizeAll`), zoom millimetrico continuo `Ctrl + Rotellina` a **60 FPS ancorato al puntatore con tasto reset 1:1**, capsula flottante di pagina posizionata in basso a sinistra (`▲ 1 / 40 ▼`), navigazione da tastiera `PageUp`/`PageDown`/`Home`/`End` e zero processi browser esterni avviati.
   - **Fogli di Calcolo Excel**: Lettore nativo OpenXML (`.xlsx`, `.xlsm`, `.xltx`) a zero dipendenze; apre e visualizza fogli multipli con schede tab senza richiedere Microsoft Office installato.
@@ -59,8 +59,8 @@ AeroSpot è distribuito in due edizioni costruite a partire dagli stessi binari 
   - **Converti in MP4 / Estrai MP3 e WAV**: Converte video non MP4 (MKV, AVI, MOV, WMV, WEBM) in MP4 compatibile tramite FFmpeg o estrae tracce audio con Windows Media Foundation.
   - **Rimuovi sfondo (AI)**: Segmentazione neurale su GPU DirectX 12 via DirectML. Il modello compatto (~44 MB) viene scaricato in streaming solo al primo clic e salvato localmente.
   - **Apertura Automatica Cartella**: Al termine della conversione, Esplora risorse si apre automaticamente evidenziando il nuovo file generato.
-- **🔄 Aggiornamenti Automatici & Gestione Release**:
-  - Controllo automatico o manuale di nuove versioni ufficiali su GitHub Releases API via HTTPS.
+- **🔄 Aggiornamento Automatico 1-Clic & Gestione Release**:
+  - Controllo automatico o manuale di nuove versioni ufficiali su GitHub Releases API via HTTPS, con pillola fluttuante interattiva (`"🚀 Aggiorna ora"`) e auto-aggiornamento in 1 clic per Portable `.zip` (preservando `Data\` e `portable.txt`) e Setup `.exe`.
   - Frequenze configurabili: *Manuale*, *Ad ogni avvio*, *Giornaliero*, *Settimanale*, *Mensile*.
   - Verifica crittografica preventiva SHA-256 contro `SHA256SUMS.txt` prima dell'esecuzione.
 - **🌐 Interfaccia Bilingue (Italiano & English)**:

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.IO;
 using Microsoft.Win32;
 
@@ -10,8 +11,20 @@ namespace AeroSpot.Core.Preview
         private const string PreviewHandlerSubKey = @"ShellEx\{8895b1c6-b41f-4c1c-a562-0d564250836f}";
         private const string PreviewHandlersListKey = @"SOFTWARE\Microsoft\Windows\CurrentVersion\PreviewHandlers";
 
+        // Blacklist globale di CLSID COM Office che avviano processi zombie (-Embedding / /Embedding)
+        // o che sono già sostituiti dai lettori nativi in-process di AeroSpot.
+        private static readonly HashSet<Guid> BlockedHandlerClsids = new()
+        {
+            new Guid("84F66100-FF7C-4fb4-B0C0-02CD7FB668FE"), // Microsoft Word previewer (WINWORD.EXE -Embedding)
+            new Guid("00020827-0000-0000-C000-000000000046"), // Microsoft Excel previewer (EXCEL.EXE /Embedding)
+            new Guid("65235197-874B-4A07-BDC5-E65EA825B718"), // Microsoft PowerPoint previewer
+        };
+
         private static readonly ConcurrentDictionary<string, Guid?> _clsidCache = new(StringComparer.OrdinalIgnoreCase);
         private static readonly ConcurrentDictionary<Guid, string> _nameCache = new();
+
+        public static bool IsBlockedHandlerClsid(Guid clsid) =>
+            clsid != Guid.Empty && BlockedHandlerClsids.Contains(clsid);
 
         public static bool TryGetHandlerClsid(string filePathOrExtension, out Guid clsid)
         {
@@ -26,7 +39,7 @@ namespace AeroSpot.Core.Preview
 
             if (_clsidCache.TryGetValue(ext, out var cached))
             {
-                if (cached.HasValue)
+                if (cached.HasValue && !IsBlockedHandlerClsid(cached.Value))
                 {
                     clsid = cached.Value;
                     return true;
@@ -35,6 +48,11 @@ namespace AeroSpot.Core.Preview
             }
 
             Guid? resolved = ResolveClsidFromRegistry(ext);
+            if (resolved.HasValue && IsBlockedHandlerClsid(resolved.Value))
+            {
+                resolved = null;
+            }
+
             _clsidCache[ext] = resolved;
 
             if (resolved.HasValue)

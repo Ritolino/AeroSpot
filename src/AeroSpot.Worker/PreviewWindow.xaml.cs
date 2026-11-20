@@ -69,6 +69,7 @@ namespace AeroSpot.Worker
         // Campi per la visualizzazione e interazione 3D STL
         private PerspectiveCamera? _stlCamera;
         private Point3D _stlCenter;
+        private double _stlDefaultDistance;
         private double _stlDistance;
         private double _stlTheta = 45;
         private double _stlPhi = 35;
@@ -370,6 +371,7 @@ namespace AeroSpot.Worker
             TextView.Visibility = Visibility.Collapsed;
             MarkdownView.Visibility = Visibility.Collapsed;
             if (StlView != null) StlView.Visibility = Visibility.Collapsed;
+            if (BtnReset3DView != null) BtnReset3DView.Visibility = Visibility.Collapsed;
             if (StlViewport != null) StlViewport.Children.Clear();
             if (HtmlView != null) HtmlView.Visibility = Visibility.Collapsed;
             if (HtmlDocumentViewer != null) HtmlDocumentViewer.Document = null;
@@ -423,6 +425,7 @@ namespace AeroSpot.Worker
 
                 case PreviewType.Stl3D:
                     if (StlView != null) StlView.Visibility = Visibility.Visible;
+                    if (BtnReset3DView != null) BtnReset3DView.Visibility = Visibility.Visible;
                     SetupStl3DView(model.StlModel);
                     break;
 
@@ -1094,6 +1097,16 @@ namespace AeroSpot.Worker
                     BtnResetZoom.Visibility = Math.Abs(_pdfScale - 1.0) > 0.05 ? Visibility.Visible : Visibility.Collapsed;
                 }
 
+                if (_pdfScale <= 1.01)
+                {
+                    if (_isPanningPdf)
+                    {
+                        _isPanningPdf = false;
+                        PdfScrollViewer.ReleaseMouseCapture();
+                    }
+                    PdfScrollViewer.Cursor = Cursors.Arrow;
+                }
+
                 e.Handled = true;
                 return;
             }
@@ -1101,10 +1114,39 @@ namespace AeroSpot.Worker
             // Con scorrimento continuo, se Ctrl NON è premuto, lo ScrollViewer gestisce naturalmente la rotellina!
         }
 
+        private static bool IsDescendantOfScrollBar(DependencyObject? source, DependencyObject? stopAt)
+        {
+            DependencyObject? current = source;
+            while (current != null && current != stopAt)
+            {
+                if (current is System.Windows.Controls.Primitives.ScrollBar)
+                {
+                    return true;
+                }
+
+                if (current is Visual || current is Visual3D)
+                {
+                    current = VisualTreeHelper.GetParent(current);
+                }
+                else
+                {
+                    current = LogicalTreeHelper.GetParent(current);
+                }
+            }
+            return false;
+        }
+
         private void PdfScrollViewer_PreviewMouseDown(object sender, MouseButtonEventArgs e)
         {
             if (e.ChangedButton == MouseButton.Left && PdfScrollViewer != null)
             {
+                // Se l'utente ha cliccato sulla barra di scorrimento (verticale o orizzontale),
+                // non intercettare l'evento: lascia alla ScrollBar il trascinamento nativo del thumb.
+                if (IsDescendantOfScrollBar(e.OriginalSource as DependencyObject, PdfScrollViewer))
+                {
+                    return;
+                }
+
                 if (e.ClickCount == 2)
                 {
                     ToggleFullscreen();
@@ -1112,13 +1154,21 @@ namespace AeroSpot.Worker
                     return;
                 }
 
-                // Clicca e trascina con il tasto sinistro (pan a manina)
-                _isPanningPdf = true;
-                _pdfPanStart = e.GetPosition(PdfScrollViewer);
-                _startHOffset = PdfScrollViewer.HorizontalOffset;
-                _startVOffset = PdfScrollViewer.VerticalOffset;
-                PdfScrollViewer.CaptureMouse();
-                PdfScrollViewer.Cursor = Cursors.SizeAll;
+                // Clicca e trascina con il tasto sinistro (pan a manina) abilitato solo quando il PDF è zoommato (> 100%)
+                if (_pdfScale > 1.01)
+                {
+                    _isPanningPdf = true;
+                    _pdfPanStart = e.GetPosition(PdfScrollViewer);
+                    _startHOffset = PdfScrollViewer.HorizontalOffset;
+                    _startVOffset = PdfScrollViewer.VerticalOffset;
+                    PdfScrollViewer.CaptureMouse();
+                    PdfScrollViewer.Cursor = Cursors.SizeAll;
+                }
+                else
+                {
+                    _isPanningPdf = false;
+                    PdfScrollViewer.Cursor = Cursors.Arrow;
+                }
             }
         }
 
@@ -1126,6 +1176,14 @@ namespace AeroSpot.Worker
         {
             if (_isPanningPdf && PdfScrollViewer != null)
             {
+                if (e.LeftButton != MouseButtonState.Pressed || _pdfScale <= 1.01)
+                {
+                    _isPanningPdf = false;
+                    PdfScrollViewer.ReleaseMouseCapture();
+                    PdfScrollViewer.Cursor = Cursors.Arrow;
+                    return;
+                }
+
                 Point current = e.GetPosition(PdfScrollViewer);
                 double deltaX = current.X - _pdfPanStart.X;
                 double deltaY = current.Y - _pdfPanStart.Y;
@@ -1670,6 +1728,7 @@ namespace AeroSpot.Worker
                 if (SpreadsheetTabsPanel != null) SpreadsheetTabsPanel.Children.Clear();
                 _currentSpreadsheetModel = null;
                 if (StlView != null) StlView.Visibility = Visibility.Collapsed;
+                if (BtnReset3DView != null) BtnReset3DView.Visibility = Visibility.Collapsed;
                 if (StlViewport != null) StlViewport.Children.Clear();
                 if (HtmlView != null) HtmlView.Visibility = Visibility.Collapsed;
                 if (HtmlDocumentViewer != null) HtmlDocumentViewer.Document = null;
@@ -2540,6 +2599,7 @@ namespace AeroSpot.Worker
             }
 
             _pdfScale = 1.0;
+            _isPanningPdf = false;
             if (PdfScaleTransform != null)
             {
                 PdfScaleTransform.ScaleX = 1.0;
@@ -2547,6 +2607,10 @@ namespace AeroSpot.Worker
             }
             if (PdfScrollViewer != null)
             {
+                if (PdfScrollViewer.IsMouseCaptured)
+                {
+                    PdfScrollViewer.ReleaseMouseCapture();
+                }
                 PdfScrollViewer.ScrollToHome();
                 PdfScrollViewer.Cursor = Cursors.Arrow;
             }
@@ -2555,6 +2619,8 @@ namespace AeroSpot.Worker
             {
                 handlerHost.ResetZoom();
             }
+
+            ResetStlCameraView();
 
             if (BtnResetZoom != null)
             {
@@ -2565,6 +2631,15 @@ namespace AeroSpot.Worker
             {
                 HandlerHorizontalScrollBar.Visibility = Visibility.Collapsed;
             }
+        }
+
+        private void ResetStlCameraView()
+        {
+            if (_stlCamera == null || _stlDefaultDistance <= 0) return;
+            _stlDistance = _stlDefaultDistance;
+            _stlTheta = 45;
+            _stlPhi = 35;
+            UpdateStlCameraPosition();
         }
 
         private void HandlerHorizontalScrollBar_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -2624,6 +2699,19 @@ namespace AeroSpot.Worker
                 case Key.F11:
                     ToggleFullscreen();
                     e.Handled = true;
+                    break;
+
+                case Key.R:
+                    if (Keyboard.Modifiers == ModifierKeys.None &&
+                        Keyboard.FocusedElement is not System.Windows.Controls.Primitives.TextBoxBase &&
+                        ((StlView != null && StlView.Visibility == Visibility.Visible) ||
+                         (ImageView != null && ImageView.Visibility == Visibility.Visible) ||
+                         (PdfView != null && PdfView.Visibility == Visibility.Visible) ||
+                         (HandlerView != null && HandlerView.Visibility == Visibility.Visible)))
+                    {
+                        ResetZoom();
+                        e.Handled = true;
+                    }
                     break;
 
                 case Key.Up:
@@ -3197,15 +3285,16 @@ namespace AeroSpot.Worker
             if (stl == null || stl.Mesh.Positions.Count == 0) return;
 
             _stlCenter = stl.Center;
-            _stlDistance = stl.MaxDimension * 2.2;
+            _stlDefaultDistance = Math.Max(0.1, stl.MaxDimension * 2.2);
+            _stlDistance = _stlDefaultDistance;
             _stlTheta = 45;
             _stlPhi = 35;
 
             _stlCamera = new PerspectiveCamera
             {
                 FieldOfView = 45,
-                NearPlaneDistance = 0.1,
-                FarPlaneDistance = Math.Max(100.0, stl.MaxDimension * 20)
+                NearPlaneDistance = Math.Max(0.001, _stlDefaultDistance * 0.01),
+                FarPlaneDistance = Math.Max(100.0, _stlDefaultDistance * 20.0)
             };
             UpdateStlCameraPosition();
             StlViewport.Camera = _stlCamera;
@@ -3252,19 +3341,52 @@ namespace AeroSpot.Worker
             _stlCamera.UpDirection = new Vector3D(0, 1, 0);
         }
 
+        private static bool IsDescendantOfButton(DependencyObject? source, DependencyObject? stopAt)
+        {
+            DependencyObject? current = source;
+            while (current != null && current != stopAt)
+            {
+                if (current is System.Windows.Controls.Primitives.ButtonBase)
+                {
+                    return true;
+                }
+
+                if (current is Visual || current is Visual3D)
+                {
+                    current = VisualTreeHelper.GetParent(current);
+                }
+                else
+                {
+                    current = LogicalTreeHelper.GetParent(current);
+                }
+            }
+            return false;
+        }
+
         private void StlViewport_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
-            if (StlViewport == null) return;
-            _stlLastMouse = e.GetPosition(StlViewport);
+            UIElement? target = (UIElement?)StlView ?? StlViewport;
+            if (target == null) return;
+            if (IsDescendantOfButton(e.OriginalSource as DependencyObject, target)) return;
+
+            _stlLastMouse = e.GetPosition(target);
             _stlIsDragging = true;
-            StlViewport.CaptureMouse();
+            target.CaptureMouse();
         }
 
         private void StlViewport_MouseMove(object sender, MouseEventArgs e)
         {
-            if (!_stlIsDragging || StlViewport == null) return;
+            UIElement? target = (UIElement?)StlView ?? StlViewport;
+            if (!_stlIsDragging || target == null) return;
 
-            Point current = e.GetPosition(StlViewport);
+            if (e.LeftButton != MouseButtonState.Pressed)
+            {
+                _stlIsDragging = false;
+                target.ReleaseMouseCapture();
+                return;
+            }
+
+            Point current = e.GetPosition(target);
             double dx = current.X - _stlLastMouse.X;
             double dy = current.Y - _stlLastMouse.Y;
             _stlLastMouse = current;
@@ -3277,17 +3399,21 @@ namespace AeroSpot.Worker
 
         private void StlViewport_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
         {
-            if (_stlIsDragging && StlViewport != null)
+            UIElement? target = (UIElement?)StlView ?? StlViewport;
+            if (_stlIsDragging && target != null)
             {
                 _stlIsDragging = false;
-                StlViewport.ReleaseMouseCapture();
+                target.ReleaseMouseCapture();
             }
         }
 
         private void StlViewport_MouseWheel(object sender, MouseWheelEventArgs e)
         {
             double factor = e.Delta > 0 ? 0.88 : 1.13;
-            _stlDistance = Math.Max(0.5, _stlDistance * factor);
+            double baseDist = _stlDefaultDistance > 0 ? _stlDefaultDistance : Math.Max(0.5, _stlDistance);
+            double minDist = Math.Max(0.05, baseDist * 0.18);
+            double maxDist = Math.Max(1.0, baseDist * 4.5);
+            _stlDistance = Math.Clamp(_stlDistance * factor, minDist, maxDist);
             UpdateStlCameraPosition();
             e.Handled = true;
         }
@@ -3439,5 +3565,53 @@ namespace AeroSpot.Worker
             }
             catch { }
         }
+    }
+
+    /// <summary>
+    /// Converte ViewportSize per WPF Track in modo da garantire una dimensione minima reale del Thumb
+    /// (WPF Track ignora Thumb.MinHeight/MinWidth e usa solo ~8px di sistema, tagliando il Thumb con LayoutClip).
+    /// </summary>
+    public sealed class MinThumbViewportConverter : System.Windows.Data.IMultiValueConverter
+    {
+        public double MinThumbLength { get; set; } = 44.0;
+
+        public object Convert(object[] values, Type targetType, object parameter, System.Globalization.CultureInfo culture)
+        {
+            if (values == null || values.Length < 6)
+            {
+                return double.NaN;
+            }
+
+            if (values[0] is not double viewportSize ||
+                values[1] is not double maximum ||
+                values[2] is not double minimum ||
+                values[3] is not double actualHeight ||
+                values[4] is not double actualWidth ||
+                values[5] is not Orientation orientation)
+            {
+                return double.NaN;
+            }
+
+            if (double.IsNaN(viewportSize) || double.IsInfinity(viewportSize) || viewportSize <= 0)
+            {
+                return viewportSize;
+            }
+
+            double range = maximum - minimum;
+            double trackLength = orientation == Orientation.Vertical ? actualHeight : actualWidth;
+            double minLen = MinThumbLength;
+
+            if (range <= 0 || trackLength <= minLen)
+            {
+                return viewportSize;
+            }
+
+            // Formula esatta inversa di WPF Track: thumbLength = trackLength * V / (range + V)
+            double minViewport = (minLen * range) / (trackLength - minLen);
+            return Math.Max(viewportSize, minViewport);
+        }
+
+        public object[] ConvertBack(object value, Type[] targetTypes, object parameter, System.Globalization.CultureInfo culture)
+            => throw new NotSupportedException();
     }
 }

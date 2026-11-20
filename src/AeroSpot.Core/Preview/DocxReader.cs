@@ -20,6 +20,9 @@ namespace AeroSpot.Core.Preview
     public static class DocxReader
     {
         private static readonly XNamespace W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+        private static readonly XNamespace Office = "urn:oasis:names:tc:opendocument:xmlns:office:1.0";
+        private static readonly XNamespace Text = "urn:oasis:names:tc:opendocument:xmlns:text:1.0";
+        private static readonly XNamespace Table = "urn:oasis:names:tc:opendocument:xmlns:table:1.0";
 
         public static DocxModel? ReadDocx(string filePath, int maxParagraphs = 2000)
         {
@@ -268,6 +271,191 @@ namespace AeroSpot.Core.Preview
 
                     var words = cellContent.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
                     totalWords += words.Length;
+                }
+
+                if (cellTexts.Count == 0) continue;
+
+                plainSb.AppendLine(string.Join("\t", cellTexts));
+                mdSb.AppendLine("| " + string.Join(" | ", cellTexts) + " |");
+
+                if (isFirstRow)
+                {
+                    mdSb.AppendLine("| " + string.Join(" | ", cellTexts.Select(_ => "---")) + " |");
+                    isFirstRow = false;
+                }
+            }
+
+            return (plainSb.ToString().TrimEnd(), mdSb.ToString().TrimEnd(), rowsCount, totalWords);
+        }
+
+        public static DocxModel? ReadOdt(string filePath, int maxParagraphs = 2000)
+        {
+            if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath)) return null;
+
+            try
+            {
+                using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                using var zip = new ZipArchive(fs, ZipArchiveMode.Read);
+                var entry = zip.GetEntry("content.xml");
+                if (entry == null) return null;
+
+                using var stream = entry.Open();
+                var doc = XDocument.Load(stream);
+                var textBody = doc.Root?.Element(Office + "body")?.Element(Office + "text");
+                if (textBody == null) return null;
+
+                var plainSb = new StringBuilder();
+                var markdownSb = new StringBuilder();
+                int paraCount = 0;
+                int wordCount = 0;
+
+                void AppendOdtParagraph(string plain, string markdown)
+                {
+                    if (string.IsNullOrWhiteSpace(plain) || paraCount >= maxParagraphs) return;
+                    paraCount++;
+                    plainSb.AppendLine(plain);
+                    plainSb.AppendLine();
+                    markdownSb.AppendLine(markdown);
+                    markdownSb.AppendLine();
+                    wordCount += plain.Split(new[] { ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).Length;
+                }
+
+                void ProcessOdtElement(XElement element, string listPrefix)
+                {
+                    if (paraCount >= maxParagraphs) return;
+
+                    if (element.Name == Text + "h")
+                    {
+                        string content = ExtractOdtInlineText(element).Trim();
+                        if (string.IsNullOrEmpty(content)) return;
+                        int level = 1;
+                        var levelAttr = element.Attribute(Text + "outline-level")?.Value;
+                        if (int.TryParse(levelAttr, out int parsedLevel))
+                        {
+                            level = Math.Clamp(parsedLevel, 1, 4);
+                        }
+                        string prefix = new string('#', level) + " ";
+                        AppendOdtParagraph(content, prefix + content);
+                    }
+                    else if (element.Name == Text + "p")
+                    {
+                        string content = ExtractOdtInlineText(element).Trim();
+                        if (string.IsNullOrEmpty(content)) return;
+                        AppendOdtParagraph(content, string.IsNullOrEmpty(listPrefix) ? content : listPrefix + content);
+                    }
+                    else if (element.Name == Text + "list")
+                    {
+                        foreach (var item in element.Elements(Text + "list-item"))
+                        {
+                            foreach (var child in item.Elements())
+                            {
+                                ProcessOdtElement(child, "- ");
+                            }
+                        }
+                    }
+                    else if (element.Name == Table + "table")
+                    {
+                        var (tPlain, tMd, rowsCount, tWords) = ParseOdtTable(element);
+                        if (!string.IsNullOrWhiteSpace(tPlain))
+                        {
+                            paraCount += rowsCount;
+                            wordCount += tWords;
+                            plainSb.AppendLine(tPlain);
+                            plainSb.AppendLine();
+                            markdownSb.AppendLine(tMd);
+                            markdownSb.AppendLine();
+                        }
+                    }
+                }
+
+                foreach (var element in textBody.Elements())
+                {
+                    if (paraCount >= maxParagraphs) break;
+                    ProcessOdtElement(element, string.Empty);
+                }
+
+                return new DocxModel
+                {
+                    Title = Path.GetFileName(filePath),
+                    TextContent = plainSb.ToString().TrimEnd(),
+                    MarkdownContent = markdownSb.ToString().TrimEnd(),
+                    ParagraphCount = paraCount,
+                    WordCount = wordCount
+                };
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warn($"DocxReader.ReadOdt: Errore durante la lettura di {filePath}: {ex.Message}");
+                return null;
+            }
+        }
+
+        private static string ExtractOdtInlineText(XElement element)
+        {
+            var sb = new StringBuilder();
+            foreach (var node in element.Nodes())
+            {
+                if (node is XText xt)
+                {
+                    sb.Append(xt.Value);
+                }
+                else if (node is XElement child)
+                {
+                    if (child.Name == Text + "s")
+                    {
+                        int count = 1;
+                        if (int.TryParse(child.Attribute(Text + "c")?.Value, out int parsedCount) && parsedCount > 0)
+                        {
+                            count = Math.Min(parsedCount, 64);
+                        }
+                        sb.Append(' ', count);
+                    }
+                    else if (child.Name == Text + "tab")
+                    {
+                        sb.Append('\t');
+                    }
+                    else if (child.Name == Text + "line-break")
+                    {
+                        sb.AppendLine();
+                    }
+                    else
+                    {
+                        sb.Append(ExtractOdtInlineText(child));
+                    }
+                }
+            }
+            return sb.ToString();
+        }
+
+        private static (string plain, string markdown, int rowsCount, int wordCount) ParseOdtTable(XElement table)
+        {
+            var plainSb = new StringBuilder();
+            var mdSb = new StringBuilder();
+            int rowsCount = 0;
+            int totalWords = 0;
+            bool isFirstRow = true;
+
+            foreach (var row in table.Elements(Table + "table-row"))
+            {
+                rowsCount++;
+                var cellTexts = new System.Collections.Generic.List<string>();
+
+                foreach (var cell in row.Elements(Table + "table-cell"))
+                {
+                    var cellSb = new StringBuilder();
+                    foreach (var p in cell.Elements().Where(e => e.Name == Text + "p" || e.Name == Text + "h"))
+                    {
+                        string text = ExtractOdtInlineText(p).Trim();
+                        if (!string.IsNullOrEmpty(text))
+                        {
+                            if (cellSb.Length > 0) cellSb.Append(' ');
+                            cellSb.Append(text);
+                        }
+                    }
+
+                    string cellContent = cellSb.ToString().Trim().Replace("|", "\\|").Replace("\r", " ").Replace("\n", " ");
+                    cellTexts.Add(cellContent);
+                    totalWords += cellContent.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries).Length;
                 }
 
                 if (cellTexts.Count == 0) continue;

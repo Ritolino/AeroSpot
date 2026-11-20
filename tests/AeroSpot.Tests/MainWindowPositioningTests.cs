@@ -93,72 +93,79 @@ namespace AeroSpot.Tests
         {
             var t = new Thread(() =>
             {
-                string outputDir = @"E:\Antigravity\AeroSpot\Correzioni_Schermate";
+                string outputDir = Path.Combine(Path.GetTempPath(), $"AeroSpot_ShadowVariants_{Guid.NewGuid():N}");
                 Directory.CreateDirectory(outputDir);
 
-                var variants = new[]
+                try
                 {
-                    new { Id = "Originale_Dura", Name = "Originale (Dura)", Blur = 28.0, Depth = 4.0, Opacity = 0.75, Margin = 14 },
-                    new { Id = "Variante_1_Lieve", Name = "Variante 1 (Lieve)", Blur = 20.0, Depth = 2.0, Opacity = 0.30, Margin = 14 },
-                    new { Id = "Variante_2_Media", Name = "Variante 2 (Media - Fluent)", Blur = 30.0, Depth = 3.0, Opacity = 0.42, Margin = 16 },
-                    new { Id = "Variante_3_Morbida", Name = "Variante 3 (Morbida - macOS)", Blur = 40.0, Depth = 3.0, Opacity = 0.35, Margin = 20 }
-                };
-
-                foreach (var v in variants)
-                {
-                    foreach (bool isDark in new[] { true, false })
+                    var variants = new[]
                     {
-                        var win = new MainWindow();
-                        win.ViewModel.SearchText = "calcolatrice";
-                        win.SearchBox.Text = "calcolatrice";
+                        new { Id = "Originale_Dura", Name = "Originale (Dura)", Blur = 28.0, Depth = 4.0, Opacity = 0.75, Margin = 14 },
+                        new { Id = "Variante_1_Lieve", Name = "Variante 1 (Lieve)", Blur = 20.0, Depth = 2.0, Opacity = 0.30, Margin = 14 },
+                        new { Id = "Variante_2_Media", Name = "Variante 2 (Media - Fluent)", Blur = 30.0, Depth = 3.0, Opacity = 0.42, Margin = 16 },
+                        new { Id = "Variante_3_Morbida", Name = "Variante 3 (Morbida - macOS)", Blur = 40.0, Depth = 3.0, Opacity = 0.35, Margin = 20 }
+                    };
 
-                        var outerBorder = (System.Windows.Controls.Border)win.Content;
-                        outerBorder.Margin = new Thickness(v.Margin);
-                        outerBorder.Effect = new System.Windows.Media.Effects.DropShadowEffect
+                    foreach (var v in variants)
+                    {
+                        foreach (bool isDark in new[] { true, false })
                         {
-                            BlurRadius = v.Blur,
-                            ShadowDepth = v.Depth,
-                            Direction = 270,
-                            Color = System.Windows.Media.Colors.Black,
-                            Opacity = v.Opacity
-                        };
+                            var win = new MainWindow();
+                            win.ViewModel.SearchText = "calcolatrice";
+                            win.SearchBox.Text = "calcolatrice";
 
-                        double w = 740;
-                        double h = 480;
+                            var outerBorder = (System.Windows.Controls.Border)win.Content;
+                            outerBorder.Margin = new Thickness(v.Margin);
+                            outerBorder.Effect = new System.Windows.Media.Effects.DropShadowEffect
+                            {
+                                BlurRadius = v.Blur,
+                                ShadowDepth = v.Depth,
+                                Direction = 270,
+                                Color = System.Windows.Media.Colors.Black,
+                                Opacity = v.Opacity
+                            };
 
-                        var container = new System.Windows.Controls.Grid
-                        {
-                            Width = w,
-                            Height = h,
-                            Background = isDark 
-                                ? new System.Windows.Media.SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#18191C")) 
-                                : new System.Windows.Media.SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#E2E8F0"))
-                        };
+                            double w = 740;
+                            double h = 480;
 
-                        win.Content = null;
-                        outerBorder.HorizontalAlignment = HorizontalAlignment.Center;
-                        outerBorder.VerticalAlignment = VerticalAlignment.Center;
-                        container.Children.Add(outerBorder);
+                            var container = new System.Windows.Controls.Grid
+                            {
+                                Width = w,
+                                Height = h,
+                                Background = isDark
+                                    ? new System.Windows.Media.SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#18191C"))
+                                    : new System.Windows.Media.SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#E2E8F0"))
+                            };
 
-                        container.Measure(new Size(w, h));
-                        container.Arrange(new Rect(0, 0, w, h));
-                        container.UpdateLayout();
+                            win.Content = null;
+                            outerBorder.HorizontalAlignment = HorizontalAlignment.Center;
+                            outerBorder.VerticalAlignment = VerticalAlignment.Center;
+                            container.Children.Add(outerBorder);
 
-                        var rtb = new System.Windows.Media.Imaging.RenderTargetBitmap((int)w, (int)h, 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
-                        rtb.Render(container);
+                            container.Measure(new Size(w, h));
+                            container.Arrange(new Rect(0, 0, w, h));
+                            container.UpdateLayout();
 
-                        string bgName = isDark ? "dark" : "light";
-                        string outFile = Path.Combine(outputDir, $"B1_Ombra_{v.Id}_{bgName}.png");
+                            var rtb = new System.Windows.Media.Imaging.RenderTargetBitmap((int)w, (int)h, 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
+                            rtb.Render(container);
 
-                        using (var fs = new FileStream(outFile, FileMode.Create))
-                        {
-                            var enc = new System.Windows.Media.Imaging.PngBitmapEncoder();
-                            enc.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(rtb));
-                            enc.Save(fs);
+                            string bgName = isDark ? "dark" : "light";
+                            string outFile = Path.Combine(outputDir, $"B1_Ombra_{v.Id}_{bgName}.png");
+
+                            using (var fs = new FileStream(outFile, FileMode.Create))
+                            {
+                                var enc = new System.Windows.Media.Imaging.PngBitmapEncoder();
+                                enc.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(rtb));
+                                enc.Save(fs);
+                            }
+
+                            Assert.IsTrue(File.Exists(outFile), "Lo screenshot della variante deve essere generato: " + outFile);
                         }
-
-                        Assert.IsTrue(File.Exists(outFile), "Lo screenshot della variante deve essere generato: " + outFile);
                     }
+                }
+                finally
+                {
+                    try { if (Directory.Exists(outputDir)) Directory.Delete(outputDir, true); } catch { }
                 }
             });
             t.SetApartmentState(ApartmentState.STA);

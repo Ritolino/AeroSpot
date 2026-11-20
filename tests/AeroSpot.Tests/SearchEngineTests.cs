@@ -51,6 +51,11 @@ namespace AeroSpot.Tests
             // Falsi positivi evitati sui confini di segmento
             Assert.IsTrue(PathFilter.IsPathAllowed(@"E:\MySteamLibraryNotes\file.txt"), "Nomi simili che non sono la cartella esatta devono essere ammessi.");
             Assert.IsTrue(PathFilter.IsPathAllowed(@"E:\TemporaryProjects\code.py"), "Cartelle che contengono 'Temp' come sottostringa devono essere ammesse se non sono AppData\\Local\\Temp.");
+
+            // Eseguibili legittimi di programmi installati in Program Files che usano una sottocartella bin (es. OBS Studio) devono essere ammessi
+            Assert.IsTrue(PathFilter.IsPathAllowed(@"C:\Program Files\obs-studio\bin\64bit\obs64.exe"), "Gli eseguibili in C:\\Program Files\\...\\bin\\ devono essere ammessi.");
+            Assert.IsTrue(PathFilter.IsPathAllowed(@"C:\Program Files (x86)\Tool\bin\tool.exe"), "Gli eseguibili in C:\\Program Files (x86)\\...\\bin\\ devono essere ammessi.");
+            Assert.IsFalse(PathFilter.IsPathAllowed(@"E:\Project\bin\Debug\app.exe"), "Le cartelle bin di sviluppo fuori da Program Files devono rimanere escluse.");
         }
 
         [TestMethod]
@@ -579,6 +584,125 @@ namespace AeroSpot.Tests
             // Disattiva momentaneamente i filtri rigidi per il setup del test
             PathFilter.Configure(new[] { "C", "D", "E" }, Array.Empty<string>());
             db.UpsertBatch(items);
+        }
+
+        [TestMethod]
+        public void SearchRanker_TitleAlwaysBeatsPathOnly_And_CategoriesCommandOrder()
+        {
+            var priority = new List<string> { "Applicazione", "Documento", "Immagine", "Cartella", "File" };
+
+            // 1. Esempio: file config interno ("esempio" solo nel percorso) vs eseguibile ("esempio" nel nome)
+            var pathOnlyCfg = new IndexedItem("configurazioni.cfg", @"C:\user\programs\esempio\configurazioni.cfg", "Documento", @"C:\user\programs\esempio\configurazioni.cfg", isApp: false);
+            var titleExe = new IndexedItem("esempio.exe", @"C:\user\programs\esempio\esempio.exe", "Applicazione", @"C:\user\programs\esempio\esempio.exe", isApp: true);
+            var titleLowCategory = new IndexedItem("esempio_note.dat", @"C:\temp\esempio_note.dat", "File", @"C:\temp\esempio_note.dat", isApp: false);
+
+            var rankedEsempio = SearchRanker.Rank(new[] { pathOnlyCfg, titleLowCategory, titleExe }, "esempio", 10, priority, prioritizeExactMatches: false);
+            Assert.AreEqual("esempio.exe", rankedEsempio[0].Title, "L'app con 'esempio' nel nome deve essere al 1° posto.");
+            Assert.AreEqual("esempio_note.dat", rankedEsempio[1].Title, "Qualsiasi match nel Nome (anche di categoria bassa) deve precedere un match solo nel Percorso.");
+            Assert.AreEqual("configurazioni.cfg", rankedEsempio[2].Title, "Il match solo nel percorso deve finire in coda.");
+
+            // 2. Con PrioritizeExactNameMatches = false (default), l'ordine delle categorie comanda sempre tra i match sul Nome
+            var appPrefix = new IndexedItem("OBS Studio", @"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\OBS Studio.lnk", "Applicazione", @"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\OBS Studio.lnk", isApp: true);
+            var folderExact = new IndexedItem("obs", @"C:\Users\gabry\obs", "Cartella", @"C:\Users\gabry\obs", isApp: false);
+
+            var rankedDefault = SearchRanker.Rank(new[] { folderExact, appPrefix }, "obs", 10, priority, prioritizeExactMatches: false);
+            Assert.AreEqual("OBS Studio", rankedDefault[0].Title, "Con PrioritizeExactNameMatches=false la categoria Applicazione deve precedere Cartella anche se la cartella si chiama esattamente 'obs'.");
+
+            // 3. Con PrioritizeExactNameMatches = true, SOLO il match esatto al 100% scavalca la categoria, ma i prefissi non la scavalcano
+            var rankedExactOn = SearchRanker.Rank(new[] { folderExact, appPrefix }, "obs", 10, priority, prioritizeExactMatches: true);
+            Assert.AreEqual("obs", rankedExactOn[0].Title, "Con PrioritizeExactNameMatches=true il match esatto al 100% 'obs' deve andare al 1° posto.");
+
+            var folderPrefix = new IndexedItem("obs-backups", @"C:\Users\gabry\obs-backups", "Cartella", @"C:\Users\gabry\obs-backups", isApp: false);
+            var docSubstring = new IndexedItem("guida_obs_completa.pdf", @"C:\Docs\guida_obs_completa.pdf", "Documento", @"C:\Docs\guida_obs_completa.pdf", isApp: false);
+            var rankedPartialWithExactFlag = SearchRanker.Rank(new[] { folderPrefix, docSubstring }, "obs", 10, priority, prioritizeExactMatches: true);
+            Assert.AreEqual("guida_obs_completa.pdf", rankedPartialWithExactFlag[0].Title, "I match parziali/prefissi non devono scavalcare la gerarchia delle categorie nemmeno con PrioritizeExactNameMatches=true.");
+        }
+
+        [TestMethod]
+        public void SqliteIndexDatabase_TwoPhaseSearch_NeverTruncatesTitleMatchesBehind200PathMatches()
+        {
+            string tempDb = Path.Combine(Path.GetTempPath(), $"AeroSpot_ObsTest_{Guid.NewGuid():N}.db");
+            try
+            {
+                using var db = new SqliteIndexDatabase(tempDb);
+                db.Initialize();
+
+                var items = new List<IndexedItem>();
+                // Inseriamo prima 220 file interni il cui percorso contiene "obs-studio" ma il cui Title NON contiene "obs"
+                for (int i = 1; i <= 220; i++)
+                {
+                    string p = $@"C:\Program Files\obs-studio\data\locale\lang_{i:D3}.ini";
+                    items.Add(new IndexedItem($"lang_{i:D3}.ini", p, "File", p, isApp: false));
+                }
+
+                // Inseriamo la cartella "obs-studio" e infine l'applicazione "OBS Studio" (oltre il vecchio LIMIT 150)
+                items.Add(new IndexedItem("obs-studio", @"C:\Program Files\obs-studio", "Cartella", @"C:\Program Files\obs-studio", isApp: false));
+                items.Add(new IndexedItem("OBS Studio", @"C:\Program Files\obs-studio\bin\64bit\obs64.exe", "Applicazione", @"C:\Program Files\obs-studio\bin\64bit\obs64.exe", isApp: true, extension: ".exe"));
+
+                EnsureDirectInsert(db, items);
+
+                var results = db.Search("obs studio", 10, categoryFilter: null, categoryPriority: AppConfig.GetDefaultCategoryPriority(), prioritizeExactMatches: false);
+                Assert.IsNotEmpty(results);
+                Assert.AreEqual("OBS Studio", results[0].Title, "L'applicazione 'OBS Studio' non deve mai essere tagliata fuori dai 220 file interni della cartella obs-studio e deve comparire prima della cartella.");
+            }
+            finally
+            {
+                try
+                {
+                    if (File.Exists(tempDb)) File.Delete(tempDb);
+                    if (File.Exists(tempDb + "-wal")) File.Delete(tempDb + "-wal");
+                    if (File.Exists(tempDb + "-shm")) File.Delete(tempDb + "-shm");
+                }
+                catch { }
+            }
+        }
+
+        [TestMethod]
+        public void PathFilter_And_SqliteIndexDatabase_ExcludeAndPurgeShortcuts()
+        {
+            Assert.IsFalse(PathFilter.IsPathAllowed(@"C:\Users\gabry\Desktop\OBS Studio.lnk"), "I collegamenti .lnk non devono essere ammessi da PathFilter.");
+            Assert.IsFalse(PathFilter.IsPathAllowed(@"C:\Users\gabry\Desktop\Sito.url"), "I collegamenti .url non devono essere ammessi da PathFilter.");
+            Assert.IsFalse(PathFilter.IsPathAllowed(@"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\App.lnk"), "I collegamenti .lnk nel Menu Start non devono essere indicizzati.");
+
+            string tempDb = Path.Combine(Path.GetTempPath(), $"AeroSpot_PurgeLnkTest_{Guid.NewGuid():N}.db");
+            try
+            {
+                using (var db = new SqliteIndexDatabase(tempDb))
+                {
+                    db.Initialize();
+                    var valid = new IndexedItem("Documento Valido", @"C:\Users\gabry\Documents\Report.pdf", "Documento", @"C:\Users\gabry\Documents\Report.pdf", isApp: false, extension: ".pdf");
+                    db.UpsertBatch(new[] { valid });
+
+                    // Inserimento diretto simulando un vecchio DB pre-aggiornamento che conteneva già un .lnk e un .url
+                    using var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={tempDb}");
+                    conn.Open();
+                    using var cmd = conn.CreateCommand();
+                    cmd.CommandText = @"
+                        INSERT INTO IndexedItems (Title, FullPath, Category, Extension, ExecutionTarget, LastModifiedUtcTicks, IsApp)
+                        VALUES ('Vecchio Collegamento', 'C:\Users\gabry\Desktop\Old.lnk', 'Applicazione', '.lnk', 'C:\Users\gabry\Desktop\Old.lnk', 0, 1),
+                               ('Link Web', 'C:\Users\gabry\Desktop\Link.url', 'File', '.url', 'C:\Users\gabry\Desktop\Link.url', 0, 0);";
+                    cmd.ExecuteNonQuery();
+                }
+
+                // Alla riapertura, Initialize() deve bonificare automaticamente i collegamenti obsoleti
+                using (var db2 = new SqliteIndexDatabase(tempDb))
+                {
+                    db2.Initialize();
+                    Assert.AreEqual(1, db2.GetTotalCount(), "Alla riapertura devono rimanere solo gli elementi validi e non i collegamenti .lnk/.url.");
+                    Assert.IsEmpty(db2.Search("Vecchio Collegamento"), "I collegamenti .lnk devono essere rimossi da index.db all'avvio.");
+                    Assert.IsEmpty(db2.Search("Link Web"), "I collegamenti .url devono essere rimossi da index.db all'avvio.");
+                }
+            }
+            finally
+            {
+                try
+                {
+                    if (File.Exists(tempDb)) File.Delete(tempDb);
+                    if (File.Exists(tempDb + "-wal")) File.Delete(tempDb + "-wal");
+                    if (File.Exists(tempDb + "-shm")) File.Delete(tempDb + "-shm");
+                }
+                catch { }
+            }
         }
     }
 }

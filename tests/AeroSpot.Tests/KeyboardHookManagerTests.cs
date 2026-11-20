@@ -74,6 +74,25 @@ namespace AeroSpot.Tests
         }
 
         [TestMethod]
+        public void KeyboardHook_SpaceClosesPreview_WhenPreviewIsActive()
+        {
+            bool closeCalled = false;
+            bool previewActive = true;
+
+            using var hook = new KeyboardHookManager(
+                Win32.VK_SPACE,
+                0,
+                onPreviewRequested: path => { },
+                onClosePreviewRequested: () => { closeCalled = true; },
+                isPreviewActiveFunc: () => previewActive);
+
+            Assert.IsTrue(hook.Install());
+            Assert.IsTrue(hook.IsHookInstalled);
+            Assert.IsFalse(closeCalled);
+            hook.Uninstall();
+        }
+
+        [TestMethod]
         public void NotifyIconData_SizeCheck()
         {
             int size = System.Runtime.InteropServices.Marshal.SizeOf(typeof(Win32.NOTIFYICONDATA));

@@ -6,7 +6,7 @@ namespace AeroSpot.Core.Search
 {
     public static class SearchRanker
     {
-        public static int CalculateScore(IndexedItem item, string query, List<string>? categoryPriority = null, bool prioritizeExactMatches = true)
+        public static int CalculateScore(IndexedItem item, string query, List<string>? categoryPriority = null, bool prioritizeExactMatches = false)
         {
             if (string.IsNullOrWhiteSpace(query))
             {
@@ -14,136 +14,169 @@ namespace AeroSpot.Core.Search
             }
 
             string q = query.Trim();
-            string title = item.Title;
-            int score = 0;
+            string title = item.Title ?? string.Empty;
+            string titleWithoutExt = title.Contains('.') ? System.IO.Path.GetFileNameWithoutExtension(title) : title;
 
-            // 1. Corrispondenza esatta (Rank massimo)
-            if (string.Equals(title, q, StringComparison.OrdinalIgnoreCase))
+            string normQ = NormalizeForComparison(q);
+            string normTitle = NormalizeForComparison(title);
+            string normTitleWithoutExt = NormalizeForComparison(titleWithoutExt);
+
+            string[] terms = q.Split(new[] { ' ', '-', '_' }, StringSplitOptions.RemoveEmptyEntries);
+
+            bool isRawExactTitle = string.Equals(title, q, StringComparison.OrdinalIgnoreCase) ||
+                                   string.Equals(titleWithoutExt, q, StringComparison.OrdinalIgnoreCase);
+
+            bool isNormExactTitle = !string.IsNullOrEmpty(normQ) &&
+                                    (string.Equals(normTitle, normQ, StringComparison.OrdinalIgnoreCase) ||
+                                     string.Equals(normTitleWithoutExt, normQ, StringComparison.OrdinalIgnoreCase));
+
+            bool isExact100 = isRawExactTitle || isNormExactTitle;
+
+            bool isPrefix = title.StartsWith(q, StringComparison.OrdinalIgnoreCase) ||
+                            titleWithoutExt.StartsWith(q, StringComparison.OrdinalIgnoreCase) ||
+                            (!string.IsNullOrEmpty(normQ) &&
+                             (normTitle.StartsWith(normQ, StringComparison.OrdinalIgnoreCase) ||
+                              normTitleWithoutExt.StartsWith(normQ, StringComparison.OrdinalIgnoreCase)));
+
+            bool allTermsStartWords = terms.Length > 1 && terms.All(t => HasWordStartingWith(title, t));
+            bool hasWordStart = HasWordStartingWith(title, q);
+            bool isAcronym = q.Length >= 2 && terms.Length == 1 && MatchesAcronym(title, q);
+            bool allTermsInTitle = terms.Length > 0 && terms.All(t => title.IndexOf(t, StringComparison.OrdinalIgnoreCase) >= 0);
+            bool isSubstringInTitle = title.IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0;
+
+            bool isTitleMatch = isExact100 || isPrefix || allTermsStartWords || hasWordStart || isAcronym || allTermsInTitle || isSubstringInTitle;
+
+            string fullPath = item.FullPath ?? string.Empty;
+            bool isPathMatch = !isTitleMatch &&
+                               (fullPath.IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                (terms.Length > 0 && terms.All(t =>
+                                    title.IndexOf(t, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                    fullPath.IndexOf(t, StringComparison.OrdinalIgnoreCase) >= 0)));
+
+            if (!isTitleMatch && !isPathMatch)
             {
-                score += 1000;
-            }
-            // 2. Prefisso del nome
-            else if (title.StartsWith(q, StringComparison.OrdinalIgnoreCase))
-            {
-                score += 500;
-            }
-            // 3. Inizio di parola (es. "Studio" in "Visual Studio")
-            else if (HasWordStartingWith(title, q))
-            {
-                score += 350;
+                return 0;
             }
 
-            // 4. Acronimo (es. "vsc" per "Visual Studio Code")
-            if (q.Length >= 2 && MatchesAcronym(title, q))
-            {
-                score += 300;
-            }
+            string cat = (item.IsApp ||
+                          string.Equals(item.Category, "Applicazione", StringComparison.OrdinalIgnoreCase) ||
+                          fullPath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ||
+                          fullPath.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase))
+                ? "Applicazione"
+                : item.Category;
 
-            // 5. Tutte le parole presenti nel titolo o nel percorso
-            string[] terms = q.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-            if (terms.Length > 1 && terms.All(t => title.IndexOf(t, StringComparison.OrdinalIgnoreCase) >= 0 || item.FullPath.IndexOf(t, StringComparison.OrdinalIgnoreCase) >= 0))
-            {
-                bool allInTitle = terms.All(t => title.IndexOf(t, StringComparison.OrdinalIgnoreCase) >= 0);
-                score += allInTitle ? 250 : 120;
-            }
-            // 6. Sottostringa nel titolo
-            else if (title.IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                score += 200;
-            }
+            var priorityList = categoryPriority ?? Config.AppConfig.GetDefaultCategoryPriority();
+            int catIndex = priorityList.FindIndex(c => string.Equals(c, cat, StringComparison.OrdinalIgnoreCase));
+            int categoryRankSteps = catIndex >= 0 ? Math.Max(1, priorityList.Count - catIndex) : 0;
 
-            // 7. Sottostringa nel percorso (fallback)
-            if (score == 0 && item.FullPath.IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                score += 50;
-            }
+            int lengthDiff = Math.Abs(title.Length - q.Length);
+            int lengthPenalty = Math.Min(lengthDiff, 50);
 
-            // Se c'è corrispondenza, applica i bonus di gerarchia categoria e le ponderazioni
-            if (score > 0)
+            int recencyBonus = 0;
+            if (item.LastModifiedUtcTicks > 0)
             {
-                // Se la gerarchia mista è attiva, garantisce che i file o cartelle con il nome esatto abbiano sempre precedenza assoluta
-                // rispetto a file la cui corrispondenza è solo nella cartella genitrice (path-only match)
-                if (prioritizeExactMatches)
+                long nowTicks = DateTime.UtcNow.Ticks;
+                if (item.LastModifiedUtcTicks <= nowTicks)
                 {
-                    string titleWithoutExt = title.Contains('.') ? System.IO.Path.GetFileNameWithoutExtension(title) : title;
-                    bool isExactTitle = string.Equals(title, q, StringComparison.OrdinalIgnoreCase) ||
-                                       string.Equals(titleWithoutExt, q, StringComparison.OrdinalIgnoreCase);
+                    double daysAgo = (nowTicks - item.LastModifiedUtcTicks) / (double)TimeSpan.TicksPerDay;
+                    recencyBonus = daysAgo switch
+                    {
+                        <= 1.0 => 40,
+                        <= 7.0 => 30,
+                        <= 30.0 => 20,
+                        <= 180.0 => 10,
+                        <= 365.0 => 5,
+                        _ => 0
+                    };
+                }
+            }
 
-                    if (isExactTitle)
-                    {
-                        score += 30000;
-                    }
-                    else if (title.StartsWith(q, StringComparison.OrdinalIgnoreCase) || titleWithoutExt.StartsWith(q, StringComparison.OrdinalIgnoreCase))
-                    {
-                        score += 15000;
-                    }
-                    else if (HasWordStartingWith(title, q))
-                    {
-                        score += 10000;
-                    }
-                    else if (title.IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0)
-                    {
-                        score += 5000;
-                    }
-                    // Le corrispondenze solo nel percorso (path-only) ricevono +0 tier bonus
+            if (isTitleMatch)
+            {
+                // Fascia 1 — Match nel Nome (Title): sempre >= 100.000 punti (precede sempre qualsiasi match solo nel percorso)
+                int score = 100000;
+
+                // Se l'opzione "Priorità corrispondenza esatta del nome" è attiva, SOLO un match esatto al 100% sul nome scavalca le categorie
+                if (prioritizeExactMatches && isExact100)
+                {
+                    score += 500000;
                 }
 
-                string cat = (item.IsApp ||
-                              string.Equals(item.Category, "Applicazione", StringComparison.OrdinalIgnoreCase) ||
-                              item.FullPath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ||
-                              item.FullPath.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase))
-                    ? "Applicazione"
-                    : item.Category;
-
-                var priorityList = categoryPriority ?? Config.AppConfig.GetDefaultCategoryPriority();
-                int catIndex = priorityList.FindIndex(c => string.Equals(c, cat, StringComparison.OrdinalIgnoreCase));
+                // Bonus Gerarchia Categorie: comanda sempre l'ordine tra i match sul Nome (step da 5.000 punti)
                 if (catIndex >= 0)
                 {
-                    // L'elemento in cima alla gerarchia (indice 0) riceve il bonus massimo
-                    int priorityBonus = Math.Max(0, (priorityList.Count - catIndex) * 1200);
-                    score += priorityBonus;
+                    score += categoryRankSteps * 5000;
                 }
                 else
                 {
-                    score += 500;
+                    score += 2000;
                 }
 
-                if (string.Equals(cat, "Applicazione", StringComparison.OrdinalIgnoreCase))
+                // Qualità del match sul Nome (ordina gli elementi dentro la stessa categoria, max < 2.500 punti)
+                if (isRawExactTitle)
                 {
-                    if (HasWordStartingWith(title, q))
-                    {
-                        score += 300;
-                    }
+                    score += 2000;
                 }
-
-                // Penalità lunghezza (preferisce corrispondenze più dense e compatte)
-                int lengthDiff = Math.Abs(title.Length - q.Length);
-                score -= Math.Min(lengthDiff, 50);
-
-                // Bonus recency/freschezza proporzionale (max 40 punti)
-                // Consente ai file modificati più di recente di prevalere tra corrispondenze analoghe (es. "Capitolo 12" vs "Capitolo 1")
-                // senza intaccare i tier di corrispondenza o gerarchia (separati da >= 1200 punti).
-                if (item.LastModifiedUtcTicks > 0)
+                else if (isNormExactTitle)
                 {
-                    long nowTicks = DateTime.UtcNow.Ticks;
-                    if (item.LastModifiedUtcTicks <= nowTicks)
-                    {
-                        double daysAgo = (nowTicks - item.LastModifiedUtcTicks) / (double)TimeSpan.TicksPerDay;
-                        int recencyBonus = daysAgo switch
-                        {
-                            <= 1.0 => 40,
-                            <= 7.0 => 30,
-                            <= 30.0 => 20,
-                            <= 180.0 => 10,
-                            <= 365.0 => 5,
-                            _ => 0
-                        };
-                        score += recencyBonus;
-                    }
+                    score += 1800;
                 }
+                else if (isPrefix)
+                {
+                    score += 1400;
+                }
+                else if (allTermsStartWords)
+                {
+                    score += 1100;
+                }
+                else if (hasWordStart)
+                {
+                    score += 900;
+                }
+                else if (isAcronym)
+                {
+                    score += 750;
+                }
+                else if (allTermsInTitle)
+                {
+                    score += 600;
+                }
+                else if (isSubstringInTitle)
+                {
+                    score += 400;
+                }
+
+                if (string.Equals(cat, "Applicazione", StringComparison.OrdinalIgnoreCase) && (hasWordStart || allTermsStartWords))
+                {
+                    score += 150;
+                }
+
+                score += recencyBonus - lengthPenalty;
+                return Math.Max(1, score);
             }
+            else
+            {
+                // Fascia 2 — Match solo nel Percorso (path-only): confinato sotto i 10.000 punti (compare solo in coda come riempitivo)
+                int score = 500;
+                if (catIndex >= 0)
+                {
+                    score += categoryRankSteps * 800;
+                }
+                else
+                {
+                    score += 200;
+                }
 
-            return Math.Max(0, score);
+                score += recencyBonus - lengthPenalty;
+                return Math.Clamp(score, 50, 9500);
+            }
+        }
+
+        private static string NormalizeForComparison(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return string.Empty;
+            var parts = text.Split(new[] { ' ', '-', '_', '.', '—' }, StringSplitOptions.RemoveEmptyEntries);
+            return string.Join(" ", parts);
         }
 
         private static bool HasWordStartingWith(string title, string prefix)
@@ -174,7 +207,7 @@ namespace AeroSpot.Core.Search
             return true;
         }
 
-        public static List<IndexedItem> Rank(IEnumerable<IndexedItem> candidates, string query, int maxResults = 10, List<string>? categoryPriority = null, bool prioritizeExactMatches = true)
+        public static List<IndexedItem> Rank(IEnumerable<IndexedItem> candidates, string query, int maxResults = 10, List<string>? categoryPriority = null, bool prioritizeExactMatches = false)
         {
             var scored = new List<IndexedItem>();
             foreach (var item in candidates)

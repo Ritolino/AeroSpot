@@ -116,6 +116,8 @@ namespace AeroSpot.Worker
 
         private string? _latestReleaseUrl;
         private string? _downloadedUpdatePath;
+        private string? _latestSha256SumsUrl;
+        private string? _latestAssetFileName;
         private CancellationTokenSource? _updateCts;
         private System.Windows.Threading.DispatcherTimer? _saveCloseTimer;
 
@@ -297,7 +299,7 @@ namespace AeroSpot.Worker
             // 8. Version Info
             var ver = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
             string verStr = ver != null ? $"{ver.Major}.{ver.Minor}.{ver.Build}" : "1.0.0";
-            TxtAppVersionInfo.Text = AeroSpot.Core.Localization.LocalizationService.Get("Instructions_Version", verStr, "17.11.2026");
+            TxtAppVersionInfo.Text = AeroSpot.Core.Localization.LocalizationService.Get("Instructions_Version", verStr, "20.11.2026");
 
             // 8b. Aggiornamenti dell'applicazione (GitHub Release Checker)
             TxtCurrentAppVersion.Text = "v" + AeroSpot.Core.Services.UpdateService.CurrentVersion;
@@ -335,6 +337,16 @@ namespace AeroSpot.Worker
                     SpotlightHomeMode.Alphabetical => CmbItemAlphabetical,
                     SpotlightHomeMode.None => CmbItemNone,
                     _ => CmbItemMostFrequentSearches
+                };
+            }
+
+            if (CmbDragDropMode != null)
+            {
+                CmbDragDropMode.SelectedItem = _config.DragDropMode switch
+                {
+                    SpotlightDragDropMode.AlwaysCopy => CmbItemDragDropAlwaysCopy,
+                    SpotlightDragDropMode.AlwaysMove => CmbItemDragDropAlwaysMove,
+                    _ => CmbItemDragDropWindowsDefault
                 };
             }
 
@@ -408,6 +420,8 @@ namespace AeroSpot.Worker
                             });
 
                             string fileName = result.AssetFileName ?? $"AeroSpot-Setup-v{result.LatestVersion}.exe";
+                            _latestAssetFileName = fileName;
+                            _latestSha256SumsUrl = result.Sha256SumsUrl;
                             string downloadedPath = await AeroSpot.Core.Services.UpdateService.DownloadUpdateAsync(
                                 result.DownloadUrl, fileName, progress, ct: _updateCts.Token);
 
@@ -455,23 +469,37 @@ namespace AeroSpot.Worker
             }
         }
 
-        private void BtnApplyUpdate_Click(object sender, RoutedEventArgs e)
+        private async void BtnApplyUpdate_Click(object sender, RoutedEventArgs e)
         {
             if (!string.IsNullOrEmpty(_downloadedUpdatePath))
             {
+                BtnApplyUpdate.IsEnabled = false;
                 try
                 {
-                    AeroSpot.Core.Services.UpdateService.ApplyUpdate(_downloadedUpdatePath, () =>
-                    {
-                        System.Windows.Application.Current?.Dispatcher.Invoke(() =>
+                    TxtUpdateStatus.Text = AeroSpot.Core.Localization.LocalizationService.Get("Update_Pill_Installing_Detail");
+                    await AeroSpot.Core.Services.UpdateService.PrepareAndApplyUpdateAsync(
+                        _downloadedUpdatePath,
+                        _latestSha256SumsUrl,
+                        _latestAssetFileName,
+                        onShutdownRequested: () =>
                         {
-                            System.Windows.Application.Current.Shutdown(0);
+                            System.Windows.Application.Current?.Dispatcher.Invoke(() =>
+                            {
+                                if (System.Windows.Application.Current is App app)
+                                {
+                                    _ = app.RequestFullSuiteShutdownForUpdateAsync();
+                                }
+                                else
+                                {
+                                    System.Windows.Application.Current.Shutdown(0);
+                                }
+                            });
                         });
-                    });
                 }
                 catch (Exception ex)
                 {
-                    TxtUpdateStatus.Text = "Errore durante l'avvio dell'aggiornamento: " + ex.Message;
+                    TxtUpdateStatus.Text = AeroSpot.Core.Localization.LocalizationService.Get("Update_Pill_Error_Title") + ": " + ex.Message;
+                    BtnApplyUpdate.IsEnabled = true;
                 }
             }
         }
@@ -1134,6 +1162,13 @@ namespace AeroSpot.Worker
                 else if (selectedHomeItem == CmbItemNone) _config.HomeDisplayMode = SpotlightHomeMode.None;
 
                 _config.EnableRecentHistory = _config.HomeDisplayMode != SpotlightHomeMode.None;
+            }
+
+            // Salva comportamento Drag & Drop da Spotlight
+            if (CmbDragDropMode?.SelectedItem is ComboBoxItem selectedDragDropItem &&
+                int.TryParse(selectedDragDropItem.Tag?.ToString(), out int ddTag))
+            {
+                _config.DragDropMode = (SpotlightDragDropMode)ddTag;
             }
 
             // Salva frequenza aggiornamento automatico indice

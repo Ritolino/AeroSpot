@@ -580,6 +580,13 @@ namespace AeroSpot.Worker.Services
                         model.FooterText = $"{sheetModel.Sheets.Count} {sheetsLabel} • {LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
                         return model;
                     }
+
+                    // Fallback sicuro: non proseguire mai verso COM PreviewHandler per file Excel vuoti/corrotti
+                    model.Type = PreviewType.Generic;
+                    model.Subtitle = $"Excel Spreadsheet • {sizeText}";
+                    model.DetailsText = $"{LocalizationService.Get("Preview_NoViewer_Title", ext.ToUpperInvariant())}\n{LocalizationService.Get("Preview_Path_Label")}: {path}";
+                    model.FooterText = $"Format: {ext.ToUpperInvariant().TrimStart('.')} • {LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
+                    return model;
                 }
 
                 // 4c. Gestione Documenti Word Nativi (.docx, .docm, .dotx) ad alte prestazioni (zero processi Office / aihost.exe)
@@ -599,6 +606,63 @@ namespace AeroSpot.Worker.Services
                         model.FooterText = $"{docxData.ParagraphCount} {paraCountLabel} • {LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
                         return model;
                     }
+
+                    // Fallback sicuro: non proseguire mai verso COM PreviewHandler per .docx/.docm/.dotx corrotti o protetti
+                    model.Type = PreviewType.Generic;
+                    model.Subtitle = $"Word Document • {sizeText}";
+                    model.DetailsText = $"{LocalizationService.Get("Preview_NoViewer_Title", ext.ToUpperInvariant())}\n{LocalizationService.Get("Preview_Path_Label")}: {path}";
+                    model.FooterText = $"Format: {ext.ToUpperInvariant().TrimStart('.')} • {LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
+                    return model;
+                }
+
+                // 4d. Gestione Documenti RTF Nativi (.rtf) in-process (previene WINWORD.EXE -Embedding)
+                if (ext == ".rtf")
+                {
+                    var rtfData = await Task.Run(() => RtfReader.ReadRtf(path));
+                    if (rtfData != null)
+                    {
+                        model.Type = PreviewType.Markdown;
+                        model.TextContent = !string.IsNullOrWhiteSpace(rtfData.MarkdownContent)
+                            ? rtfData.MarkdownContent
+                            : rtfData.TextContent;
+                        string wordCountLabel = LocalizationService.CurrentLanguage == "it" ? "parole" : "words";
+                        string paraCountLabel = LocalizationService.CurrentLanguage == "it" ? "paragrafi" : "paragraphs";
+                        model.Subtitle = $"RTF Document • {sizeText} • {rtfData.WordCount} {wordCountLabel}";
+                        model.DetailsText = $"Format: RTF • {rtfData.ParagraphCount} {paraCountLabel} • {LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
+                        model.FooterText = $"{rtfData.ParagraphCount} {paraCountLabel} • {LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
+                        return model;
+                    }
+
+                    model.Type = PreviewType.Generic;
+                    model.Subtitle = $"RTF Document • {sizeText}";
+                    model.DetailsText = $"{LocalizationService.Get("Preview_NoViewer_Title", "RTF")}\n{LocalizationService.Get("Preview_Path_Label")}: {path}";
+                    model.FooterText = $"Format: RTF • {LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
+                    return model;
+                }
+
+                // 4e. Gestione Documenti OpenDocument Nativi (.odt) in-process (previene WINWORD.EXE -Embedding)
+                if (ext == ".odt")
+                {
+                    var odtData = await Task.Run(() => DocxReader.ReadOdt(path));
+                    if (odtData != null)
+                    {
+                        model.Type = PreviewType.Markdown;
+                        model.TextContent = !string.IsNullOrWhiteSpace(odtData.MarkdownContent)
+                            ? odtData.MarkdownContent
+                            : odtData.TextContent;
+                        string wordCountLabel = LocalizationService.CurrentLanguage == "it" ? "parole" : "words";
+                        string paraCountLabel = LocalizationService.CurrentLanguage == "it" ? "paragrafi" : "paragraphs";
+                        model.Subtitle = $"OpenDocument Text • {sizeText} • {odtData.WordCount} {wordCountLabel}";
+                        model.DetailsText = $"Format: ODT • {odtData.ParagraphCount} {paraCountLabel} • {LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
+                        model.FooterText = $"{odtData.ParagraphCount} {paraCountLabel} • {LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
+                        return model;
+                    }
+
+                    model.Type = PreviewType.Generic;
+                    model.Subtitle = $"OpenDocument Text • {sizeText}";
+                    model.DetailsText = $"{LocalizationService.Get("Preview_NoViewer_Title", "ODT")}\n{LocalizationService.Get("Preview_Path_Label")}: {path}";
+                    model.FooterText = $"Format: ODT • {LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
+                    return model;
                 }
 
                 // 5. Gestione esclusione file .ai da PreviewHandler COM difettosi (evita schermata nera)
@@ -612,20 +676,25 @@ namespace AeroSpot.Worker.Services
                     return model;
                 }
 
-                // 5b. Gestione Documenti tramite Preview Handler di sistema (Office, RTF, ecc.)
-                if (PreviewHandlerResolver.TryGetHandlerClsid(ext, out Guid clsid))
+                // 5a. Blocco esplicito formati Office legacy / non nativi per prevenire processi zombie COM
+                if (ext is ".doc" or ".dot" or ".xls" or ".ppt" or ".pptx")
                 {
-                    // Blocca i formati Word legacy .doc/.dot dal caricamento COM per prevenire
-                    // la proliferazione di processi zombie WINWORD.EXE e aihost.exe
-                    if (ext is ".doc" or ".dot")
+                    model.Type = PreviewType.Generic;
+                    model.Subtitle = ext switch
                     {
-                        model.Type = PreviewType.Generic;
-                        model.Subtitle = $"Word Document • {sizeText}";
-                        model.DetailsText = $"Format: {ext.ToUpperInvariant().TrimStart('.')} • {LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
-                        model.FooterText = $"{LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
-                        return model;
-                    }
+                        ".doc" or ".dot" => $"Word Document • {sizeText}",
+                        ".xls" => $"Excel Spreadsheet • {sizeText}",
+                        _ => $"PowerPoint Presentation • {sizeText}"
+                    };
+                    model.DetailsText = $"Format: {ext.ToUpperInvariant().TrimStart('.')} • {LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
+                    model.FooterText = $"{LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
+                    return model;
+                }
 
+                // 5b. Gestione Documenti tramite Preview Handler di sistema (esclusi handler Office in blacklist)
+                if (PreviewHandlerResolver.TryGetHandlerClsid(ext, out Guid clsid) &&
+                    !PreviewHandlerResolver.IsBlockedHandlerClsid(clsid))
+                {
                     string friendlyName = PreviewHandlerResolver.GetHandlerFriendlyName(clsid) ?? "System Handler";
                     model.Type = PreviewType.PreviewHandler;
                     model.PreviewHandlerClsid = clsid;

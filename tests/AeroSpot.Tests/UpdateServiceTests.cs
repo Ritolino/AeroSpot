@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.IO.Compression;
 using System.Net;
 using System.Net.Http;
 using System.Text;
@@ -153,6 +154,181 @@ namespace AeroSpot.Tests
             Assert.IsTrue(result.IsSuccess);
             Assert.IsFalse(result.HasUpdate, "Non deve segnalare aggiornamento quando la versione è uguale.");
             Assert.AreEqual("1.5.0", result.LatestVersion);
+        }
+
+        [TestMethod]
+        public async Task CheckForUpdatesAsync_WhenPortableTrue_SelectsPortableZipAndSha256SumsUrl()
+        {
+            string fakeJson = @"
+            {
+                ""tag_name"": ""v1.6.1"",
+                ""name"": ""AeroSpot v1.6.1"",
+                ""html_url"": ""https://github.com/Ritolino/AeroSpot/releases/tag/v1.6.1"",
+                ""body"": ""Release notes"",
+                ""assets"": [
+                    {
+                        ""name"": ""AeroSpot-Setup-v1.6.1.exe"",
+                        ""browser_download_url"": ""https://github.com/Ritolino/AeroSpot/releases/download/v1.6.1/AeroSpot-Setup-v1.6.1.exe"",
+                        ""size"": 82000000
+                    },
+                    {
+                        ""name"": ""AeroSpot-v1.6.1-win-x64-portable.zip"",
+                        ""browser_download_url"": ""https://github.com/Ritolino/AeroSpot/releases/download/v1.6.1/AeroSpot-v1.6.1-win-x64-portable.zip"",
+                        ""size"": 78000000
+                    },
+                    {
+                        ""name"": ""SHA256SUMS.txt"",
+                        ""browser_download_url"": ""https://github.com/Ritolino/AeroSpot/releases/download/v1.6.1/SHA256SUMS.txt"",
+                        ""size"": 256
+                    }
+                ]
+            }";
+
+            using var httpClient = new HttpClient(new FakeHttpMessageHandler(fakeJson));
+            var result = await UpdateService.CheckForUpdatesAsync(
+                currentVersion: "1.6.0",
+                httpClient: httpClient,
+                isPortable: true);
+
+            Assert.IsTrue(result.IsSuccess);
+            Assert.IsTrue(result.HasUpdate);
+            Assert.AreEqual("AeroSpot-v1.6.1-win-x64-portable.zip", result.AssetFileName);
+            Assert.IsFalse(result.IsInstaller);
+            Assert.AreEqual("https://github.com/Ritolino/AeroSpot/releases/download/v1.6.1/SHA256SUMS.txt", result.Sha256SumsUrl);
+        }
+
+        [TestMethod]
+        public async Task CheckForUpdatesAsync_WhenNotPortable_FallsBackToZipWhenNoExe()
+        {
+            string fakeJson = @"
+            {
+                ""tag_name"": ""v1.6.1"",
+                ""name"": ""AeroSpot v1.6.1"",
+                ""html_url"": ""https://github.com/Ritolino/AeroSpot/releases/tag/v1.6.1"",
+                ""body"": ""Release notes"",
+                ""assets"": [
+                    {
+                        ""name"": ""AeroSpot-v1.6.1-win-x64-portable.zip"",
+                        ""browser_download_url"": ""https://github.com/Ritolino/AeroSpot/releases/download/v1.6.1/AeroSpot-v1.6.1-win-x64-portable.zip"",
+                        ""size"": 78000000
+                    }
+                ]
+            }";
+
+            using var httpClient = new HttpClient(new FakeHttpMessageHandler(fakeJson));
+            var result = await UpdateService.CheckForUpdatesAsync(
+                currentVersion: "1.6.0",
+                httpClient: httpClient,
+                isPortable: false);
+
+            Assert.IsTrue(result.IsSuccess);
+            Assert.AreEqual("AeroSpot-v1.6.1-win-x64-portable.zip", result.AssetFileName);
+            Assert.IsFalse(result.IsInstaller);
+        }
+
+        [TestMethod]
+        public async Task VerifyIntegrityAsync_ValidHashPasses_AndInvalidHashThrows()
+        {
+            string tempFile = Path.Combine(Path.GetTempPath(), $"aerospot_hash_test_{Guid.NewGuid():N}.zip");
+            try
+            {
+                await File.WriteAllTextAsync(tempFile, "AeroSpot Test Payload 1.6.1");
+                string actualHash = UpdateService.ComputeFileSha256(tempFile);
+                string fileName = Path.GetFileName(tempFile);
+
+                // 1. Hash valido -> non lancia eccezioni
+                string validSums = $"{actualHash}  {fileName}\n";
+                using var validClient = new HttpClient(new FakeHttpMessageHandler(validSums));
+                await UpdateService.VerifyIntegrityAsync(tempFile, fileName, "https://example.test/SHA256SUMS.txt", validClient);
+
+                // 2. Hash corrotto -> lancia InvalidDataException
+                string badHash = new string('0', 64);
+                string invalidSums = $"{badHash}  {fileName}\n";
+                using var invalidClient = new HttpClient(new FakeHttpMessageHandler(invalidSums));
+                bool threw = false;
+                try
+                {
+                    await UpdateService.VerifyIntegrityAsync(tempFile, fileName, "https://example.test/SHA256SUMS.txt", invalidClient);
+                }
+                catch (InvalidDataException)
+                {
+                    threw = true;
+                }
+                Assert.IsTrue(threw, "Un hash SHA-256 non corrispondente deve sollevare InvalidDataException.");
+            }
+            finally
+            {
+                if (File.Exists(tempFile)) File.Delete(tempFile);
+            }
+        }
+
+        [TestMethod]
+        public void StageZipUpdate_ExtractsAndValidatesStructure_AndRejectsIncompleteZip()
+        {
+            string tempRoot = Path.Combine(Path.GetTempPath(), $"aerospot_stage_test_{Guid.NewGuid():N}");
+            Directory.CreateDirectory(tempRoot);
+            try
+            {
+                // 1. ZIP valido con sottocartella radice unica
+                string validSrc = Path.Combine(tempRoot, "src_valid");
+                Directory.CreateDirectory(Path.Combine(validSrc, "AeroSpot", "app"));
+                File.WriteAllText(Path.Combine(validSrc, "AeroSpot", "AeroSpot.exe"), "stub");
+                File.WriteAllText(Path.Combine(validSrc, "AeroSpot", "app", "AeroSpot.Host.exe"), "stub");
+
+                string validZip = Path.Combine(tempRoot, "valid.zip");
+                ZipFile.CreateFromDirectory(validSrc, validZip);
+
+                string stagedDir = UpdateService.StageZipUpdate(validZip, tempRoot);
+                Assert.IsTrue(File.Exists(Path.Combine(stagedDir, "AeroSpot.exe")));
+                Assert.IsTrue(File.Exists(Path.Combine(stagedDir, "app", "AeroSpot.Host.exe")));
+
+                // 2. ZIP incompleto (manca app\AeroSpot.Host.exe) -> deve lanciare InvalidDataException
+                string badSrc = Path.Combine(tempRoot, "src_bad");
+                Directory.CreateDirectory(badSrc);
+                File.WriteAllText(Path.Combine(badSrc, "README.txt"), "incomplete");
+
+                string badZip = Path.Combine(tempRoot, "bad.zip");
+                ZipFile.CreateFromDirectory(badSrc, badZip);
+
+                bool threw = false;
+                try
+                {
+                    UpdateService.StageZipUpdate(badZip, tempRoot);
+                }
+                catch (InvalidDataException)
+                {
+                    threw = true;
+                }
+                Assert.IsTrue(threw, "Uno ZIP privo di AeroSpot.exe / app\\AeroSpot.Host.exe deve essere rifiutato.");
+            }
+            finally
+            {
+                try { Directory.Delete(tempRoot, recursive: true); } catch { }
+            }
+        }
+
+        [TestMethod]
+        public void IsDevelopmentDirectory_BlocksSolutionDirectory_AndAllowsStandaloneInstall()
+        {
+            string tempRoot = Path.Combine(Path.GetTempPath(), $"aerospot_devguard_{Guid.NewGuid():N}");
+            Directory.CreateDirectory(tempRoot);
+            try
+            {
+                string devDir = Path.Combine(tempRoot, "Progetto");
+                Directory.CreateDirectory(devDir);
+                File.WriteAllText(Path.Combine(devDir, "AeroSpot.sln"), "sln");
+
+                string standaloneDir = Path.Combine(tempRoot, "StandaloneApp");
+                Directory.CreateDirectory(standaloneDir);
+                File.WriteAllText(Path.Combine(standaloneDir, "AeroSpot.exe"), "exe");
+
+                Assert.IsTrue(UpdateService.IsDevelopmentDirectory(devDir), "Una cartella contenente AeroSpot.sln deve essere protetta.");
+                Assert.IsFalse(UpdateService.IsDevelopmentDirectory(standaloneDir), "Una cartella standalone senza .sln deve essere consentita.");
+            }
+            finally
+            {
+                try { Directory.Delete(tempRoot, recursive: true); } catch { }
+            }
         }
     }
 }

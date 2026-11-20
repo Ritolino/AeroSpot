@@ -380,13 +380,14 @@ namespace AeroSpot.Core.Shell
 
                 AppLogger.Debug($"GetFocusedPathForExplorer: FG HWND=0x{foregroundHwnd:X}, Root=0x{rootFg:X}, Title='{fgTitle}', OpenWindowsCount={count}");
 
-                IntPtr hActiveTab = Win32.FindWindowEx(rootFg, IntPtr.Zero, "ShellTabWindowClass", null);
+                IntPtr hActiveTab = FindActiveVisibleTabHwnd(rootFg);
                 if (hActiveTab == IntPtr.Zero && foregroundHwnd != rootFg)
                 {
-                    hActiveTab = Win32.FindWindowEx(foregroundHwnd, IntPtr.Zero, "ShellTabWindowClass", null);
+                    hActiveTab = FindActiveVisibleTabHwnd(foregroundHwnd);
                 }
 
                 // Raccolta candidati per correlazione accurata (supporto multi-scheda Windows 11)
+                string? hwndAndTitleCandidate = null;
                 string? tabAndSelectionCandidate = null;
                 string? titleAndSelectionCandidate = null;
                 string? hwndAndSelectionCandidate = null;
@@ -451,7 +452,12 @@ namespace AeroSpot.Core.Shell
                         bool hasSelection = HasSelectedItems(doc);
                         if (!hasSelection)
                         {
-                            // Se la scheda/cartella non ha elementi selezionati, non considerare per l'anteprima
+                            // Se la scheda attualmente visibile/attiva NON ha alcun elemento selezionato,
+                            // interrompi subito per evitare di ripiegare sulla selezione di una scheda inattiva in background.
+                            if (isExactTabMatch)
+                            {
+                                return null;
+                            }
                             continue;
                         }
 
@@ -465,11 +471,13 @@ namespace AeroSpot.Core.Shell
                             return path;
                         }
 
-                        // 2. Corrispondenza perfetta: stesso HWND top-level e titolo corrispondente
-                        if (isHwndMatch && isTitleMatch)
+                        // 2. Fallback prioritario: stesso HWND top-level e titolo corrispondente
+                        // Non fare return anticipato dentro il ciclo: se due schede hanno lo stesso nome
+                        // (es. "AeroSpot" e "AeroSpot"), la scheda inattiva [0] potrebbe fare match prima
+                        // che il ciclo raggiunga la vera scheda attiva visibile (isExactTabMatch) in [1].
+                        if (isHwndMatch && isTitleMatch && hwndAndTitleCandidate == null)
                         {
-                            AppLogger.Info($"GetFocusedPathForExplorer: Risolto percorso da corrispondenza perfetta (HWND + Titolo '{fgTitle}') [{i}]: {path}");
-                            return path;
+                            hwndAndTitleCandidate = path;
                         }
 
                         if (isTitleMatch && titleAndSelectionCandidate == null)
@@ -491,6 +499,12 @@ namespace AeroSpot.Core.Shell
                     {
                         AppLogger.Debug($"Errore ispezione finestra shell [{i}]: {exItem.Message}");
                     }
+                }
+
+                if (!string.IsNullOrEmpty(hwndAndTitleCandidate))
+                {
+                    AppLogger.Info($"GetFocusedPathForExplorer: Risolto percorso da corrispondenza HWND + Titolo '{fgTitle}': {hwndAndTitleCandidate}");
+                    return hwndAndTitleCandidate;
                 }
 
                 if (!string.IsNullOrEmpty(titleAndSelectionCandidate))
@@ -518,6 +532,28 @@ namespace AeroSpot.Core.Shell
                 AppLogger.Warn("Errore enumerazione Shell.Windows.", ex);
                 return null;
             }
+        }
+
+        private static IntPtr FindActiveVisibleTabHwnd(IntPtr parentHwnd)
+        {
+            if (parentHwnd == IntPtr.Zero) return IntPtr.Zero;
+
+            IntPtr firstTab = IntPtr.Zero;
+            IntPtr candidate = IntPtr.Zero;
+            while ((candidate = Win32.FindWindowEx(parentHwnd, candidate, "ShellTabWindowClass", null)) != IntPtr.Zero)
+            {
+                if (firstTab == IntPtr.Zero)
+                {
+                    firstTab = candidate;
+                }
+
+                if (Win32.IsWindowVisible(candidate))
+                {
+                    return candidate;
+                }
+            }
+
+            return firstTab;
         }
 
         private static bool HasSelectedItems(object? doc)

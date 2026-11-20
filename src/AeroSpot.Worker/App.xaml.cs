@@ -189,6 +189,9 @@ namespace AeroSpot.Worker
                     case IpcMessageType.CloseWorker:
                         ShutdownWorker("Richiesta di chiusura dall'Host");
                         break;
+                    case IpcMessageType.ShowUpdateNotification:
+                        HandleUpdateNotification(msg.Payload);
+                        break;
                     case IpcMessageType.Ping:
                         _ = _ipcClient?.SendMessageAsync(new IpcMessage(IpcMessageType.Pong));
                         break;
@@ -335,6 +338,126 @@ namespace AeroSpot.Worker
             if (_ipcClient != null && _ipcClient.IsConnected)
             {
                 await _ipcClient.SendMessageAsync(new IpcMessage(IpcMessageType.ConfigReloaded));
+            }
+        }
+
+        public async Task RequestFullSuiteShutdownForUpdateAsync()
+        {
+            AppLogger.Info("Invio comando ShutdownHost all'Host per applicazione aggiornamento...");
+            try
+            {
+                if (_ipcClient != null && _ipcClient.IsConnected)
+                {
+                    await _ipcClient.SendMessageAsync(new IpcMessage(IpcMessageType.ShutdownHost));
+                    await Task.Delay(150);
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warn($"Errore invio ShutdownHost: {ex.Message}");
+            }
+
+            Dispatcher.Invoke(() => ShutdownWorker("Aggiornamento automatico in corso"));
+        }
+
+        private void HandleUpdateNotification(string payload)
+        {
+            if (string.IsNullOrWhiteSpace(payload)) return;
+
+            try
+            {
+                if (payload.StartsWith("UPDATED|", StringComparison.OrdinalIgnoreCase))
+                {
+                    string ver = payload.Substring("UPDATED|".Length).Trim();
+                    var toast = FloatingNotificationWindow.Spawn(
+                        AeroSpot.Core.Localization.LocalizationService.Get("Update_Pill_Updated_Title", ver),
+                        "✓");
+                    toast.SetSuccess(
+                        AeroSpot.Core.Localization.LocalizationService.Get("Update_Pill_Updated_Title", ver),
+                        AeroSpot.Core.Localization.LocalizationService.Get("Update_Pill_Updated_Detail"),
+                        resultFilePath: null,
+                        autoCloseMs: 5000);
+                    return;
+                }
+
+                string[] parts = payload.Split('|');
+                string latestVer = parts.Length > 0 ? parts[0].Trim() : string.Empty;
+                string downloadUrl = parts.Length > 1 ? parts[1].Trim() : string.Empty;
+                string releaseUrl = parts.Length > 2 ? parts[2].Trim() : string.Empty;
+                string assetFileName = parts.Length > 3 ? parts[3].Trim() : string.Empty;
+                string sha256SumsUrl = parts.Length > 4 ? parts[4].Trim() : string.Empty;
+
+                if (string.IsNullOrEmpty(latestVer)) return;
+
+                string title = AeroSpot.Core.Localization.LocalizationService.Get("Update_Pill_Available_Title", latestVer);
+                string detail = AeroSpot.Core.Localization.LocalizationService.Get("Update_Pill_Available_Detail");
+                string btnText = AeroSpot.Core.Localization.LocalizationService.Get("Update_Pill_Btn_UpdateNow");
+
+                var updateToast = FloatingNotificationWindow.Spawn(title, "★");
+                updateToast.SetAction(title, detail, btnText, () =>
+                {
+                    if (string.IsNullOrEmpty(downloadUrl) || string.Equals(downloadUrl, releaseUrl, StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (!string.IsNullOrEmpty(releaseUrl))
+                        {
+                            try
+                            {
+                                Process.Start(new ProcessStartInfo { FileName = releaseUrl, UseShellExecute = true });
+                            }
+                            catch { }
+                        }
+                        updateToast.Close();
+                        return;
+                    }
+
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            string dlTitle = AeroSpot.Core.Localization.LocalizationService.Get("Update_Pill_Downloading_Title", latestVer);
+                            updateToast.UpdateProgress(0, AeroSpot.Core.Localization.LocalizationService.Get("Settings_Updates_Downloading", 0), dlTitle, "⬇️");
+
+                            var progress = new Progress<double>(pct =>
+                            {
+                                updateToast.UpdateProgress(
+                                    pct,
+                                    AeroSpot.Core.Localization.LocalizationService.Get("Settings_Updates_Downloading", (int)pct),
+                                    dlTitle,
+                                    "⬇️");
+                            });
+
+                            string fileName = !string.IsNullOrWhiteSpace(assetFileName)
+                                ? assetFileName
+                                : $"AeroSpot-v{latestVer}-win-x64-portable.zip";
+
+                            string downloadedPath = await AeroSpot.Core.Services.UpdateService.DownloadUpdateAsync(
+                                downloadUrl, fileName, progress);
+
+                            updateToast.UpdateProgress(
+                                -1,
+                                AeroSpot.Core.Localization.LocalizationService.Get("Update_Pill_Installing_Detail"),
+                                AeroSpot.Core.Localization.LocalizationService.Get("Update_Pill_Installing_Title"),
+                                "🚀");
+
+                            await AeroSpot.Core.Services.UpdateService.PrepareAndApplyUpdateAsync(
+                                downloadedPath,
+                                string.IsNullOrWhiteSpace(sha256SumsUrl) ? null : sha256SumsUrl,
+                                fileName,
+                                onShutdownRequested: () => { _ = RequestFullSuiteShutdownForUpdateAsync(); });
+                        }
+                        catch (Exception ex)
+                        {
+                            AppLogger.Error("Errore durante l'aggiornamento 1-clic dalla pillola", ex);
+                            updateToast.SetError(
+                                AeroSpot.Core.Localization.LocalizationService.Get("Update_Pill_Error_Title"),
+                                ex.Message);
+                        }
+                    });
+                }, icon: "★", autoCloseMs: 20000);
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warn($"HandleUpdateNotification error: {ex.Message}");
             }
         }
 
