@@ -256,7 +256,7 @@
 <ul>
 <li><strong>📁 Vai al percorso file:</strong> Apre la cartella in Esplora risorse ed evidenzia direttamente il file selezionato.</li>
 <li><strong>🖼 Converti in JPG / PNG:</strong> Converte immagini (singole o in batch se dello stesso formato) in JPG ad alta qualit&#224; (con compositing pixel-level bianco puro per le trasparenze, immune ai ritagli High-DPI) o PNG trasparente.</li>
-<li><strong>📄 Converti in PDF / Unisci foto in unico PDF:</strong> Converte immagini o documenti (<code>.md</code>, <code>.txt</code>, <code>.docx</code>) in PDF nativi; selezionando pi&#249; foto, consente di unirle tutte in un <strong>unico documento PDF multi-pagina</strong> ordinato.</li>
+<li><strong>📄 Converti in PDF / Unisci foto in unico PDF:</strong> Converte immagini o documenti (<code>.md</code>, <code>.txt</code>, <code>.docx</code>, <code>.rtf</code>, <code>.odt</code>) in PDF nativi; selezionando pi&#249; foto, consente di unirle tutte in un <strong>unico documento PDF multi-pagina</strong> ordinato.</li>
 <li><strong>📑 Unisci PDF selezionati:</strong> Selezionando due o pi&#249; file <code>.pdf</code> in Esplora Risorse, li fonde istantaneamente in un unico documento preservando qualit&#224; vettoriale e testi originali.</li>
 <li><strong>🎬 Converti in MP4 / 🎵 Estrai MP3 e WAV:</strong> Converte video non MP4 (MKV, AVI, MOV, WMV, WEBM) in MP4 compatibile tramite FFmpeg o estrae tracce audio in MP3/WAV.</li>
 <li><strong>✨ Rimuovi sfondo (AI):</strong> Rimuove lo sfondo da immagini fotografiche (singole o batch multiplo) tramite modello locale Onnx/DirectML con accelerazione GPU DirectX 12 e fallback CPU. Il modello (~44 MB) viene scaricato on-demand al primo utilizzo.</li>
@@ -341,9 +341,9 @@
 <td>Font monospaziato (<em>Cascadia Mono</em> / <em>Consolas</em>), rilevamento automatico codifica (UTF-8, UTF-16, ANSI), conteggio righe, troncamento di sicurezza a 100 KB per prevenire picchi di RAM.</td>
 </tr>
 <tr>
-<td><strong>Documenti Office</strong></td>
-<td><code>.docx</code>, <code>.docm</code>, <code>.dotx</code>, <code>.pptx</code>, <code>.rtf</code></td>
-<td>Lettore nativo OpenXML zero-Office (~5–15 ms) per <code>.docx</code>/<code>.docm</code>/<code>.dotx</code> con tipografia Fluent ed esportazione PDF; hosting COM isolato (<code>prevhost.exe</code>) per <code>.pptx</code> e <code>.rtf</code>.</td>
+<td><strong>Documenti Office &amp; RTF/ODT</strong></td>
+<td><code>.docx</code>, <code>.docm</code>, <code>.dotx</code>, <code>.rtf</code>, <code>.odt</code></td>
+<td>Lettori nativi in-process zero-Office (~5–15 ms) per <code>.docx</code>/<code>.docm</code>/<code>.dotx</code>, <code>.rtf</code> e <code>.odt</code> con tipografia Dark Fluent ed esportazione PDF 1-clic (nessun processo <code>WINWORD.EXE</code> in background).</td>
 </tr>
 <tr>
 <td><strong>Cartelle</strong></td>

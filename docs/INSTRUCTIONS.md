@@ -74,7 +74,7 @@ AeroSpot is distributed in two editions built from the exact same compiled binar
 Right-clicking any search result in Spotlight, inside QuickLook, or via the cascading **"AeroSpot" submenu in Windows File Explorer** (`Shift + Right-click` / classic menu) gives instant access to single-file and **multi-selection batch conversions**:
 - **📁 Open file location:** Opens File Explorer and directly selects and highlights the item.
 - **🖼 Convert to JPG / PNG:** Converts images (individually or in batch when selecting multiple files of the same format) into high-quality JPEG (using DPI-independent pixel-level white compositing for transparency) or lossless transparent PNG.
-- **📄 Convert to PDF / Combine photos into single PDF:** Converts images or text/Word documents (`.md`, `.txt`, `.docx`) into native PDFs; selecting multiple photos combines them seamlessly into one ordered **multi-page PDF document**.
+- **📄 Convert to PDF / Combine photos into single PDF:** Converts images or text/Word documents (`.md`, `.txt`, `.docx`, `.rtf`, `.odt`) into native PDFs; selecting multiple photos combines them seamlessly into one ordered **multi-page PDF document**.
 - **📑 Merge selected PDFs:** Selecting two or more `.pdf` files in File Explorer merges them into a single unified document preserving all vector graphics and selectable text.
 - **🎬 Convert to MP4 / 🎵 Extract MP3 & WAV:** Converts non-MP4 videos (MKV, AVI, MOV, WMV, WEBM) to compatible MP4 via FFmpeg or extracts high-quality MP3/WAV audio.
 - **✨ Remove Background (AI):** Cuts out photo backgrounds (single or multi-file batch) using a local Onnx/DirectML neural model with DirectX 12 GPU acceleration and CPU fallback. Downloaded on-demand upon first use (~44 MB).
@@ -113,7 +113,7 @@ When in **File Explorer**, on the **Desktop**, or inside **Open / Save / Attach 
 | **3D Models** | `.stl` | Native 60 FPS 3D rendering engine for ASCII and binary STL files. Orbit rotation via mouse dragging, mouse wheel zoom, triangle count, and bounding box dimensions. |
 | **Web Pages** | `.html`, `.htm` | Safe passive dark-mode viewer, isolated from script execution and compliant with WPF airspace constraints. |
 | **Text & Code** | `.txt`, `.md`, `.py`, `.json`, `.log`, `.csv`, `.ini`, `.cs`, `.xml`, `.yaml`, `.toml`, `.sql`, `.bat`, `.cmd`, `.cpp`, `.c`, `.h`, `.rs`, `.go`, `.ts`, `.js` | Monospace typography (*Cascadia Mono* / *Consolas*), automatic encoding detection (UTF-8, UTF-16, ANSI), line count, and safe 100 KB truncation limit to protect RAM. |
-| **Office Documents** | `.docx`, `.docm`, `.dotx`, `.pptx`, `.rtf` | Native zero-Office OpenXML reader (~5–15 ms) for `.docx`/`.docm`/`.dotx` with Fluent typography and PDF export; out-of-process COM hosting (`prevhost.exe`) for `.pptx` and `.rtf`. |
+| **Office & RTF/ODT Documents** | `.docx`, `.docm`, `.dotx`, `.rtf`, `.odt` | Native zero-Office in-process readers (~5–15 ms) for `.docx`/`.docm`/`.dotx`, `.rtf`, and `.odt` with Dark Fluent typography and 1-click PDF export (zero background `WINWORD.EXE` processes). |
 | **Folders** | File system directories and folders | Instant 0 ms display with asynchronous calculation of total disk size, file count, and subfolder count. |
 | **Shortcuts & Apps** | `.lnk`, UWP / Store apps | Metadata card with real target extraction, file size, and high-resolution vector application icons. |
 | **Generic Files** | All other file extensions | Clean informational card with native Shell icon, file size, modification date, and full path. |

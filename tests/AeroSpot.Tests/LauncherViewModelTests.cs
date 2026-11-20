@@ -210,5 +210,18 @@ namespace AeroSpot.Tests
             // Verify that no calculator action item or leftover item remains
             Assert.IsFalse(vm.FilteredResults.Any(r => r.IsActionItem));
         }
+
+        [TestMethod]
+        public void LauncherViewModel_EmptySearch_DoesNotBlockUI()
+        {
+            var vm = new LauncherViewModel(enableAsyncDebounce: false);
+            vm.SearchText = "test";
+            Assert.IsTrue(vm.HasSearchText);
+
+            // Svuotamento query
+            vm.SearchText = string.Empty;
+            Assert.IsFalse(vm.HasSearchText);
+            Assert.IsTrue(vm.HasResults);
+        }
     }
 }

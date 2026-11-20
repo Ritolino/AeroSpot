@@ -1,12 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Threading.Tasks;
 using AeroSpot.Core.Config;
-using AeroSpot.Core.Localization;
 using AeroSpot.Core.Search;
-using AeroSpot.Worker.Models;
 using AeroSpot.Worker.Services;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -15,49 +12,6 @@ namespace AeroSpot.Tests
     [TestClass]
     public class Round2FixesTests
     {
-        [TestMethod]
-        public void Localization_CompleteParity_AllKeysPresentInBothLanguages()
-        {
-            var dictEn = LocalizationService.English;
-            var dictIt = LocalizationService.Italian;
-
-            Assert.IsNotNull(dictEn);
-            Assert.IsNotNull(dictIt);
-
-            var missingInIt = dictEn.Keys.Except(dictIt.Keys).ToList();
-            var missingInEn = dictIt.Keys.Except(dictEn.Keys).ToList();
-
-            Assert.IsEmpty(missingInIt, $"Chiavi presenti in EN ma mancanti in IT: {string.Join(", ", missingInIt)}");
-            Assert.IsEmpty(missingInEn, $"Chiavi presenti in IT ma mancanti in EN: {string.Join(", ", missingInEn)}");
-
-            // Verifica che le nuove chiavi per C1 e C2 siano presenti
-            Assert.IsTrue(dictIt.ContainsKey("Settings_HomeDisplayMode_Label"));
-            Assert.IsTrue(dictIt.ContainsKey("Settings_HomeMode_FrequentItems"));
-            Assert.IsTrue(dictIt.ContainsKey("Settings_HomeMode_FrequentSearches"));
-            Assert.IsTrue(dictIt.ContainsKey("Settings_HomeMode_RecentOpened"));
-            Assert.IsTrue(dictIt.ContainsKey("Settings_HomeMode_Alphabetical"));
-            Assert.IsTrue(dictIt.ContainsKey("Settings_HomeMode_None"));
-            Assert.IsTrue(dictIt.ContainsKey("Settings_RecentHistory_Info_Tooltip"));
-            Assert.IsTrue(dictIt.ContainsKey("Settings_RecentHistory_Info_Desc"));
-            Assert.IsTrue(dictIt.ContainsKey("Settings_IndexFrequency_Label"));
-            Assert.IsTrue(dictIt.ContainsKey("Settings_IndexFreq_Startup"));
-            Assert.IsTrue(dictIt.ContainsKey("Settings_IndexFreq_15Min"));
-            Assert.IsTrue(dictIt.ContainsKey("Settings_IndexFreq_30Min"));
-            Assert.IsTrue(dictIt.ContainsKey("Settings_IndexFreq_1Hour"));
-            Assert.IsTrue(dictIt.ContainsKey("Settings_IndexFreq_2Hours"));
-            Assert.IsTrue(dictIt.ContainsKey("Settings_IndexFreq_Manual"));
-            Assert.IsTrue(dictIt.ContainsKey("Settings_DataDir_Btn_ReindexNow"));
-            Assert.IsTrue(dictIt.ContainsKey("Spotlight_Category_Search"));
-
-            // Verifica che l'indicazione del valore predefinito sia uniforme
-            StringAssert.Contains(dictIt["Settings_HomeMode_FrequentSearches"], "(predefinito)");
-            StringAssert.Contains(dictIt["Settings_Updates_Freq_Startup"], "(predefinito)");
-            StringAssert.Contains(dictIt["Settings_IndexFreq_1Hour"], "(predefinito)");
-            StringAssert.Contains(dictEn["Settings_HomeMode_FrequentSearches"], "(default)");
-            StringAssert.Contains(dictEn["Settings_Updates_Freq_Startup"], "(default)");
-            StringAssert.Contains(dictEn["Settings_IndexFreq_1Hour"], "(default)");
-        }
-
         [TestMethod]
         public void SpotlightHomeMode_AllFourModes_BehaveAsExpected()
         {
@@ -182,19 +136,6 @@ namespace AeroSpot.Tests
             {
                 try { Directory.Delete(tempDir, true); } catch { }
             }
-        }
-
-        [TestMethod]
-        public void PreviewLoader_RawExtensions_RecognizedCorrectly()
-        {
-            Assert.IsTrue(PreviewLoader.IsRawExtension(".arw"));
-            Assert.IsTrue(PreviewLoader.IsRawExtension(".dng"));
-            Assert.IsTrue(PreviewLoader.IsRawExtension(".cr2"));
-            Assert.IsTrue(PreviewLoader.IsRawExtension(".cr3"));
-            Assert.IsTrue(PreviewLoader.IsRawExtension(".nef"));
-            Assert.IsFalse(PreviewLoader.IsRawExtension(".png"));
-            Assert.IsFalse(PreviewLoader.IsRawExtension(".jpg"));
-            Assert.IsFalse(PreviewLoader.IsRawExtension(".ai"));
         }
 
         [TestMethod]

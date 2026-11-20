@@ -94,5 +94,33 @@ namespace AeroSpot.Tests
             }
             Assert.IsTrue(threw, "Expected InvalidDataException on unsupported version.");
         }
+
+        [TestMethod]
+        public async Task Roundtrip_ShutdownHost_And_ShowUpdateNotification_Success()
+        {
+            var shutdownMsg = new IpcMessage(IpcMessageType.ShutdownHost);
+            Assert.AreEqual((ushort)21, (ushort)shutdownMsg.Type);
+            using (var ms = new MemoryStream())
+            {
+                await IpcMessage.WriteAsync(ms, shutdownMsg);
+                ms.Position = 0;
+                var back = await IpcMessage.ReadAsync(ms);
+                Assert.IsNotNull(back);
+                Assert.AreEqual(IpcMessageType.ShutdownHost, back.Type);
+            }
+
+            string payload = "1.6.1|https://example/dl.zip|https://example/rel|AeroSpot-v1.6.1-win-x64-portable.zip|https://example/SHA256SUMS.txt";
+            var notifyMsg = new IpcMessage(IpcMessageType.ShowUpdateNotification, payload);
+            Assert.AreEqual((ushort)22, (ushort)notifyMsg.Type);
+            using (var ms = new MemoryStream())
+            {
+                await IpcMessage.WriteAsync(ms, notifyMsg);
+                ms.Position = 0;
+                var back = await IpcMessage.ReadAsync(ms);
+                Assert.IsNotNull(back);
+                Assert.AreEqual(IpcMessageType.ShowUpdateNotification, back.Type);
+                Assert.AreEqual(payload, back.Payload);
+            }
+        }
     }
 }

@@ -38,6 +38,44 @@ namespace AeroSpot.Tests
             {
                 Assert.IsTrue(en.ContainsKey(kvp.Key), $"Chiave presente in italiano ma mancante in inglese: '{kvp.Key}'");
             }
+
+            // Verifica chiavi critiche di configurazione e etichette predefinite uniformi
+            string[] requiredKeys =
+            {
+                "Settings_HomeDisplayMode_Label",
+                "Settings_HomeMode_FrequentItems",
+                "Settings_HomeMode_FrequentSearches",
+                "Settings_HomeMode_RecentOpened",
+                "Settings_HomeMode_Alphabetical",
+                "Settings_HomeMode_None",
+                "Settings_RecentHistory_Info_Tooltip",
+                "Settings_RecentHistory_Info_Desc",
+                "Settings_IndexFrequency_Label",
+                "Settings_IndexFreq_Startup",
+                "Settings_IndexFreq_15Min",
+                "Settings_IndexFreq_30Min",
+                "Settings_IndexFreq_1Hour",
+                "Settings_IndexFreq_2Hours",
+                "Settings_IndexFreq_Manual",
+                "Settings_DataDir_Btn_ReindexNow",
+                "Spotlight_Category_Search",
+                "Preview_Btn_ResetView",
+                "Preview_Btn_ResetView_Tooltip",
+                "Preview_Stl_Hint"
+            };
+
+            foreach (string key in requiredKeys)
+            {
+                Assert.IsTrue(it.ContainsKey(key), $"Chiave richiesta mancante in IT: '{key}'");
+                Assert.IsTrue(en.ContainsKey(key), $"Chiave richiesta mancante in EN: '{key}'");
+            }
+
+            StringAssert.Contains(it["Settings_HomeMode_FrequentSearches"], "(predefinito)");
+            StringAssert.Contains(it["Settings_Updates_Freq_Startup"], "(predefinito)");
+            StringAssert.Contains(it["Settings_IndexFreq_1Hour"], "(predefinito)");
+            StringAssert.Contains(en["Settings_HomeMode_FrequentSearches"], "(default)");
+            StringAssert.Contains(en["Settings_Updates_Freq_Startup"], "(default)");
+            StringAssert.Contains(en["Settings_IndexFreq_1Hour"], "(default)");
         }
 
         [TestMethod]

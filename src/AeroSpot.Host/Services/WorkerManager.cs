@@ -28,6 +28,7 @@ namespace AeroSpot.Host.Services
         public event Action? ConfigReloadRequested;
         public event Action<string>? PreviewOpened;
         public event Action? PreviewClosed;
+        public event Action? ShutdownHostRequested;
 
         public void UpdateConfig(AppConfig config)
         {
@@ -91,6 +92,10 @@ namespace AeroSpot.Host.Services
                     break;
                 case IpcMessageType.PreviewClosed:
                     PreviewClosed?.Invoke();
+                    break;
+                case IpcMessageType.ShutdownHost:
+                    AppLogger.Info("IPC: Richiesta ShutdownHost ricevuta dal Worker.");
+                    ShutdownHostRequested?.Invoke();
                     break;
             }
         }
@@ -327,6 +332,30 @@ namespace AeroSpot.Host.Services
             {
                 sw.Stop();
                 AppLogger.Error("Errore nell'invio del comando ShowSettings.", ex);
+                return false;
+            }
+        }
+
+        public async Task<bool> SendUpdateNotificationAsync(string payload)
+        {
+            if (string.IsNullOrWhiteSpace(payload)) return false;
+
+            try
+            {
+                bool ready = await EnsureWorkerStartedAsync().ConfigureAwait(false);
+                if (!ready)
+                {
+                    AppLogger.Warn("Impossibile inviare notifica aggiornamento: Worker non pronto.");
+                    return false;
+                }
+
+                bool sent = await _pipeServer.SendMessageAsync(new IpcMessage(IpcMessageType.ShowUpdateNotification, payload)).ConfigureAwait(false);
+                AppLogger.Info($"Comando ShowUpdateNotification inviato (sent={sent}).");
+                return sent;
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error("Errore nell'invio del comando ShowUpdateNotification.", ex);
                 return false;
             }
         }

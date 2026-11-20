@@ -481,16 +481,14 @@ namespace AeroSpot.Worker.Services
 
             destPath ??= GenerateNonConflictingPath(docPath, ".pdf");
 
-            string text = "";
             string ext = Path.GetExtension(docPath).ToLowerInvariant();
-            if (ext == ".docx")
+            string text = ext switch
             {
-                text = DocxReader.ReadText(docPath);
-            }
-            else
-            {
-                text = await File.ReadAllTextAsync(docPath).ConfigureAwait(false);
-            }
+                ".docx" or ".docm" or ".dotx" => DocxReader.ReadText(docPath),
+                ".rtf" => RtfReader.ReadText(docPath),
+                ".odt" => DocxReader.ReadOdt(docPath)?.TextContent ?? string.Empty,
+                _ => await File.ReadAllTextAsync(docPath).ConfigureAwait(false)
+            };
 
             string title = Path.GetFileNameWithoutExtension(docPath);
             byte[] pdfBytes = BuildTextPdf(text, title);

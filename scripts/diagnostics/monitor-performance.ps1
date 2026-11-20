@@ -40,7 +40,8 @@ if (-not (Test-Path $logDir)) {
     }
 }
 
-$devLogDir = "E:\Antigravity\AeroSpot\Progetto\_temp\performance-logs"
+$repoRoot = (Resolve-Path "$PSScriptRoot\..\..").Path
+$devLogDir = Join-Path $repoRoot "_temp\performance-logs"
 
 $dateStamp = Get-Date -Format "yyyyMMdd_HHmmss"
 $csvFile = Join-Path $logDir "performance_$dateStamp.csv"

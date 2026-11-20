@@ -96,7 +96,10 @@ namespace AeroSpot.Core.Localization
             { "Preview_Btn_Pause", "Pause" },
             { "Preview_Btn_Mute", "Mute" },
             { "Preview_Btn_Unmute", "Unmute" },
-            { "Preview_ResetZoom_Tooltip", "Reset zoom (100%)" },
+            { "Preview_ResetZoom_Tooltip", "Reset zoom 100% (R key)" },
+            { "Preview_Btn_ResetView", "↺ Reset view" },
+            { "Preview_Btn_ResetView_Tooltip", "Reset initial view and zoom (R key)" },
+            { "Preview_Stl_Hint", "🖱 Drag to rotate 3D • Wheel to zoom" },
             { "Preview_Btn_RememberSize_Tooltip", "Remember window size for this file type (persistent across restarts)" },
             { "Preview_Btn_ExportPdf_Tooltip", "Export document to PDF" },
             { "Preview_Folder_Contains", "{0:N0} items" },
@@ -266,7 +269,27 @@ namespace AeroSpot.Core.Localization
             { "Settings_Updates_Btn_Notes", "Release Notes" },
             { "Settings_Updates_Error", "Unable to check for updates. Check your internet connection or try again later." },
             { "Settings_Updates_LastChecked", "Last check: {0}" },
-            { "Settings_Updates_NeverChecked", "Never checked" }
+            { "Settings_Updates_NeverChecked", "Never checked" },
+
+            // Spotlight Drag & Drop Behavior
+            { "Settings_DragDrop_Title", "Spotlight Drag & Drop Behavior" },
+            { "Settings_DragDrop_Desc", "Choose the action performed when dragging a file or folder from Spotlight results to File Explorer or Desktop (Applications are always copied/linked for safety):" },
+            { "Settings_DragDrop_WindowsDefault", "Follow Windows settings (default)" },
+            { "Settings_DragDrop_AlwaysCopy", "Always copy file" },
+            { "Settings_DragDrop_AlwaysMove", "Always move file" },
+
+            // Auto-Update Pill & Startup Notifications
+            { "Update_Notification_Title", "AeroSpot — Update available" },
+            { "Update_Notification_Available", "New version v{0} is available! Click to update." },
+            { "Update_Pill_Available_Title", "★ New version available: AeroSpot v{0}" },
+            { "Update_Pill_Available_Detail", "Click below to download and install automatically." },
+            { "Update_Pill_Btn_UpdateNow", "🚀 Update now" },
+            { "Update_Pill_Downloading_Title", "Downloading AeroSpot v{0}..." },
+            { "Update_Pill_Installing_Title", "Installing update..." },
+            { "Update_Pill_Installing_Detail", "Installing and restarting automatically..." },
+            { "Update_Pill_Updated_Title", "AeroSpot updated to v{0}!" },
+            { "Update_Pill_Updated_Detail", "Update completed successfully. Your data is intact." },
+            { "Update_Pill_Error_Title", "Update error" }
         };
 
         public static readonly Dictionary<string, string> Italian = new Dictionary<string, string>(StringComparer.Ordinal)
@@ -348,7 +371,10 @@ namespace AeroSpot.Core.Localization
             { "Preview_Btn_Pause", "Pausa" },
             { "Preview_Btn_Mute", "Disattiva audio" },
             { "Preview_Btn_Unmute", "Attiva audio" },
-            { "Preview_ResetZoom_Tooltip", "Reimposta zoom (100%)" },
+            { "Preview_ResetZoom_Tooltip", "Reimposta zoom 100% (Tasto R)" },
+            { "Preview_Btn_ResetView", "↺ Reset vista" },
+            { "Preview_Btn_ResetView_Tooltip", "Ripristina vista e zoom iniziali (Tasto R)" },
+            { "Preview_Stl_Hint", "🖱 Trascina per ruotare 3D • Rotella per zoom" },
             { "Preview_Btn_RememberSize_Tooltip", "Memorizza dimensione per questo tipo di file (persistente anche dopo il riavvio)" },
             { "Preview_Btn_ExportPdf_Tooltip", "Esporta documento in PDF" },
             { "Preview_Folder_Contains", "{0:N0} elementi" },
@@ -518,7 +544,27 @@ namespace AeroSpot.Core.Localization
             { "Settings_Updates_Btn_Notes", "Note di rilascio" },
             { "Settings_Updates_Error", "Impossibile verificare gli aggiornamenti. Verifica la connessione a Internet o riprova più tardi." },
             { "Settings_Updates_LastChecked", "Ultima verifica: {0}" },
-            { "Settings_Updates_NeverChecked", "Mai verificato" }
+            { "Settings_Updates_NeverChecked", "Mai verificato" },
+
+            // Comportamento Drag & Drop da Spotlight
+            { "Settings_DragDrop_Title", "Comportamento Drag & Drop da Spotlight" },
+            { "Settings_DragDrop_Desc", "Scegli l'azione eseguita quando trascini un file o una cartella dai risultati di Spotlight verso Esplora Risorse o il Desktop (le Applicazioni vengono sempre copiate/collegate per sicurezza):" },
+            { "Settings_DragDrop_WindowsDefault", "Segui impostazioni di Windows (predefinito)" },
+            { "Settings_DragDrop_AlwaysCopy", "Copia sempre il file" },
+            { "Settings_DragDrop_AlwaysMove", "Sposta sempre il file" },
+
+            // Pillola Auto-Update & Notifiche Avvio
+            { "Update_Notification_Title", "AeroSpot — Aggiornamento disponibile" },
+            { "Update_Notification_Available", "È disponibile la nuova versione v{0}! Clicca per aggiornare." },
+            { "Update_Pill_Available_Title", "★ Nuova versione disponibile: AeroSpot v{0}" },
+            { "Update_Pill_Available_Detail", "Clicca qui sotto per scaricare e installare automaticamente." },
+            { "Update_Pill_Btn_UpdateNow", "🚀 Aggiorna ora" },
+            { "Update_Pill_Downloading_Title", "Download AeroSpot v{0}..." },
+            { "Update_Pill_Installing_Title", "Installazione aggiornamento..." },
+            { "Update_Pill_Installing_Detail", "Installazione e riavvio in corso..." },
+            { "Update_Pill_Updated_Title", "AeroSpot aggiornato alla v{0}!" },
+            { "Update_Pill_Updated_Detail", "Aggiornamento completato con successo. I tuoi dati sono intatti." },
+            { "Update_Pill_Error_Title", "Errore aggiornamento" }
         };
 
         static LocalizationService()

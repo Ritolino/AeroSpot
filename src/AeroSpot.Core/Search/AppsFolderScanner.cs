@@ -106,12 +106,21 @@ namespace AeroSpot.Core.Search
                                         continue;
                                     }
 
-                                    // Se parsingName contiene una lettera di unità (es. D:\...), consenti solo C: ed E:
+                                    // Se parsingName contiene una lettera di unità (es. D:\...), consenti solo i dischi abilitati in PathFilter
                                     int colonIdx = parsingName.IndexOf(':');
-                                    if (colonIdx > 0 && colonIdx < parsingName.Length - 1)
+                                    if (colonIdx > 0 && colonIdx < parsingName.Length - 1 && parsingName[colonIdx + 1] == '\\')
                                     {
                                         char drive = char.ToUpperInvariant(parsingName[colonIdx - 1]);
-                                        if (drive != 'C' && drive != 'E')
+                                        bool allowedDrive = false;
+                                        foreach (var d in PathFilter.GetAllowedDriveLetters())
+                                        {
+                                            if (!string.IsNullOrEmpty(d) && char.ToUpperInvariant(d[0]) == drive)
+                                            {
+                                                allowedDrive = true;
+                                                break;
+                                            }
+                                        }
+                                        if (!allowedDrive)
                                         {
                                             continue;
                                         }

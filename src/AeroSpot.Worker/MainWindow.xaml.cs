@@ -507,11 +507,38 @@ namespace AeroSpot.Worker
                             try
                             {
                                 var data = new DataObject(DataFormats.FileDrop, new string[] { item.TargetPath });
-                                DragDrop.DoDragDrop(ResultsList, data, DragDropEffects.Copy | DragDropEffects.Link);
+                                DragDropEffects allowedEffects;
+                                if (IsProtectedSystemOrAppItem(item))
+                                {
+                                    allowedEffects = DragDropEffects.Copy | DragDropEffects.Link;
+                                }
+                                else
+                                {
+                                    switch (_config.DragDropMode)
+                                    {
+                                        case AeroSpot.Core.Config.SpotlightDragDropMode.AlwaysCopy:
+                                            allowedEffects = DragDropEffects.Copy | DragDropEffects.Link;
+                                            break;
+                                        case AeroSpot.Core.Config.SpotlightDragDropMode.AlwaysMove:
+                                            allowedEffects = DragDropEffects.Move | DragDropEffects.Copy;
+                                            data.SetData("Preferred DropEffect", new MemoryStream(BitConverter.GetBytes((int)DragDropEffects.Move)));
+                                            break;
+                                        case AeroSpot.Core.Config.SpotlightDragDropMode.WindowsDefault:
+                                        default:
+                                            allowedEffects = DragDropEffects.Copy | DragDropEffects.Move | DragDropEffects.Link;
+                                            break;
+                                    }
+                                }
+                                DragDrop.DoDragDrop(ResultsList, data, allowedEffects);
                             }
                             finally
                             {
                                 ResultsList.GiveFeedback -= feedbackHandler;
+                            }
+
+                            if (!File.Exists(item.TargetPath) && !Directory.Exists(item.TargetPath))
+                            {
+                                ViewModel.NotifyItemMovedOrDeleted(item);
                             }
                         }
                         catch (Exception ex)
@@ -526,6 +553,37 @@ namespace AeroSpot.Worker
                     }
                 }
             }
+        }
+
+        private static bool IsProtectedSystemOrAppItem(SearchResultItem item)
+        {
+            if (string.Equals(item.Category, "Applicazione", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(item.Category, "Application", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            string path = item.TargetPath ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(path)) return true;
+
+            string[] protectedRoots = new[]
+            {
+                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonStartMenu),
+                Environment.GetFolderPath(Environment.SpecialFolder.StartMenu),
+                Environment.GetFolderPath(Environment.SpecialFolder.Windows)
+            };
+
+            foreach (var root in protectedRoots)
+            {
+                if (!string.IsNullOrWhiteSpace(root) && path.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private void ResultsList_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)

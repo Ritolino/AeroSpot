@@ -51,7 +51,8 @@ namespace AeroSpot.Tests
                 Assert.AreEqual(25, loaded.WorkerIdleTimeoutSeconds);
                 Assert.IsTrue(loaded.KeepWorkerWarm);
                 Assert.AreEqual("Ctrl + Space", loaded.SpotlightHotkeyText);
-                Assert.AreEqual(4, loaded.SchemaVersion, "La configurazione deve essere migrata all'ultima SchemaVersion.");
+                Assert.AreEqual(5, loaded.SchemaVersion, "La configurazione deve essere migrata all'ultima SchemaVersion.");
+                Assert.IsFalse(loaded.PrioritizeExactNameMatches, "PrioritizeExactNameMatches deve essere migrato a false nello SchemaVersion 5.");
                 Assert.AreEqual(SpotlightHomeMode.MostFrequentSearches, loaded.HomeDisplayMode, "HomeDisplayMode deve essere migrato a MostFrequentSearches se la cronologia era attiva.");
                 Assert.AreEqual("Impostazioni", loaded.CategoryPriority[0], "Impostazioni deve essere al primo posto nella gerarchia.");
                 Assert.IsTrue(loaded.EnableRecentHistory, "EnableRecentHistory deve essere inizializzato a true dopo la migrazione.");

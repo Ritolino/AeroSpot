@@ -121,17 +121,26 @@ namespace AeroSpot.Core.Search
 
             string lower = normalized.ToLowerInvariant();
             string lowerWithSlash = lower.EndsWith('\\') ? lower : lower + "\\";
+            bool isProgramFiles = IsUnderProgramFiles(lowerWithSlash);
 
             // 2. Esclusioni di specifica sui confini di segmento
             foreach (var segment in _excludedSegments)
             {
+                // Non applicare le esclusioni da sviluppo \bin\ e \obj\ ai programmi installati in Program Files / Program Files (x86)
+                // (es. C:\Program Files\obs-studio\bin\64bit\obs64.exe)
+                if (isProgramFiles && (string.Equals(segment, @"\bin\", StringComparison.OrdinalIgnoreCase) ||
+                                       string.Equals(segment, @"\obj\", StringComparison.OrdinalIgnoreCase)))
+                {
+                    continue;
+                }
+
                 if (lowerWithSlash.Contains(segment))
                 {
                     return false;
                 }
             }
 
-            // 2b. Esclusione file spazzatura, metadati AppleDouble macOS e file temporanei
+            // 2b. Esclusione file spazzatura, metadati AppleDouble macOS, file temporanei e collegamenti (.lnk / .url)
             string fileName = Path.GetFileName(lower);
             if (!string.IsNullOrEmpty(fileName))
             {
@@ -140,6 +149,13 @@ namespace AeroSpot.Core.Search
                     string.Equals(fileName, ".ds_store", StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(fileName, "thumbs.db", StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(fileName, "desktop.ini", StringComparison.OrdinalIgnoreCase))
+                {
+                    return false;
+                }
+
+                string ext = Path.GetExtension(fileName);
+                if (string.Equals(ext, ".lnk", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(ext, ".url", StringComparison.OrdinalIgnoreCase))
                 {
                     return false;
                 }
@@ -165,6 +181,28 @@ namespace AeroSpot.Core.Search
         public static bool IsReparsePointOrJunction(FileAttributes attributes)
         {
             return (attributes & FileAttributes.ReparsePoint) != 0;
+        }
+
+        private static bool IsUnderProgramFiles(string lowerWithSlash)
+        {
+            if (lowerWithSlash.Contains(@":\program files\") || lowerWithSlash.Contains(@":\program files (x86)\"))
+            {
+                return true;
+            }
+
+            string pf = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles).ToLowerInvariant();
+            if (!string.IsNullOrEmpty(pf) && lowerWithSlash.StartsWith(pf.EndsWith('\\') ? pf : pf + "\\"))
+            {
+                return true;
+            }
+
+            string pf86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86).ToLowerInvariant();
+            if (!string.IsNullOrEmpty(pf86) && lowerWithSlash.StartsWith(pf86.EndsWith('\\') ? pf86 : pf86 + "\\"))
+            {
+                return true;
+            }
+
+            return false;
         }
 
         public static IEnumerable<string> GetAllowedDriveLetters()

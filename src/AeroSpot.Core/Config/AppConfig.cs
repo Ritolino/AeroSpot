@@ -24,9 +24,16 @@ namespace AeroSpot.Core.Config
         ManualOnly = 5
     }
 
+    public enum SpotlightDragDropMode
+    {
+        WindowsDefault = 0,
+        AlwaysCopy = 1,
+        AlwaysMove = 2
+    }
+
     public sealed class AppConfig
     {
-        public int SchemaVersion { get; set; } = 4;
+        public int SchemaVersion { get; set; } = 5;
 
         public string Language { get; set; } = "auto";
         public bool StartWithWindows { get; set; } = true;
@@ -34,6 +41,7 @@ namespace AeroSpot.Core.Config
         public bool IntegrateWindowsContextMenu { get; set; } = false;
         public SpotlightHomeMode HomeDisplayMode { get; set; } = SpotlightHomeMode.MostFrequentSearches;
         public IndexUpdateFrequency IndexUpdateFrequency { get; set; } = IndexUpdateFrequency.EveryHour;
+        public SpotlightDragDropMode DragDropMode { get; set; } = SpotlightDragDropMode.WindowsDefault;
         public bool EnableRealtimeWatcher { get; set; } = true;
 
         public bool EnableRecentHistory
@@ -115,8 +123,8 @@ namespace AeroSpot.Core.Config
         // Spotlight search category hierarchy / priority order
         public List<string> CategoryPriority { get; set; } = GetDefaultCategoryPriority();
 
-        // Gerarchia mista: da priorità a file o cartelle con corrispondenza esatta del nome rispetto a sole corrispondenze nel percorso
-        public bool PrioritizeExactNameMatches { get; set; } = true;
+        // Gerarchia mista: se attiva, dà priorità assoluta solo alle corrispondenze esatte al 100% del nome (disattivata di default)
+        public bool PrioritizeExactNameMatches { get; set; } = false;
 
         public static List<string> GetDefaultCategoryPriority()
         {
@@ -232,6 +240,13 @@ namespace AeroSpot.Core.Config
                             {
                                 cfg.CategoryPriority.Insert(0, "Impostazioni");
                             }
+                            needsSave = true;
+                        }
+
+                        if (cfg.SchemaVersion < 5)
+                        {
+                            cfg.SchemaVersion = 5;
+                            cfg.PrioritizeExactNameMatches = false;
                             needsSave = true;
                         }
 

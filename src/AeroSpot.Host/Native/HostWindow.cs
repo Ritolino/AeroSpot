@@ -81,6 +81,7 @@ namespace AeroSpot.Host.Native
             _trayManager.AddTrayIcon(AeroSpot.Core.Localization.LocalizationService.Get("Tray_Tooltip"));
 
             _workerManager.ConfigReloadRequested += OnConfigReloadRequested;
+            _workerManager.ShutdownHostRequested += OnShutdownHostRequested;
             _workerManager.PreviewOpened += (path) =>
             {
                 _isPreviewActive = true;
@@ -272,6 +273,7 @@ namespace AeroSpot.Host.Native
         }
 
         private const uint WM_RELOAD_CONFIG = Win32.WM_USER + 102;
+        private const uint WM_SHUTDOWN_HOST = Win32.WM_USER + 103;
 
         private void OnShowLauncherRequested()
         {
@@ -301,17 +303,50 @@ namespace AeroSpot.Host.Native
             });
         }
 
+        private void OnShutdownHostRequested()
+        {
+            AppLogger.Info("Ricevuta richiesta di chiusura completa dell'Host (aggiornamento). Invio WM_SHUTDOWN_HOST...");
+            if (_hWnd != IntPtr.Zero)
+            {
+                Win32.PostMessage(_hWnd, WM_SHUTDOWN_HOST, IntPtr.Zero, IntPtr.Zero);
+            }
+        }
+
         private void ScheduleAutomaticUpdateCheck()
         {
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    // Attendi 10 secondi dall'avvio per non impattare le prestazioni iniziali di Windows
-                    await Task.Delay(10000).ConfigureAwait(false);
-
-                    if (AeroSpot.Core.Services.UpdateService.ShouldCheckForUpdates(_config))
+                    string currentVer = AeroSpot.Core.Services.UpdateService.CurrentVersion;
+                    if (string.IsNullOrWhiteSpace(_config.LastKnownVersion))
                     {
+                        _config.LastKnownVersion = currentVer;
+                        _config.Save();
+                    }
+                    else if (AeroSpot.Core.Services.UpdateService.IsNewerVersion(currentVer, _config.LastKnownVersion))
+                    {
+                        string previousVer = _config.LastKnownVersion;
+                        _config.LastKnownVersion = currentVer;
+                        _config.Save();
+
+                        AppLogger.Info($"Rilevato aggiornamento completato: v{previousVer} -> v{currentVer}. Invio pillola di conferma...");
+                        await Task.Delay(3000).ConfigureAwait(false);
+                        await _workerManager.SendUpdateNotificationAsync($"UPDATED|{currentVer}").ConfigureAwait(false);
+                    }
+
+                    if (!AeroSpot.Core.Services.UpdateService.ShouldCheckForUpdates(_config))
+                    {
+                        return;
+                    }
+
+                    // Tentativi progressivi (10s -> 45s -> 120s dall'avvio) per gestire reti/Wi-Fi non ancora pronte al boot
+                    int[] retryDelaysMs = { 10000, 35000, 75000 };
+                    for (int attempt = 0; attempt < retryDelaysMs.Length; attempt++)
+                    {
+                        await Task.Delay(retryDelaysMs[attempt]).ConfigureAwait(false);
+                        if (_isDisposed) return;
+
                         var result = await AeroSpot.Core.Services.UpdateService.CheckForUpdatesAsync(ct: CancellationToken.None).ConfigureAwait(false);
                         if (result.IsSuccess)
                         {
@@ -322,11 +357,24 @@ namespace AeroSpot.Host.Native
                             {
                                 AppLogger.Info($"UpdateService: Trovato aggiornamento automatico v{result.LatestVersion}!");
                                 _trayManager?.ShowBalloonNotification(
-                                    "AeroSpot — Aggiornamento disponibile",
-                                    $"È disponibile la nuova versione v{result.LatestVersion}! Clicca per visualizzare o aggiornare.",
+                                    AeroSpot.Core.Localization.LocalizationService.Get("Update_Notification_Title"),
+                                    AeroSpot.Core.Localization.LocalizationService.Get("Update_Notification_Available", result.LatestVersion),
                                     Win32.NIIF_INFO);
+
+                                string payload = string.Join("|",
+                                    result.LatestVersion ?? string.Empty,
+                                    result.DownloadUrl ?? string.Empty,
+                                    result.ReleaseUrl ?? string.Empty,
+                                    result.AssetFileName ?? string.Empty,
+                                    result.Sha256SumsUrl ?? string.Empty);
+
+                                await _workerManager.SendUpdateNotificationAsync(payload).ConfigureAwait(false);
                             }
+
+                            return;
                         }
+
+                        AppLogger.Warn($"UpdateService: Tentativo {attempt + 1}/{retryDelaysMs.Length} fallito ({result.ErrorMessage}).");
                     }
                 }
                 catch (Exception ex)
@@ -411,6 +459,10 @@ namespace AeroSpot.Host.Native
 
                 case WM_RELOAD_CONFIG:
                     ExecuteConfigReload();
+                    return IntPtr.Zero;
+
+                case WM_SHUTDOWN_HOST:
+                    OnExitRequested();
                     return IntPtr.Zero;
 
                 case Win32.WM_TRAYICON:

@@ -550,7 +550,7 @@
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Text="{loc:Loc Settings_Updates_Title}" Foreground="#38BDF8" FontSize="15" FontWeight="Bold" VerticalAlignment="Center"/>
-                                <TextBlock x:Name="TxtCurrentAppVersion" Grid.Column="1" Text="v1.6.0" Foreground="#64748B" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                <TextBlock x:Name="TxtCurrentAppVersion" Grid.Column="1" Text="v1.6.1" Foreground="#64748B" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
                             </Grid>
 
                             <TextBlock Text="{loc:Loc Settings_Updates_Desc}" Foreground="#CBD5E1" FontSize="12" Margin="0,0,0,10" TextWrapping="Wrap"/>
@@ -719,7 +719,7 @@
                                 </Button>
                             </Grid>
 
-                            <TextBlock x:Name="TxtAppVersionInfo" Text="AeroSpot v1.6.0 (Build 17.11.2026)" Foreground="#64748B" FontSize="11.5" Margin="0,4,0,0"/>
+                            <TextBlock x:Name="TxtAppVersionInfo" Text="AeroSpot v1.6.1 (Build 20.11.2026)" Foreground="#64748B" FontSize="11.5" Margin="0,4,0,0"/>
                         </StackPanel>
                     </Border>
 
@@ -810,6 +810,18 @@
                                     <ComboBoxItem x:Name="CmbItemNone" Tag="3" Content="{loc:Loc Settings_HomeMode_None}"/>
                                 </ComboBox>
                             </Grid>
+                        </StackPanel>
+                    </Border>
+                    <!-- Comportamento Drag & Drop da Spotlight -->
+                    <Border Background="#1E232B" CornerRadius="8" Padding="16" Margin="0,0,0,14" BorderBrush="#334155" BorderThickness="1">
+                        <StackPanel>
+                            <TextBlock Text="{loc:Loc Settings_DragDrop_Title}" Foreground="#38BDF8" FontSize="15" FontWeight="Bold" Margin="0,0,0,4"/>
+                            <TextBlock Text="{loc:Loc Settings_DragDrop_Desc}" Foreground="#CBD5E1" FontSize="12" Margin="0,0,0,10" TextWrapping="Wrap"/>
+                            <ComboBox x:Name="CmbDragDropMode" Height="34" FontSize="13" VerticalContentAlignment="Center" Style="{StaticResource DarkComboBoxStyle}">
+                                <ComboBoxItem x:Name="CmbItemDragDropWindowsDefault" Tag="0" Content="{loc:Loc Settings_DragDrop_WindowsDefault}"/>
+                                <ComboBoxItem x:Name="CmbItemDragDropAlwaysCopy" Tag="1" Content="{loc:Loc Settings_DragDrop_AlwaysCopy}"/>
+                                <ComboBoxItem x:Name="CmbItemDragDropAlwaysMove" Tag="2" Content="{loc:Loc Settings_DragDrop_AlwaysMove}"/>
+                            </ComboBox>
                         </StackPanel>
                     </Border>
                     <!-- 2. Dischi Inclusi con tasto info interattivo -->

@@ -23,6 +23,8 @@ namespace AeroSpot.Core.IPC
         HidePreview = 18,
         CloseAll = 19,
         CloseWorker = 20,
+        ShutdownHost = 21,
+        ShowUpdateNotification = 22,
         WorkerReady = 30,
         WorkerState = 31,
         StatusQuery = 40,
