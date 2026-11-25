@@ -117,7 +117,7 @@ namespace AeroSpot.Tools
             var (initialTitle, initialIcon) = GetCommandBanner(command, files.Count, config.Language);
             var toast = FloatingNotificationWindow.Spawn(initialTitle, initialIcon);
             toast.UpdateProgress(files.Count > 1 ? 0 : -1, files.Count > 1
-                ? $"{files.Count} file selezionati..."
+                ? LocalizationService.Get("Notification_BatchProgress", files.Count)
                 : Path.GetFileName(files[0]));
 
             toast.Closed += (_, _) =>
@@ -189,10 +189,10 @@ namespace AeroSpot.Tools
             {
                 "--remove-bg" => (LocalizationService.Get("Notification_RemovingBg"), "✨"),
                 "--extract-mp3" => (LocalizationService.Get("Notification_ExtractingAudio"), "🎵"),
-                "--extract-wav" => (LocalizationService.Get("Notification_ExtractingAudio"), "🎵"),
-                "--merge-pdf" => (isIt ? $"Unione {count} PDF in corso..." : $"Merging {count} PDFs...", "📑"),
+                "--extract-wav" => (LocalizationService.Get("Notification_ExtractingWav"), "🎵"),
+                "--merge-pdf" => (LocalizationService.Get("Notification_MergingPdf", count), "📑"),
                 "--images-to-pdf" => (isIt ? $"Creazione PDF da {count} immagini..." : $"Creating PDF from {count} images...", "📕"),
-                "--convert-mp4" or "--remux-compatible" => (isIt ? "Conversione MP4 in corso..." : "Converting to MP4...", "🎬"),
+                "--convert-mp4" or "--remux-compatible" => (LocalizationService.Get("Notification_ConvertingMp4"), "🎬"),
                 _ => (LocalizationService.Get("Notification_Converting"), "🖼️")
             };
         }
@@ -282,7 +282,7 @@ namespace AeroSpot.Tools
                             {
                                 string? target = total == 1 ? outputFile : null;
                                 string ext = Path.GetExtension(files[i]).ToLowerInvariant();
-                                lastGeneratedPath = (ext is ".docx" or ".txt" or ".md")
+                                lastGeneratedPath = (ext is ".docx" or ".docm" or ".dotx" or ".rtf" or ".odt" or ".txt" or ".md")
                                     ? await MediaConversionService.ConvertDocumentToPdfAsync(files[i], target)
                                     : await MediaConversionService.ConvertImageToPdfAsync(files[i], target);
                                 onProgress((double)(i + 1) / total * 100.0);

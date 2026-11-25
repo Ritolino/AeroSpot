@@ -260,29 +260,34 @@ namespace AeroSpot.Tests
         [TestMethod]
         public void ShellContextMenuIntegration_RegisterAndUnregister_SetsMultiSelectPlayer()
         {
-            bool wasRegisteredBefore = AeroSpot.Core.Native.ShellContextMenuIntegration.IsRegistered();
+            string testRootKey = $@"Software\AeroSpot_Tests_{Guid.NewGuid():N}";
+            string testBaseKey = $@"{testRootKey}\Classes\SystemFileAssociations";
             try
             {
                 string dirWithTrailingSlash = AppDomain.CurrentDomain.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-                AeroSpot.Core.Native.ShellContextMenuIntegration.Register(dirWithTrailingSlash, "it");
-                Assert.IsTrue(AeroSpot.Core.Native.ShellContextMenuIntegration.IsRegistered());
+                AeroSpot.Core.Native.ShellContextMenuIntegration.Register(dirWithTrailingSlash, "it", testBaseKey);
+                Assert.IsTrue(AeroSpot.Core.Native.ShellContextMenuIntegration.IsRegistered(testBaseKey));
 
-                using var imgKey = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Classes\SystemFileAssociations\image\shell\AeroSpot");
+                using var imgKey = Microsoft.Win32.Registry.CurrentUser.OpenSubKey($@"{testBaseKey}\image\shell\AeroSpot");
                 Assert.IsNotNull(imgKey);
                 Assert.AreEqual("Player", imgKey.GetValue("MultiSelectModel"));
                 Assert.AreEqual("AeroSpot", imgKey.GetValue("MUIVerb"));
 
-                using var pdfKey = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Classes\SystemFileAssociations\.pdf\shell\AeroSpot\shell\01_MergePdf");
+                using var pdfKey = Microsoft.Win32.Registry.CurrentUser.OpenSubKey($@"{testBaseKey}\.pdf\shell\AeroSpot\shell\01_MergePdf");
                 Assert.IsNotNull(pdfKey);
                 Assert.AreEqual("Player", pdfKey.GetValue("MultiSelectModel"));
                 Assert.AreEqual("Unisci PDF selezionati", pdfKey.GetValue(""));
+
+                AeroSpot.Core.Native.ShellContextMenuIntegration.Unregister(testBaseKey);
+                Assert.IsFalse(AeroSpot.Core.Native.ShellContextMenuIntegration.IsRegistered(testBaseKey));
             }
             finally
             {
-                if (!wasRegisteredBefore)
+                try
                 {
-                    AeroSpot.Core.Native.ShellContextMenuIntegration.Unregister();
+                    Microsoft.Win32.Registry.CurrentUser.DeleteSubKeyTree(testRootKey, throwOnMissingSubKey: false);
                 }
+                catch { }
             }
         }
     }

@@ -67,7 +67,7 @@ namespace AeroSpot.Core.Preview
                     }
                     else if (element.Name == W + "tbl")
                     {
-                        var (tPlain, tMarkdown, rowsCount, tWords) = ParseTable(element);
+                        var (tPlain, tMarkdown, rowsCount, tWords) = ParseTable(element, maxParagraphs - paraCount);
                         if (!string.IsNullOrWhiteSpace(tPlain))
                         {
                             paraCount += rowsCount;
@@ -241,7 +241,7 @@ namespace AeroSpot.Core.Preview
             return val != "0" && val != "false" && val != "off";
         }
 
-        private static (string plain, string markdown, int rowsCount, int wordCount) ParseTable(XElement table)
+        private static (string plain, string markdown, int rowsCount, int wordCount) ParseTable(XElement table, int maxRows)
         {
             var plainSb = new StringBuilder();
             var mdSb = new StringBuilder();
@@ -249,8 +249,14 @@ namespace AeroSpot.Core.Preview
             int totalWords = 0;
             bool isFirstRow = true;
 
+            if (maxRows <= 0)
+            {
+                return (string.Empty, string.Empty, 0, 0);
+            }
+
             foreach (var row in table.Elements(W + "tr"))
             {
+                if (rowsCount >= maxRows) break;
                 rowsCount++;
                 var cellTexts = new System.Collections.Generic.List<string>();
 
@@ -347,15 +353,17 @@ namespace AeroSpot.Core.Preview
                     {
                         foreach (var item in element.Elements(Text + "list-item"))
                         {
+                            if (paraCount >= maxParagraphs) break;
                             foreach (var child in item.Elements())
                             {
+                                if (paraCount >= maxParagraphs) break;
                                 ProcessOdtElement(child, "- ");
                             }
                         }
                     }
                     else if (element.Name == Table + "table")
                     {
-                        var (tPlain, tMd, rowsCount, tWords) = ParseOdtTable(element);
+                        var (tPlain, tMd, rowsCount, tWords) = ParseOdtTable(element, maxParagraphs - paraCount);
                         if (!string.IsNullOrWhiteSpace(tPlain))
                         {
                             paraCount += rowsCount;
@@ -427,7 +435,7 @@ namespace AeroSpot.Core.Preview
             return sb.ToString();
         }
 
-        private static (string plain, string markdown, int rowsCount, int wordCount) ParseOdtTable(XElement table)
+        private static (string plain, string markdown, int rowsCount, int wordCount) ParseOdtTable(XElement table, int maxRows)
         {
             var plainSb = new StringBuilder();
             var mdSb = new StringBuilder();
@@ -435,8 +443,14 @@ namespace AeroSpot.Core.Preview
             int totalWords = 0;
             bool isFirstRow = true;
 
+            if (maxRows <= 0)
+            {
+                return (string.Empty, string.Empty, 0, 0);
+            }
+
             foreach (var row in table.Elements(Table + "table-row"))
             {
+                if (rowsCount >= maxRows) break;
                 rowsCount++;
                 var cellTexts = new System.Collections.Generic.List<string>();
 

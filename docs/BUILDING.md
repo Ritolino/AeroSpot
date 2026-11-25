@@ -53,13 +53,13 @@ powershell -ExecutionPolicy Bypass -File scripts\build-release.ps1
 ### Script Parameters:
 | Parameter | Default | Description |
 |---|---|---|
+| `-Version` | *(from `Directory.Build.props`)* | Release version string (e.g. `1.6.1`). |
 | `-Configuration` | `Release` | Build configuration (`Release` or `Debug`). |
 | `-Runtime` | `win-x64` | Target Windows 64-bit Runtime Identifier. |
-| `-ReadyToRun` | `$true` | ReadyToRun AOT precompilation to eliminate initial JIT latency spikes. |
-| `-OutDir` | `bin\Release\publish` | Final output directory for compiled binaries. |
+| `-NoReadyToRun` | `$false` | Disables ReadyToRun AOT precompilation (enabled by default to eliminate initial JIT latency spikes). |
+| `-OutDir` | `bin\<Configuration>\publish` | Final output directory for compiled binaries. |
 | `-SkipTests` | `$false` | Skips unit test execution (not recommended). |
-| `-CreateZip` | `$true` | Automatically compresses output into the portable release zip. |
-| `-GenerateInstaller` | `$false` | Invokes Inno Setup `iscc.exe` to compile `Setup.exe`. |
+| `-NoZip` | `$false` | Skips generating the portable release `.zip` archive and `SHA256SUMS.txt`. |
 
 ### Local SSD Deployment (C:\Programmi_miei\AeroSpot)
 To rapidly update the local standalone installation on the primary SSD while strictly preserving user database and preferences (`Data\`):
@@ -83,7 +83,7 @@ Both publication approaches were measured on Windows 11 Build 26300 across 10 co
 | **Cold Start (Max / First Run)** | **4080 ms** | **1041 ms** | **-3039 ms (-74%)** |
 
 **Conclusion:**
-Without ReadyToRun, the initial run from disk incurs a JIT compile spike exceeding 4 seconds. With ReadyToRun enabled, launch latency drops to 1.04 seconds with near-zero standard deviation. The ~8.6 MB zip size increase is justified by the sub-second responsiveness expected of AeroSpot. The build script defaults to `ReadyToRun = $true`.
+Without ReadyToRun, the initial run from disk incurs a JIT compile spike exceeding 4 seconds. With ReadyToRun enabled, launch latency drops to 1.04 seconds with near-zero standard deviation. The ~8.6 MB zip size increase is justified by the sub-second responsiveness expected of AeroSpot. The build script enables ReadyToRun by default (disable with `-NoReadyToRun`).
 
 ---
 

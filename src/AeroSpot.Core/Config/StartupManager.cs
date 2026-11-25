@@ -45,22 +45,18 @@ namespace AeroSpot.Core.Config
             return hostExe;
         }
 
-        public static bool IsStartupEnabled()
+        public static bool IsStartupEnabled(string? runKeyPathOverride = null, string? approvedKeyPathOverride = null)
         {
             try
             {
-                // Controlla sia il registro Run sia la cartella Startup
-                string startupFolder = Environment.GetFolderPath(Environment.SpecialFolder.Startup);
-                string lnkPath = Path.Combine(startupFolder, $"{AppName}.lnk");
-                bool shortcutExists = File.Exists(lnkPath);
-
-                using var runKey = Registry.CurrentUser.OpenSubKey(RunRegistryKey, false);
+                string runKeyPath = runKeyPathOverride ?? RunRegistryKey;
+                using var runKey = Registry.CurrentUser.OpenSubKey(runKeyPath, false);
                 bool registryExists = runKey?.GetValue(AppName) != null;
 
-                if (!shortcutExists && !registryExists) return false;
+                if (!registryExists) return false;
 
                 // Check if user disabled it via Task Manager or Windows Settings
-                if (!IsStartupApprovedByUser())
+                if (!IsStartupApprovedByUser(approvedKeyPathOverride))
                 {
                     return false;
                 }
@@ -73,11 +69,12 @@ namespace AeroSpot.Core.Config
             }
         }
 
-        public static bool IsStartupApprovedByUser()
+        public static bool IsStartupApprovedByUser(string? approvedKeyPathOverride = null)
         {
             try
             {
-                using var approvedKey = Registry.CurrentUser.OpenSubKey(StartupApprovedKey, false);
+                string approvedKeyPath = approvedKeyPathOverride ?? StartupApprovedKey;
+                using var approvedKey = Registry.CurrentUser.OpenSubKey(approvedKeyPath, false);
                 if (approvedKey == null) return true;
 
                 object? rawValue = approvedKey.GetValue(AppName);
@@ -99,12 +96,15 @@ namespace AeroSpot.Core.Config
             }
         }
 
-        public static void SetStartupEnabled(bool enabled)
+        public static void SetStartupEnabled(bool enabled, string? runKeyPathOverride = null, string? approvedKeyPathOverride = null)
         {
             try
             {
-                using var runKey = Registry.CurrentUser.OpenSubKey(RunRegistryKey, true);
-                using var approvedKey = Registry.CurrentUser.OpenSubKey(StartupApprovedKey, true);
+                string runKeyPath = runKeyPathOverride ?? RunRegistryKey;
+                string approvedKeyPath = approvedKeyPathOverride ?? StartupApprovedKey;
+
+                using var runKey = Registry.CurrentUser.CreateSubKey(runKeyPath, true);
+                using var approvedKey = Registry.CurrentUser.OpenSubKey(approvedKeyPath, true);
 
                 string hostPath = GetCurrentHostExecutablePath();
 
@@ -116,33 +116,36 @@ namespace AeroSpot.Core.Config
                     // If user explicitly enables startup from within the app, remove any previous
                     // disabled flag recorded by Windows Task Manager / Settings
                     approvedKey?.DeleteValue(AppName, false);
-
-                    UpdateStartupShortcut(true, hostPath);
                 }
                 else
                 {
                     runKey?.DeleteValue(AppName, false);
                     approvedKey?.DeleteValue(AppName, false);
-                    UpdateStartupShortcut(false, hostPath);
+                }
+
+                if (runKeyPathOverride == null)
+                {
+                    RemoveLegacyStartupShortcut();
                 }
             }
             catch { }
         }
 
-        public static void AutoRepairPathIfEnabled()
+        public static void AutoRepairPathIfEnabled(string? runKeyPathOverride = null, string? approvedKeyPathOverride = null)
         {
             try
             {
                 // If user disabled the app outside via Task Manager, respect that choice and do not touch anything
-                if (!IsStartupApprovedByUser())
+                if (!IsStartupApprovedByUser(approvedKeyPathOverride))
                 {
                     return;
                 }
 
+                string runKeyPath = runKeyPathOverride ?? RunRegistryKey;
                 string currentHostPath = GetCurrentHostExecutablePath();
                 string expectedRunValue = $"\"{currentHostPath}\"";
 
-                using var runKey = Registry.CurrentUser.OpenSubKey(RunRegistryKey, true);
+                using var runKey = Registry.CurrentUser.OpenSubKey(runKeyPath, true);
                 if (runKey != null)
                 {
                     object? value = runKey.GetValue(AppName);
@@ -155,68 +158,52 @@ namespace AeroSpot.Core.Config
                     }
                 }
 
-                UpdateStartupShortcut(true, currentHostPath);
+                if (runKeyPathOverride == null)
+                {
+                    RemoveLegacyStartupShortcut();
+                }
             }
             catch { }
         }
 
-        public static void Cleanup()
+        public static void Cleanup(string? runKeyPathOverride = null, string? approvedKeyPathOverride = null)
         {
             try
             {
-                using var runKey = Registry.CurrentUser.OpenSubKey(RunRegistryKey, true);
+                string runKeyPath = runKeyPathOverride ?? RunRegistryKey;
+                string approvedKeyPath = approvedKeyPathOverride ?? StartupApprovedKey;
+
+                using var runKey = Registry.CurrentUser.OpenSubKey(runKeyPath, true);
                 runKey?.DeleteValue(AppName, false);
 
-                using var approvedKey = Registry.CurrentUser.OpenSubKey(StartupApprovedKey, true);
+                using var approvedKey = Registry.CurrentUser.OpenSubKey(approvedKeyPath, true);
                 approvedKey?.DeleteValue(AppName, false);
 
-                UpdateStartupShortcut(false, string.Empty);
+                if (runKeyPathOverride == null)
+                {
+                    RemoveLegacyStartupShortcut();
+                }
             }
             catch { }
         }
 
-        private static void UpdateStartupShortcut(bool enabled, string targetPath)
+        private static void RemoveLegacyStartupShortcut()
         {
             try
             {
                 string startupFolder = Environment.GetFolderPath(Environment.SpecialFolder.Startup);
                 string lnkPath = Path.Combine(startupFolder, $"{AppName}.lnk");
-
-                if (enabled && !string.IsNullOrWhiteSpace(targetPath) && File.Exists(targetPath))
+                if (File.Exists(lnkPath))
                 {
-                    Type? shellType = Type.GetTypeFromProgID("WScript.Shell");
-                    if (shellType != null)
-                    {
-                        dynamic? shell = Activator.CreateInstance(shellType);
-                        if (shell != null)
-                        {
-                            dynamic shortcut = shell.CreateShortcut(lnkPath);
-                            shortcut.TargetPath = targetPath;
-                            shortcut.WorkingDirectory = Path.GetDirectoryName(targetPath);
-                            shortcut.Description = "AeroSpot Background Host";
-                            shortcut.Save();
-                        }
-                    }
-                }
-                else
-                {
-                    if (File.Exists(lnkPath))
-                    {
-                        File.Delete(lnkPath);
-                    }
+                    File.Delete(lnkPath);
                 }
             }
             catch { }
         }
 
+        // Temporary no-op until Wave 2 removes the caller in AeroSpot.Worker/App.xaml.cs.
         public static void EnsureBrowserEmulation()
         {
-            try
-            {
-                using var key = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Internet Explorer\Main\FeatureControl\FEATURE_BROWSER_EMULATION");
-                key?.SetValue("AeroSpot.Worker.exe", 11001, RegistryValueKind.DWord);
-            }
-            catch { }
         }
     }
 }

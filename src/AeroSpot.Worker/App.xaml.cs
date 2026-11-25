@@ -2,12 +2,14 @@ using System;
 using System.Diagnostics;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Threading;
 using AeroSpot.Core.Config;
 using AeroSpot.Core.IPC;
 using AeroSpot.Core.Logging;
 using AeroSpot.Core.Native;
 using AeroSpot.Core.Search;
+using AeroSpot.Worker.Services;
 
 namespace AeroSpot.Worker
 {
@@ -15,6 +17,23 @@ namespace AeroSpot.Worker
     {
         public static bool IsShuttingDown { get; private set; }
         public static MainWindow? MainLauncherWindow => (Current as App)?._mainWindow;
+
+        /// <summary>
+        /// Garantisce la disponibilità della risorsa SlimDarkScrollBar quando una finestra viene istanziata
+        /// in contesti isolati (es. unit test senza App.xaml caricato).
+        /// </summary>
+        internal static void EnsureSharedScrollBarResources(ResourceDictionary targetResources)
+        {
+            if (Current?.Resources.Contains("SlimDarkScrollBar") == true)
+            {
+                return;
+            }
+
+            if (!targetResources.Contains("SlimDarkScrollBar"))
+            {
+                targetResources["SlimDarkScrollBar"] = new Style(typeof(System.Windows.Controls.Primitives.ScrollBar));
+            }
+        }
 
         private AppConfig _config = null!;
         private NamedPipeWorkerClient? _ipcClient;
@@ -30,134 +49,138 @@ namespace AeroSpot.Worker
         {
             base.OnStartup(e);
 
-            AppLogger.Initialize("Worker");
-            AppLogger.Info("AeroSpot.Worker avviato (processo unificato Launcher + QuickLook + Impostazioni).");
-
-            StartupManager.EnsureBrowserEmulation();
-            _config = AppConfig.Load();
-            AeroSpot.Core.Localization.LocalizationService.Initialize(_config.Language);
-            PathFilter.Configure(_config.IncludedDrives, _config.ExcludedDirectoryNames);
-
-            string? customPipeName = null;
-            for (int i = 0; i < e.Args.Length; i++)
+            try
             {
-                if (e.Args[i] == "--timeout" && i + 1 < e.Args.Length && int.TryParse(e.Args[i + 1], out int t) && t > 0)
-                {
-                    _config.WorkerIdleTimeoutSeconds = t;
-                    AppLogger.Info($"Timeout di inattività configurato da parametro: {t}s");
-                }
-                else if (e.Args[i] == "--no-keep-warm")
-                {
-                    _config.KeepWorkerWarm = false;
-                    AppLogger.Info("Parametro --no-keep-warm: KeepWorkerWarm disabilitato.");
-                }
-                else if (e.Args[i] == "--keep-warm")
-                {
-                    _config.KeepWorkerWarm = true;
-                    AppLogger.Info("Parametro --keep-warm: KeepWorkerWarm abilitato.");
-                }
-                else if (e.Args[i] == "--pipe" && i + 1 < e.Args.Length)
-                {
-                    customPipeName = e.Args[i + 1];
-                    AppLogger.Info($"Pipe IPC personalizzata: {customPipeName}");
-                }
-            }
+                AppLogger.Initialize("Worker");
+                AppLogger.Info("AeroSpot.Worker avviato (processo unificato Launcher + QuickLook + Impostazioni).");
 
-            _remainingIdleSeconds = _config.WorkerIdleTimeoutSeconds;
+                _config = AppConfig.Load();
+                AeroSpot.Core.Localization.LocalizationService.Initialize(_config.Language);
+                PathFilter.Configure(_config.IncludedDrives, _config.ExcludedDirectoryNames);
 
-            // Inizializza la finestra del Launcher
-            _mainWindow = new MainWindow();
-            _mainWindow.HideRequested += HideMainWindow;
-            _mainWindow.CloseAllRequested += OnPreviewCloseAllRequested;
-            _mainWindow.PreviewRequested += (path) => ShowPreviewWindow(path, isFromSpotlight: true);
-            _mainWindow.PreviewScrollRequested += (delta) => _previewWindow?.ScrollContent(delta);
-            _mainWindow.SettingsRequested += ShowSettingsWindow;
-
-            // Inizializza la finestra di QuickLook Preview
-            _previewWindow = new PreviewWindow();
-            _previewWindow.HideRequested += OnPreviewWindowHidden;
-            _previewWindow.CloseAllRequested += OnPreviewCloseAllRequested;
-            _previewWindow.NavigateSelectionRequested += OnPreviewNavigateSelection;
-            _previewWindow.PreviewOpened += (path) =>
-            {
-                if (_ipcClient != null && _ipcClient.IsConnected)
+                string? customPipeName = null;
+                for (int i = 0; i < e.Args.Length; i++)
                 {
-                    _ = _ipcClient.SendMessageAsync(new IpcMessage(IpcMessageType.PreviewOpened, path));
-                }
-            };
-            _previewWindow.PreviewClosed += () =>
-            {
-                if (_ipcClient != null && _ipcClient.IsConnected)
-                {
-                    _ = _ipcClient.SendMessageAsync(new IpcMessage(IpcMessageType.PreviewClosed));
-                }
-            };
-            _previewWindow.FileLaunched += (path) =>
-            {
-                _mainWindow?.ViewModel.RecordRecentItem(path);
-            };
-
-            if (Array.Exists(e.Args, a => string.Equals(a, "--benchmark-cold-start", StringComparison.OrdinalIgnoreCase)))
-            {
-                Shutdown(0);
-                return;
-            }
-
-            // Setup idle timer
-            _idleTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-            _idleTimer.Tick += IdleTimer_Tick;
-
-            // Timer di grazia RAM (10 secondi dopo la chiusura dell'anteprima prima di forzare il cleanup)
-            _ramGraceTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(10) };
-            _ramGraceTimer.Tick += (s, ev) =>
-            {
-                _ramGraceTimer.Stop();
-                bool any = (_mainWindow != null && _mainWindow.IsVisible) 
-                    || (_previewWindow != null && _previewWindow.IsPreviewVisible)
-                    || (_settingsWindow != null && _settingsWindow.IsVisible);
-                if (!any)
-                {
-                    try
+                    if (e.Args[i] == "--timeout" && i + 1 < e.Args.Length && int.TryParse(e.Args[i + 1], out int t) && t > 0)
                     {
-                        GC.Collect(2, GCCollectionMode.Forced, true, true);
-                        GC.WaitForPendingFinalizers();
-                        Win32.EmptyWorkingSet(Process.GetCurrentProcess().Handle);
-                        AppLogger.Info("RamGraceTimer: Memoria bonificata dopo 10s di inattività (~25-35MB).");
+                        _config.WorkerIdleTimeoutSeconds = t;
+                        AppLogger.Info($"Timeout di inattività configurato da parametro: {t}s");
                     }
-                    catch { }
+                    else if (e.Args[i] == "--no-keep-warm")
+                    {
+                        _config.KeepWorkerWarm = false;
+                        AppLogger.Info("Parametro --no-keep-warm: KeepWorkerWarm disabilitato.");
+                    }
+                    else if (e.Args[i] == "--keep-warm")
+                    {
+                        _config.KeepWorkerWarm = true;
+                        AppLogger.Info("Parametro --keep-warm: KeepWorkerWarm abilitato.");
+                    }
+                    else if (e.Args[i] == "--pipe" && i + 1 < e.Args.Length)
+                    {
+                        customPipeName = e.Args[i + 1];
+                        AppLogger.Info($"Pipe IPC personalizzata: {customPipeName}");
+                    }
                 }
-            };
 
-            // Connect IPC
-            _ipcClient = new NamedPipeWorkerClient(customPipeName);
-            _ipcClient.Connected += OnIpcConnected;
-            _ipcClient.Disconnected += OnIpcDisconnected;
-            _ipcClient.MessageReceived += OnIpcMessageReceived;
+                _remainingIdleSeconds = _config.WorkerIdleTimeoutSeconds;
 
-            bool connected = await _ipcClient.ConnectAsync(3000);
-            if (!connected)
-            {
-                AppLogger.Warn("AeroSpot.Worker non è riuscito a connettersi all'Host. Modalità autonoma/debug.");
-                _mainWindow.SetIpcStatus("Non connesso all'Host (Modalità autonoma)");
-                StartIdleCountdown();
+                // Inizializza la finestra del Launcher
+                _mainWindow = new MainWindow();
+                _mainWindow.HideRequested += HideMainWindow;
+                _mainWindow.CloseAllRequested += OnPreviewCloseAllRequested;
+                _mainWindow.PreviewRequested += (path) => ShowPreviewWindow(path, isFromSpotlight: true);
+                _mainWindow.PreviewScrollRequested += (delta) => _previewWindow?.ScrollContent(delta);
+                _mainWindow.SettingsRequested += ShowSettingsWindow;
+
+                // Inizializza la finestra di QuickLook Preview
+                _previewWindow = new PreviewWindow();
+                _previewWindow.HideRequested += OnPreviewWindowHidden;
+                _previewWindow.CloseAllRequested += OnPreviewCloseAllRequested;
+                _previewWindow.NavigateSelectionRequested += OnPreviewNavigateSelection;
+                _previewWindow.PreviewOpened += (path) =>
+                {
+                    if (_ipcClient != null && _ipcClient.IsConnected)
+                    {
+                        _ = _ipcClient.SendMessageAsync(new IpcMessage(IpcMessageType.PreviewOpened, path));
+                    }
+                };
+                _previewWindow.PreviewClosed += () =>
+                {
+                    if (_ipcClient != null && _ipcClient.IsConnected)
+                    {
+                        _ = _ipcClient.SendMessageAsync(new IpcMessage(IpcMessageType.PreviewClosed));
+                    }
+                };
+                _previewWindow.FileLaunched += (path) =>
+                {
+                    _mainWindow?.ViewModel.RecordRecentItem(path);
+                };
+
+                if (Array.Exists(e.Args, a => string.Equals(a, "--benchmark-cold-start", StringComparison.OrdinalIgnoreCase)))
+                {
+                    Shutdown(0);
+                    return;
+                }
+
+                // Setup idle timer
+                _idleTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+                _idleTimer.Tick += IdleTimer_Tick;
+
+                // Timer di grazia RAM (10 secondi dopo la chiusura dell'anteprima prima di forzare il cleanup)
+                _ramGraceTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(10) };
+                _ramGraceTimer.Tick += (s, ev) =>
+                {
+                    _ramGraceTimer.Stop();
+                    bool any = (_mainWindow != null && _mainWindow.IsVisible)
+                        || (_previewWindow != null && _previewWindow.IsPreviewVisible)
+                        || (_settingsWindow != null && _settingsWindow.IsVisible);
+                    if (!any)
+                    {
+                        try
+                        {
+                            IconService.TrimCache();
+                            GC.Collect(2, GCCollectionMode.Forced, true, true);
+                            GC.WaitForPendingFinalizers();
+                            Win32.EmptyWorkingSet(Process.GetCurrentProcess().Handle);
+                            AppLogger.Info("RamGraceTimer: Memoria bonificata dopo 10s di inattività (~25-35MB).");
+                        }
+                        catch { }
+                    }
+                };
+
+                // Connect IPC
+                _ipcClient = new NamedPipeWorkerClient(customPipeName);
+                _ipcClient.Connected += OnIpcConnected;
+                _ipcClient.Disconnected += OnIpcDisconnected;
+                _ipcClient.MessageReceived += OnIpcMessageReceived;
+
+                bool connected = await _ipcClient.ConnectAsync(3000);
+                if (!connected)
+                {
+                    AppLogger.Warn("AeroSpot.Worker non è riuscito a connettersi all'Host. Modalità autonoma/debug.");
+                    StartIdleCountdown();
+                }
+                else
+                {
+                    await _ipcClient.SendMessageAsync(new IpcMessage(IpcMessageType.WorkerReady, $"PID={Process.GetCurrentProcess().Id}"));
+                }
             }
-            else
+            catch (Exception ex)
             {
-                _mainWindow.SetIpcStatus("Connesso all'Host");
-                await _ipcClient.SendMessageAsync(new IpcMessage(IpcMessageType.WorkerReady, $"PID={Process.GetCurrentProcess().Id}"));
+                AppLogger.Error("Errore fatale durante l'avvio di AeroSpot.Worker", ex);
+                Shutdown(1);
             }
         }
 
         private void OnIpcConnected()
         {
             AppLogger.Info("Worker: Connessione stabilita con l'Host.");
-            _mainWindow?.SetIpcStatus("Connesso all'Host");
         }
 
         private void OnIpcDisconnected()
         {
             AppLogger.Info("Worker: Host disconnesso.");
-            _mainWindow?.SetIpcStatus("Disconnesso dall'Host");
             Dispatcher.InvokeAsync(() => ShutdownWorker("Host disconnesso"));
         }
 
@@ -219,7 +242,6 @@ namespace AeroSpot.Worker
 
                 _lastShowMainWindowTicks = Environment.TickCount64;
                 _mainWindow.ShowOnActiveMonitor();
-                _mainWindow.SetIdleStatus("Inattivo (Finestra visibile e attiva)");
             }
         }
 
@@ -328,7 +350,6 @@ namespace AeroSpot.Worker
             if (_config.KeepWorkerWarm)
             {
                 _idleTimer?.Stop();
-                _mainWindow?.SetIdleStatus("Attivo (Sempre in memoria)");
             }
             else
             {
@@ -477,20 +498,17 @@ namespace AeroSpot.Worker
             if (_config.KeepWorkerWarm)
             {
                 _idleTimer?.Stop();
-                _mainWindow?.SetIdleStatus("Attivo (Sempre in memoria)");
                 return;
             }
 
             _remainingIdleSeconds = _config.WorkerIdleTimeoutSeconds;
             _idleTimer?.Start();
-            UpdateIdleText();
         }
 
         private void StopIdleCountdown()
         {
             _idleTimer?.Stop();
             _remainingIdleSeconds = _config.WorkerIdleTimeoutSeconds;
-            _mainWindow?.SetIdleStatus("Inattivo (Finestra attiva)");
         }
 
         private void IdleTimer_Tick(object? sender, EventArgs e)
@@ -498,7 +516,6 @@ namespace AeroSpot.Worker
             if (_config.KeepWorkerWarm)
             {
                 _idleTimer?.Stop();
-                _mainWindow?.SetIdleStatus("Attivo (Sempre in memoria)");
                 return;
             }
 
@@ -513,25 +530,12 @@ namespace AeroSpot.Worker
             }
 
             _remainingIdleSeconds--;
-            UpdateIdleText();
 
             if (_remainingIdleSeconds <= 0)
             {
                 _idleTimer?.Stop();
                 AppLogger.Info($"Worker: Timeout di inattività raggiunto ({_config.WorkerIdleTimeoutSeconds}s). Arresto automatico per liberare RAM.");
                 ShutdownWorker("Timeout inattività");
-            }
-        }
-
-        private void UpdateIdleText()
-        {
-            if (_config.KeepWorkerWarm)
-            {
-                _mainWindow?.SetIdleStatus("Attivo (Sempre in memoria)");
-            }
-            else
-            {
-                _mainWindow?.SetIdleStatus($"In corso: arresto tra {_remainingIdleSeconds}s se inattivo");
             }
         }
 
@@ -570,5 +574,53 @@ namespace AeroSpot.Worker
             catch { }
             base.OnExit(e);
         }
+    }
+
+    /// <summary>
+    /// Converte ViewportSize per WPF Track in modo da garantire una dimensione minima reale del Thumb
+    /// (WPF Track ignora Thumb.MinHeight/MinWidth e usa solo ~8px di sistema, tagliando il Thumb con LayoutClip).
+    /// </summary>
+    public sealed class MinThumbViewportConverter : System.Windows.Data.IMultiValueConverter
+    {
+        public double MinThumbLength { get; set; } = 44.0;
+
+        public object Convert(object[] values, Type targetType, object parameter, System.Globalization.CultureInfo culture)
+        {
+            if (values == null || values.Length < 6)
+            {
+                return double.NaN;
+            }
+
+            if (values[0] is not double viewportSize ||
+                values[1] is not double maximum ||
+                values[2] is not double minimum ||
+                values[3] is not double actualHeight ||
+                values[4] is not double actualWidth ||
+                values[5] is not Orientation orientation)
+            {
+                return double.NaN;
+            }
+
+            if (double.IsNaN(viewportSize) || double.IsInfinity(viewportSize) || viewportSize <= 0)
+            {
+                return viewportSize;
+            }
+
+            double range = maximum - minimum;
+            double trackLength = orientation == Orientation.Vertical ? actualHeight : actualWidth;
+            double minLen = MinThumbLength;
+
+            if (range <= 0 || trackLength <= minLen)
+            {
+                return viewportSize;
+            }
+
+            // Formula esatta inversa di WPF Track: thumbLength = trackLength * V / (range + V)
+            double minViewport = (minLen * range) / (trackLength - minLen);
+            return Math.Max(viewportSize, minViewport);
+        }
+
+        public object[] ConvertBack(object value, Type[] targetTypes, object parameter, System.Globalization.CultureInfo culture)
+            => throw new NotSupportedException();
     }
 }

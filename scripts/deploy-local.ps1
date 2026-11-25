@@ -2,7 +2,7 @@
 .SYNOPSIS
     Distribuisce la build Release di AeroSpot nella cartella runtime standalone locale su SSD (C:\Programmi_miei\AeroSpot).
 .DESCRIPTION
-    1. Arresta in sicurezza eventuali processi attivi (AeroSpot.Host, AeroSpot.Worker).
+    1. Arresta in sicurezza eventuali processi attivi (AeroSpot.Host, AeroSpot.Worker, AeroSpot.Tools, AeroSpot).
     2. Se necessario, esegue build-release.ps1 per rigenerare i binari pubblicati.
     3. Copia i binari da bin\Release\publish verso C:\Programmi_miei\AeroSpot preservando rigorosamente la cartella Data\ (database SQLite, indici e impostazioni utente).
     4. Riavvia AeroSpot.exe dal nuovo percorso.
@@ -33,7 +33,7 @@ Write-Host "=========================================================="
 
 # 1. Arresta processi in esecuzione prima della copia
 Write-Host "`n[1/4] Chiusura processi attivi di AeroSpot..." -ForegroundColor Yellow
-Stop-Process -Name "AeroSpot.Host", "AeroSpot.Worker" -Force -ErrorAction SilentlyContinue
+Stop-Process -Name "AeroSpot.Host", "AeroSpot.Worker", "AeroSpot.Tools", "AeroSpot" -Force -ErrorAction SilentlyContinue
 Start-Sleep -Milliseconds 600
 
 # 2. Compilazione se richiesta o se publish non esiste
@@ -52,9 +52,9 @@ if (-not (Test-Path $TargetDir)) {
     New-Item -ItemType Directory -Path $TargetDir -Force | Out-Null
 }
 
-# 4. Copia con robocopy escludendo categoricamente Data\
+# 4. Copia con robocopy /MIR escludendo categoricamente Data\
 Write-Host "`n[3/4] Copia binari e asset (preservando Data\)..." -ForegroundColor Yellow
-& robocopy $publishDir $TargetDir /E /XD "Data" /NP /NFL /NDL /R:1 /W:1 | Out-Null
+& robocopy $publishDir $TargetDir /MIR /XD "Data" /R:3 /W:1 /NFL /NDL /NJH /NJS /NC /NS /NP | Out-Null
 if ($LASTEXITCODE -gt 7) {
     Write-Error "Robocopy ha riscontrato un errore fatale (ExitCode: $LASTEXITCODE)."
 }
@@ -65,7 +65,7 @@ if (-not $NoRestart) {
     Write-Host "`n[4/4] Avvio di AeroSpot.exe da $TargetDir..." -ForegroundColor Yellow
     $launcher = Join-Path $TargetDir "AeroSpot.exe"
     if (Test-Path $launcher) {
-        Start-Process "explorer.exe" $launcher
+        Start-Process -FilePath $launcher -WorkingDirectory $TargetDir
         Start-Sleep -Seconds 2
         $running = Get-Process -Name "AeroSpot*" -ErrorAction SilentlyContinue
         if ($running) {

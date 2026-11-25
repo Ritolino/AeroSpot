@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using AeroSpot.Core.Localization;
 using AeroSpot.Core.Logging;
 using AeroSpot.Core.Preview;
 using FFMpegCore;
@@ -17,6 +18,10 @@ namespace AeroSpot.Worker.Services
 {
     public static class MediaConversionService
     {
+        static MediaConversionService()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        }
         /// <summary>
         /// Verifica se il formato pixel dell'immagine contiene canale alfa, trasparenza o tavolozza indicizzata.
         /// </summary>
@@ -126,22 +131,82 @@ namespace AeroSpot.Worker.Services
         }
 
         /// <summary>
+        /// Legge l'orientamento EXIF dell'immagine e restituisce un BitmapSource raddrizzato (o lo stesso frame se normale).
+        /// </summary>
+        internal static (BitmapSource Frame, bool WasTransformed) ApplyExifOrientation(BitmapFrame frame)
+        {
+            int orientation = 1;
+            try
+            {
+                if (frame.Metadata is BitmapMetadata metadata)
+                {
+                    object? orientObj = null;
+                    if (metadata.ContainsQuery("System.Photo.Orientation"))
+                    {
+                        orientObj = metadata.GetQuery("System.Photo.Orientation");
+                    }
+                    else if (metadata.ContainsQuery("/app1/ifd/{ushort=274}"))
+                    {
+                        orientObj = metadata.GetQuery("/app1/ifd/{ushort=274}");
+                    }
+
+                    if (orientObj is ushort orVal)
+                    {
+                        orientation = orVal;
+                    }
+                }
+            }
+            catch { }
+
+            Transform? transform = orientation switch
+            {
+                2 => new ScaleTransform(-1, 1),
+                3 => new RotateTransform(180),
+                4 => new ScaleTransform(1, -1),
+                5 => CreateTransposeTransform(90),
+                6 => new RotateTransform(90),
+                7 => CreateTransposeTransform(270),
+                8 => new RotateTransform(270),
+                _ => null
+            };
+
+            if (transform == null)
+            {
+                return (frame, false);
+            }
+
+            var transformed = new TransformedBitmap(frame, transform);
+            transformed.Freeze();
+            return (transformed, true);
+        }
+
+        private static TransformGroup CreateTransposeTransform(double angle)
+        {
+            var group = new TransformGroup();
+            group.Children.Add(new ScaleTransform(-1, 1));
+            group.Children.Add(new RotateTransform(angle));
+            return group;
+        }
+
+        /// <summary>
         /// Codifica un'immagine in stream JPEG ad alta definizione per l'incorporamento nativo nei PDF,
-        /// preservando le proporzioni effettive e applicando background bianco per trasparenze.
+        /// preservando le proporzioni effettive, l'orientamento EXIF e applicando background bianco per trasparenze.
         /// </summary>
         public static (byte[] JpegBytes, int WidthPx, int HeightPx) EncodeImageForPdf(string sourcePath)
         {
             using var inStream = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.Read);
             var decoder = BitmapDecoder.Create(inStream, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
             if (decoder.Frames.Count == 0) throw new InvalidOperationException("Nessun fotogramma trovato nell'immagine.");
-            var frame = decoder.Frames[0];
+            var rawFrame = decoder.Frames[0];
 
-            int pixelWidth = frame.PixelWidth;
-            int pixelHeight = frame.PixelHeight;
+            var (orientedFrame, wasRotated) = ApplyExifOrientation(rawFrame);
+            int pixelWidth = orientedFrame.PixelWidth;
+            int pixelHeight = orientedFrame.PixelHeight;
 
             string ext = Path.GetExtension(sourcePath).ToLowerInvariant();
-            bool isStandardJpg = (ext == ".jpg" || ext == ".jpeg") &&
-                                 (frame.Format == PixelFormats.Bgr24 || frame.Format == PixelFormats.Rgb24);
+            bool isStandardJpg = !wasRotated &&
+                                 (ext == ".jpg" || ext == ".jpeg") &&
+                                 (rawFrame.Format == PixelFormats.Bgr24 || rawFrame.Format == PixelFormats.Rgb24);
 
             if (isStandardJpg)
             {
@@ -149,10 +214,10 @@ namespace AeroSpot.Worker.Services
                 return (rawBytes, pixelWidth, pixelHeight);
             }
 
-            BitmapSource sourceToEncode = frame;
-            if (HasAlphaOrPalette(frame))
+            BitmapSource sourceToEncode = orientedFrame;
+            if (HasAlphaOrPalette(orientedFrame))
             {
-                sourceToEncode = CompositeOverWhite(frame);
+                sourceToEncode = CompositeOverWhite(orientedFrame);
             }
 
             using var ms = new MemoryStream();
@@ -176,20 +241,7 @@ namespace AeroSpot.Worker.Services
 
             return await Task.Run(() =>
             {
-                var encodedList = new List<(byte[] JpegBytes, int WidthPx, int HeightPx)>();
-                int total = list.Count;
-
-                for (int i = 0; i < total; i++)
-                {
-                    string imgPath = list[i];
-                    var (jpegBytes, w, h) = EncodeImageForPdf(imgPath);
-                    encodedList.Add((jpegBytes, w, h));
-                    double pct = (double)(i + 1) / total * 100.0;
-                    progress?.Report(pct);
-                }
-
-                byte[] pdfData = BuildMultiImagePdf(encodedList);
-                File.WriteAllBytes(destPath, pdfData);
+                WriteMultiImagePdfToFile(list, destPath, progress);
                 AppLogger.Info($"MediaConversionService: {list.Count} immagini convertite con successo in PDF a pagine: {destPath}");
                 return destPath;
             });
@@ -258,76 +310,88 @@ namespace AeroSpot.Worker.Services
         }
 
         /// <summary>
-        /// Converte o estrae la traccia audio da un file multimediale (video o audio) in formato MP3 tramite Windows Media Foundation.
+        /// Converte o estrae la traccia audio da un file multimediale (video o audio) in formato MP3 tramite Windows Media Foundation (con fallback FFmpeg).
         /// </summary>
-        public static async Task<string> ExtractAudioToMp3Async(string sourcePath, string? targetPath = null, IProgress<double>? progress = null)
-        {
-            if (!File.Exists(sourcePath)) throw new FileNotFoundException("File multimediale sorgente non trovato.", sourcePath);
-
-            string destPath = targetPath ?? GenerateNonConflictingPath(sourcePath, ".mp3");
-
-            var sourceFile = await Windows.Storage.StorageFile.GetFileFromPathAsync(Path.GetFullPath(sourcePath));
-            string destDir = Path.GetDirectoryName(destPath)!;
-            string destFileName = Path.GetFileName(destPath);
-            var destFolder = await Windows.Storage.StorageFolder.GetFolderFromPathAsync(destDir);
-            var targetFile = await destFolder.CreateFileAsync(destFileName, Windows.Storage.CreationCollisionOption.ReplaceExisting);
-
-            var profile = Windows.Media.MediaProperties.MediaEncodingProfile.CreateMp3(Windows.Media.MediaProperties.AudioEncodingQuality.High);
-            var transcoder = new Windows.Media.Transcoding.MediaTranscoder();
-
-            var prepareOp = await transcoder.PrepareFileTranscodeAsync(sourceFile, targetFile, profile);
-            if (!prepareOp.CanTranscode)
-            {
-                throw new InvalidOperationException($"Transcoding non supportato per questo file: {prepareOp.FailureReason}");
-            }
-
-            var progressHandler = new Windows.Foundation.AsyncActionProgressHandler<double>((info, p) =>
-            {
-                progress?.Report(p);
-            });
-
-            var transcodeOp = prepareOp.TranscodeAsync();
-            transcodeOp.Progress = progressHandler;
-            await transcodeOp;
-
-            AppLogger.Info($"MediaConversionService: Audio convertito con successo in MP3: {destPath}");
-            return destPath;
-        }
+        public static Task<string> ExtractAudioToMp3Async(string sourcePath, string? targetPath = null, IProgress<double>? progress = null)
+            => ExtractAudioAsync(sourcePath, targetPath, isMp3: true, progress);
 
         /// <summary>
-        /// Converte o estrae la traccia audio da un file multimediale (video o audio) in formato WAV non compresso tramite Windows Media Foundation.
+        /// Converte o estrae la traccia audio da un file multimediale (video o audio) in formato WAV non compresso tramite Windows Media Foundation (con fallback FFmpeg).
         /// </summary>
-        public static async Task<string> ConvertAudioToWavAsync(string sourcePath, string? targetPath = null, IProgress<double>? progress = null)
+        public static Task<string> ConvertAudioToWavAsync(string sourcePath, string? targetPath = null, IProgress<double>? progress = null)
+            => ExtractAudioAsync(sourcePath, targetPath, isMp3: false, progress);
+
+        private static async Task<string> ExtractAudioAsync(string sourcePath, string? targetPath, bool isMp3, IProgress<double>? progress)
         {
             if (!File.Exists(sourcePath)) throw new FileNotFoundException("File multimediale sorgente non trovato.", sourcePath);
 
-            string destPath = targetPath ?? GenerateNonConflictingPath(sourcePath, ".wav");
+            string ext = isMp3 ? ".mp3" : ".wav";
+            string destPath = targetPath ?? GenerateNonConflictingPath(sourcePath, ext);
 
-            var sourceFile = await Windows.Storage.StorageFile.GetFileFromPathAsync(Path.GetFullPath(sourcePath));
-            string destDir = Path.GetDirectoryName(destPath)!;
-            string destFileName = Path.GetFileName(destPath);
-            var destFolder = await Windows.Storage.StorageFolder.GetFolderFromPathAsync(destDir);
-            var targetFile = await destFolder.CreateFileAsync(destFileName, Windows.Storage.CreationCollisionOption.ReplaceExisting);
-
-            var profile = Windows.Media.MediaProperties.MediaEncodingProfile.CreateWav(Windows.Media.MediaProperties.AudioEncodingQuality.High);
-            var transcoder = new Windows.Media.Transcoding.MediaTranscoder();
-
-            var prepareOp = await transcoder.PrepareFileTranscodeAsync(sourceFile, targetFile, profile);
-            if (!prepareOp.CanTranscode)
+            try
             {
-                throw new InvalidOperationException($"Transcoding in WAV non supportato per questo file: {prepareOp.FailureReason}");
+                var sourceFile = await Windows.Storage.StorageFile.GetFileFromPathAsync(Path.GetFullPath(sourcePath));
+                string destDir = Path.GetDirectoryName(destPath)!;
+                string destFileName = Path.GetFileName(destPath);
+                var destFolder = await Windows.Storage.StorageFolder.GetFolderFromPathAsync(destDir);
+                var targetFile = await destFolder.CreateFileAsync(destFileName, Windows.Storage.CreationCollisionOption.ReplaceExisting);
+
+                var profile = isMp3
+                    ? Windows.Media.MediaProperties.MediaEncodingProfile.CreateMp3(Windows.Media.MediaProperties.AudioEncodingQuality.High)
+                    : Windows.Media.MediaProperties.MediaEncodingProfile.CreateWav(Windows.Media.MediaProperties.AudioEncodingQuality.High);
+                var transcoder = new Windows.Media.Transcoding.MediaTranscoder();
+
+                var prepareOp = await transcoder.PrepareFileTranscodeAsync(sourceFile, targetFile, profile);
+                if (!prepareOp.CanTranscode)
+                {
+                    throw new InvalidOperationException($"Transcoding non supportato da MediaFoundation: {prepareOp.FailureReason}");
+                }
+
+                var progressHandler = new Windows.Foundation.AsyncActionProgressHandler<double>((info, p) =>
+                {
+                    progress?.Report(p);
+                });
+
+                var transcodeOp = prepareOp.TranscodeAsync();
+                transcodeOp.Progress = progressHandler;
+                await transcodeOp;
+
+                AppLogger.Info($"MediaConversionService: Audio convertito con successo in {ext.TrimStart('.').ToUpperInvariant()}: {destPath}");
+                return destPath;
+            }
+            catch (Exception mfEx)
+            {
+                AppLogger.Warn($"MediaConversionService: MediaTranscoder fallito per {sourcePath} ({mfEx.Message}), tentativo fallback FFmpeg...");
+                if (File.Exists(destPath))
+                {
+                    try { File.Delete(destPath); } catch { }
+                }
             }
 
-            var progressHandler = new Windows.Foundation.AsyncActionProgressHandler<double>((info, p) =>
+            if (!FFmpegLocator.ConfigureGlobalFFOptions())
             {
-                progress?.Report(p);
-            });
+                throw new FileNotFoundException("Eseguibile FFmpeg non trovato per la conversione audio.");
+            }
 
-            var transcodeOp = prepareOp.TranscodeAsync();
-            transcodeOp.Progress = progressHandler;
-            await transcodeOp;
+            var meta = await VideoMetadataService.GetMetadataAsync(sourcePath).ConfigureAwait(false);
+            var duration = (meta != null && meta.Duration.TotalSeconds > 0) ? meta.Duration : TimeSpan.FromSeconds(60);
 
-            AppLogger.Info($"MediaConversionService: Audio convertito con successo in WAV: {destPath}");
+            string ffmpegArgs = isMp3
+                ? "-vn -c:a libmp3lame -b:a 192k -threads 0"
+                : "-vn -c:a pcm_s16le -ar 44100 -ac 2";
+
+            bool success = await FFMpegArguments
+                .FromFileInput(sourcePath)
+                .OutputToFile(destPath, overwrite: true, opt => opt.WithCustomArgument(ffmpegArgs))
+                .NotifyOnProgress(pct => progress?.Report(pct), duration)
+                .ProcessAsynchronously();
+
+            if (!success || !File.Exists(destPath) || new FileInfo(destPath).Length == 0)
+            {
+                throw new InvalidOperationException($"Estrazione/conversione audio in {ext.TrimStart('.').ToUpperInvariant()} fallita tramite FFmpeg.");
+            }
+
+            AppLogger.Info($"MediaConversionService: Audio convertito con successo tramite FFmpeg in {ext.TrimStart('.').ToUpperInvariant()}: {destPath}");
             return destPath;
         }
 
@@ -349,14 +413,8 @@ namespace AeroSpot.Worker.Services
             var meta = await VideoMetadataService.GetMetadataAsync(sourcePath).ConfigureAwait(false);
             var duration = (meta != null && meta.Duration.TotalSeconds > 0) ? meta.Duration : TimeSpan.FromSeconds(60);
 
-            bool isH264 = false;
-            try
-            {
-                var analysis = await FFProbe.AnalyseAsync(sourcePath).ConfigureAwait(false);
-                var vCodec = analysis?.PrimaryVideoStream?.CodecName?.ToLowerInvariant() ?? "";
-                if (vCodec.Contains("h264") || vCodec.Contains("avc")) isH264 = true;
-            }
-            catch { }
+            string vCodec = meta?.VideoCodec?.ToLowerInvariant() ?? string.Empty;
+            bool isH264 = vCodec.Contains("h264") || vCodec.Contains("avc");
 
             bool success = await FFMpegArguments
                 .FromFileInput(sourcePath)
@@ -392,84 +450,90 @@ namespace AeroSpot.Worker.Services
             return destPath;
         }
 
-        private static byte[] BuildMultiImagePdf(IReadOnlyList<(byte[] jpegBytes, int widthPx, int heightPx)> images)
+        private static void WriteMultiImagePdfToFile(IReadOnlyList<string> imagePaths, string destPath, IProgress<double>? progress)
         {
-            if (images == null || images.Count == 0) throw new ArgumentException("Nessuna immagine fornita per il PDF.", nameof(images));
+            if (imagePaths == null || imagePaths.Count == 0) throw new ArgumentException("Nessuna immagine fornita per il PDF.", nameof(imagePaths));
 
-            int totalPages = images.Count;
-            using var ms = new MemoryStream();
-            var offsets = new System.Collections.Generic.List<long>();
+            int totalPages = imagePaths.Count;
+            var offsets = new List<long>();
 
-            void WriteAscii(string s)
+            try
             {
-                byte[] b = Encoding.ASCII.GetBytes(s);
-                ms.Write(b, 0, b.Length);
+                using var fs = new FileStream(destPath, FileMode.Create, FileAccess.Write, FileShare.None, 65536);
+
+                void WriteAscii(string s)
+                {
+                    byte[] b = Encoding.ASCII.GetBytes(s);
+                    fs.Write(b, 0, b.Length);
+                }
+
+                WriteAscii("%PDF-1.4\n%\xE2\xE3\xCF\xD3\n");
+
+                // Obj 1: Catalog
+                offsets.Add(fs.Position);
+                WriteAscii("1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+
+                // Obj 2: Pages (Kids array)
+                var kids = new StringBuilder();
+                for (int p = 0; p < totalPages; p++)
+                {
+                    int pageObjId = 3 + 3 * p;
+                    kids.Append($"{pageObjId} 0 R ");
+                }
+
+                offsets.Add(fs.Position);
+                WriteAscii($"2 0 obj\n<< /Type /Pages /Kids [{kids}] /Count {totalPages} >>\nendobj\n");
+
+                for (int p = 0; p < totalPages; p++)
+                {
+                    var (jpegBytes, widthPx, heightPx) = EncodeImageForPdf(imagePaths[p]);
+
+                    int pageObjId = 3 + 3 * p;
+                    int contentObjId = 4 + 3 * p;
+                    int imgObjId = 5 + 3 * p;
+
+                    double widthPt = Math.Round(widthPx * 72.0 / 96.0, 2);
+                    double heightPt = Math.Round(heightPx * 72.0 / 96.0, 2);
+                    string widthStr = widthPt.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+                    string heightStr = heightPt.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+
+                    // Page obj
+                    offsets.Add(fs.Position);
+                    WriteAscii($"{pageObjId} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {widthStr} {heightStr}] /Contents {contentObjId} 0 R /Resources << /XObject << /Im0 {imgObjId} 0 R >> >> >>\nendobj\n");
+
+                    // Content stream (Draw image scaled to page)
+                    offsets.Add(fs.Position);
+                    string contentOps = $"q {widthStr} 0 0 {heightStr} 0 0 cm /Im0 Do Q\n";
+                    byte[] contentBytes = Encoding.ASCII.GetBytes(contentOps);
+                    WriteAscii($"{contentObjId} 0 obj\n<< /Length {contentBytes.Length} >>\nstream\n");
+                    fs.Write(contentBytes, 0, contentBytes.Length);
+                    WriteAscii("endstream\nendobj\n");
+
+                    // Image XObject (JPEG DCTDecode)
+                    offsets.Add(fs.Position);
+                    WriteAscii($"{imgObjId} 0 obj\n<< /Type /XObject /Subtype /Image /Width {widthPx} /Height {heightPx} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length {jpegBytes.Length} >>\nstream\n");
+                    fs.Write(jpegBytes, 0, jpegBytes.Length);
+                    WriteAscii("\nendstream\nendobj\n");
+
+                    progress?.Report((double)(p + 1) / totalPages * 100.0);
+                }
+
+                // XRef Table
+                long xrefOffset = fs.Position;
+                WriteAscii($"xref\n0 {offsets.Count + 1}\n0000000000 65535 f \n");
+                foreach (long off in offsets)
+                {
+                    WriteAscii($"{off:D10} 00000 n \n");
+                }
+
+                // Trailer
+                WriteAscii($"trailer\n<< /Size {offsets.Count + 1} /Root 1 0 R >>\nstartxref\n{xrefOffset}\n%%EOF\n");
             }
-
-            WriteAscii("%PDF-1.4\n%\xE2\xE3\xCF\xD3\n");
-
-            // Obj 1: Catalog
-            offsets.Add(ms.Position);
-            WriteAscii("1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
-
-            // Obj 2: Pages (Kids array)
-            // Per ogni pagina p (0 .. totalPages - 1):
-            // Page Obj: 3 + 3*p
-            // Content Obj: 4 + 3*p
-            // Image Obj: 5 + 3*p
-            var kids = new StringBuilder();
-            for (int p = 0; p < totalPages; p++)
+            catch
             {
-                int pageObjId = 3 + 3 * p;
-                kids.Append($"{pageObjId} 0 R ");
+                try { if (File.Exists(destPath)) File.Delete(destPath); } catch { }
+                throw;
             }
-
-            offsets.Add(ms.Position);
-            WriteAscii($"2 0 obj\n<< /Type /Pages /Kids [{kids}] /Count {totalPages} >>\nendobj\n");
-
-            for (int p = 0; p < totalPages; p++)
-            {
-                var (jpegBytes, widthPx, heightPx) = images[p];
-                int pageObjId = 3 + 3 * p;
-                int contentObjId = 4 + 3 * p;
-                int imgObjId = 5 + 3 * p;
-
-                double widthPt = Math.Round(widthPx * 72.0 / 96.0, 2);
-                double heightPt = Math.Round(heightPx * 72.0 / 96.0, 2);
-                string widthStr = widthPt.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
-                string heightStr = heightPt.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
-
-                // Page obj
-                offsets.Add(ms.Position);
-                WriteAscii($"{pageObjId} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {widthStr} {heightStr}] /Contents {contentObjId} 0 R /Resources << /XObject << /Im0 {imgObjId} 0 R >> >> >>\nendobj\n");
-
-                // Content stream (Draw image scaled to page)
-                offsets.Add(ms.Position);
-                string contentOps = $"q {widthStr} 0 0 {heightStr} 0 0 cm /Im0 Do Q\n";
-                byte[] contentBytes = Encoding.ASCII.GetBytes(contentOps);
-                WriteAscii($"{contentObjId} 0 obj\n<< /Length {contentBytes.Length} >>\nstream\n");
-                ms.Write(contentBytes, 0, contentBytes.Length);
-                WriteAscii("endstream\nendobj\n");
-
-                // Image XObject (JPEG DCTDecode)
-                offsets.Add(ms.Position);
-                WriteAscii($"{imgObjId} 0 obj\n<< /Type /XObject /Subtype /Image /Width {widthPx} /Height {heightPx} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length {jpegBytes.Length} >>\nstream\n");
-                ms.Write(jpegBytes, 0, jpegBytes.Length);
-                WriteAscii("\nendstream\nendobj\n");
-            }
-
-            // XRef Table
-            long xrefOffset = ms.Position;
-            WriteAscii($"xref\n0 {offsets.Count + 1}\n0000000000 65535 f \n");
-            foreach (long off in offsets)
-            {
-                WriteAscii($"{off:D10} 00000 n \n");
-            }
-
-            // Trailer
-            WriteAscii($"trailer\n<< /Size {offsets.Count + 1} /Root 1 0 R >>\nstartxref\n{xrefOffset}\n%%EOF\n");
-
-            return ms.ToArray();
         }
 
         public static async Task<string> ConvertDocumentToPdfAsync(string docPath, string? destPath = null)
@@ -558,13 +622,15 @@ namespace AeroSpot.Worker.Services
             offsets.Add(ms.Position);
             WriteAscii($"2 0 obj\n<< /Type /Pages /Kids [{kids}] /Count {totalPages} >>\nendobj\n");
 
-            // Obj 3: Helvetica
+            // Obj 3: Helvetica (WinAnsiEncoding per caratteri accentati e simbolo €)
             offsets.Add(ms.Position);
-            WriteAscii("3 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n");
+            WriteAscii("3 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>\nendobj\n");
 
             // Obj 4: Helvetica-Bold
             offsets.Add(ms.Position);
-            WriteAscii("4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>\nendobj\n");
+            WriteAscii("4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>\nendobj\n");
+
+            Encoding winAnsi = Encoding.GetEncoding(1252, new EncoderReplacementFallback(" "), new DecoderReplacementFallback(" "));
 
             for (int p = 0; p < totalPages; p++)
             {
@@ -578,7 +644,7 @@ namespace AeroSpot.Worker.Services
                 // Content stream
                 var sb = new StringBuilder();
                 string headerTitle = EscapePdfString(title);
-                string pageNum = $"Pagina {p + 1} di {totalPages}";
+                string pageNum = EscapePdfString(LocalizationService.Get("Preview_Pdf_PageFooter", p + 1, totalPages));
 
                 // Header
                 sb.Append("BT\n/F2 9 Tf\n50 805 Td\n(").Append(headerTitle).Append(") Tj\nET\n");
@@ -606,7 +672,7 @@ namespace AeroSpot.Worker.Services
                 }
                 sb.Append("ET\n");
 
-                byte[] contentBytes = Encoding.ASCII.GetBytes(sb.ToString());
+                byte[] contentBytes = winAnsi.GetBytes(sb.ToString());
 
                 // Content obj
                 offsets.Add(ms.Position);
@@ -631,40 +697,24 @@ namespace AeroSpot.Worker.Services
 
         private static string EscapePdfString(string s)
         {
-            var sb = new StringBuilder();
+            var sb = new StringBuilder(s.Length);
             foreach (char c in s)
             {
                 if (c == '\\' || c == '(' || c == ')')
                 {
                     sb.Append('\\').Append(c);
                 }
-                else if (c >= 32 && c <= 126)
+                else if (c == '\t')
                 {
-                    sb.Append(c);
+                    sb.Append("    ");
+                }
+                else if (c < 32)
+                {
+                    sb.Append(' ');
                 }
                 else
                 {
-                    char mapped = c switch
-                    {
-                        'à' or 'á' => 'a',
-                        'è' or 'é' => 'e',
-                        'ì' or 'í' => 'i',
-                        'ò' or 'ó' => 'o',
-                        'ù' or 'ú' => 'u',
-                        'À' or 'Á' => 'A',
-                        'È' or 'É' => 'E',
-                        'Ì' or 'Í' => 'I',
-                        'Ò' or 'Ó' => 'O',
-                        'Ù' or 'Ú' => 'U',
-                        '°' => ' ',
-                        '–' or '—' => '-',
-                        '“' or '”' => '"',
-                        '‘' or '’' => '\'',
-                        '«' or '»' => '"',
-                        _ => c < 128 ? c : ' '
-                    };
-                    if (mapped == '\\' || mapped == '(' || mapped == ')') sb.Append('\\').Append(mapped);
-                    else sb.Append(mapped);
+                    sb.Append(c);
                 }
             }
             return sb.ToString();

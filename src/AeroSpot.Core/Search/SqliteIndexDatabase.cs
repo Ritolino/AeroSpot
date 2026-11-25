@@ -38,9 +38,18 @@ namespace AeroSpot.Core.Search
             {
                 DataSource = _dbPath,
                 Mode = SqliteOpenMode.ReadWriteCreate,
-                Cache = SqliteCacheMode.Shared
+                Cache = SqliteCacheMode.Default
             };
             _connectionString = builder.ToString();
+        }
+
+        private static string EscapeLikePattern(string value)
+        {
+            if (string.IsNullOrEmpty(value)) return value;
+            return value
+                .Replace("\\", "\\\\")
+                .Replace("%", "\\%")
+                .Replace("_", "\\_");
         }
 
         public void Initialize()
@@ -55,6 +64,7 @@ namespace AeroSpot.Core.Search
                     using var cmd = _connection.CreateCommand();
                     // Prestazioni ottimali WAL (Write-Ahead Logging) e sincronizzazione bilanciata
                     cmd.CommandText = @"
+                        PRAGMA busy_timeout = 5000;
                         PRAGMA journal_mode = WAL;
                         PRAGMA synchronous = NORMAL;
                         PRAGMA cache_size = 5000;
@@ -72,7 +82,6 @@ namespace AeroSpot.Core.Search
                         );
 
                         CREATE INDEX IF NOT EXISTS idx_items_title ON IndexedItems(Title);
-                        CREATE INDEX IF NOT EXISTS idx_items_path ON IndexedItems(FullPath);
                         CREATE INDEX IF NOT EXISTS idx_items_category ON IndexedItems(Category);
 
                         CREATE TABLE IF NOT EXISTS RecentHistory (
@@ -97,10 +106,25 @@ namespace AeroSpot.Core.Search
                     ";
                     cmd.ExecuteNonQuery();
 
-                    // Purga immediata di file ombra e spazzatura macOS/Windows se presenti nell'indice esistente
-                    using var purgeCmd = _connection.CreateCommand();
-                    purgeCmd.CommandText = "DELETE FROM IndexedItems WHERE Title LIKE '._%' OR Title = '.DS_Store' OR Title = 'Thumbs.db' OR Title = 'desktop.ini' OR Title LIKE '~$%' OR lower(Extension) IN ('.lnk', '.url') OR lower(FullPath) LIKE '%.lnk' OR lower(FullPath) LIKE '%.url';";
-                    purgeCmd.ExecuteNonQuery();
+                    // Purga una-tantum di file ombra, spazzatura macOS/Windows e .lnk/.url obsoleti
+                    using var metaCheckCmd = _connection.CreateCommand();
+                    metaCheckCmd.CommandText = "SELECT Value FROM IndexMeta WHERE Key = 'PurgedShortcutsV1';";
+                    var purgedFlag = metaCheckCmd.ExecuteScalar() as string;
+                    if (!string.Equals(purgedFlag, "1", StringComparison.Ordinal))
+                    {
+                        using var hasRowsCmd = _connection.CreateCommand();
+                        hasRowsCmd.CommandText = "SELECT 1 FROM IndexedItems LIMIT 1;";
+                        if (hasRowsCmd.ExecuteScalar() != null)
+                        {
+                            using var purgeCmd = _connection.CreateCommand();
+                            purgeCmd.CommandText = "DELETE FROM IndexedItems WHERE Title LIKE '._%' OR Title = '.DS_Store' OR Title = 'Thumbs.db' OR Title = 'desktop.ini' OR Title LIKE '~$%' OR lower(Extension) IN ('.lnk', '.url') OR lower(FullPath) LIKE '%.lnk' OR lower(FullPath) LIKE '%.url';";
+                            purgeCmd.ExecuteNonQuery();
+
+                            using var setMetaCmd = _connection.CreateCommand();
+                            setMetaCmd.CommandText = "INSERT INTO IndexMeta (Key, Value) VALUES ('PurgedShortcutsV1', '1') ON CONFLICT(Key) DO UPDATE SET Value = '1';";
+                            setMetaCmd.ExecuteNonQuery();
+                        }
+                    }
 
                     // Pulizia retroattiva: elimina eventuali espressioni di calcolo salvate in precedenza nella cronologia
                     CleanupCalculatorSearchesInternal();
@@ -110,9 +134,9 @@ namespace AeroSpot.Core.Search
 
         public int UpsertBatch(IEnumerable<IndexedItem> items)
         {
-            EnsureOpen();
             lock (_lock)
             {
+                EnsureOpenLocked();
                 using var tx = _connection!.BeginTransaction();
                 using var cmd = _connection.CreateCommand();
                 cmd.Transaction = tx;
@@ -176,9 +200,9 @@ namespace AeroSpot.Core.Search
 
         public int DeleteBatch(IEnumerable<string> paths)
         {
-            EnsureOpen();
             lock (_lock)
             {
+                EnsureOpenLocked();
                 using var tx = _connection!.BeginTransaction();
                 using var cmd = _connection.CreateCommand();
                 cmd.Transaction = tx;
@@ -197,12 +221,47 @@ namespace AeroSpot.Core.Search
             }
         }
 
+        public int DeleteByPathPrefix(string directoryPath)
+        {
+            if (string.IsNullOrWhiteSpace(directoryPath)) return 0;
+            return DeleteByPathPrefixes(new[] { directoryPath });
+        }
+
+        public int DeleteByPathPrefixes(IEnumerable<string> paths)
+        {
+            if (paths == null) return 0;
+
+            lock (_lock)
+            {
+                EnsureOpenLocked();
+                using var tx = _connection!.BeginTransaction();
+                using var cmd = _connection.CreateCommand();
+                cmd.Transaction = tx;
+                cmd.CommandText = @"DELETE FROM IndexedItems WHERE FullPath = $exact OR FullPath LIKE $prefix ESCAPE '\';";
+                var pExact = cmd.Parameters.Add("$exact", SqliteType.Text);
+                var pPrefix = cmd.Parameters.Add("$prefix", SqliteType.Text);
+
+                int count = 0;
+                foreach (var path in paths)
+                {
+                    if (string.IsNullOrWhiteSpace(path)) continue;
+                    string exact = path.TrimEnd('\\', '/');
+                    if (string.IsNullOrEmpty(exact)) continue;
+                    pExact.Value = exact;
+                    pPrefix.Value = EscapeLikePattern(exact + "\\") + "%";
+                    count += cmd.ExecuteNonQuery();
+                }
+
+                tx.Commit();
+                return count;
+            }
+        }
+
         /// <summary>
         /// Rimuove dal database SQLite tutti i file indicizzati appartenenti a lettere di disco non più presenti nella lista consentita.
         /// </summary>
         public int PurgeDisallowedDrives(IEnumerable<string> allowedDrives)
         {
-            EnsureOpen();
             var allowedLetters = new HashSet<char>();
             if (allowedDrives != null)
             {
@@ -223,6 +282,7 @@ namespace AeroSpot.Core.Search
 
             lock (_lock)
             {
+                EnsureOpenLocked();
                 using var tx = _connection!.BeginTransaction();
                 using var cmd = _connection.CreateCommand();
                 cmd.Transaction = tx;
@@ -267,11 +327,11 @@ namespace AeroSpot.Core.Search
         /// </summary>
         public int PurgeExcludedSegments(IEnumerable<string> excludedSegments)
         {
-            EnsureOpen();
             if (excludedSegments == null) return 0;
 
             lock (_lock)
             {
+                EnsureOpenLocked();
                 using var tx = _connection!.BeginTransaction();
                 int totalPurged = 0;
 
@@ -279,7 +339,7 @@ namespace AeroSpot.Core.Search
                 {
                     if (string.IsNullOrWhiteSpace(seg)) continue;
                     string trimmedSeg = seg.Trim();
-                    string pattern = $"%{trimmedSeg}%";
+                    string pattern = $"%{EscapeLikePattern(trimmedSeg)}%";
 
                     using var cmd = _connection.CreateCommand();
                     cmd.Transaction = tx;
@@ -288,11 +348,11 @@ namespace AeroSpot.Core.Search
                         string.Equals(trimmedSeg, "bin", StringComparison.OrdinalIgnoreCase) ||
                         string.Equals(trimmedSeg, "obj", StringComparison.OrdinalIgnoreCase))
                     {
-                        cmd.CommandText = "DELETE FROM IndexedItems WHERE FullPath LIKE $pat AND FullPath NOT LIKE '%:\\Program Files\\%' AND FullPath NOT LIKE '%:\\Program Files (x86)\\%';";
+                        cmd.CommandText = @"DELETE FROM IndexedItems WHERE FullPath LIKE $pat ESCAPE '\' AND FullPath NOT LIKE '%:\Program Files\%' AND FullPath NOT LIKE '%:\Program Files (x86)\%';";
                     }
                     else
                     {
-                        cmd.CommandText = "DELETE FROM IndexedItems WHERE FullPath LIKE $pat;";
+                        cmd.CommandText = @"DELETE FROM IndexedItems WHERE FullPath LIKE $pat ESCAPE '\';";
                     }
                     cmd.Parameters.AddWithValue("$pat", pattern);
                     totalPurged += cmd.ExecuteNonQuery();
@@ -322,9 +382,9 @@ namespace AeroSpot.Core.Search
         /// </summary>
         public int PurgeSystemJunkFiles()
         {
-            EnsureOpen();
             lock (_lock)
             {
+                EnsureOpenLocked();
                 using var cmd = _connection!.CreateCommand();
                 cmd.CommandText = "DELETE FROM IndexedItems WHERE Title LIKE '._%' OR Title = '.DS_Store' OR Title = 'Thumbs.db' OR Title = 'desktop.ini' OR Title LIKE '~$%' OR lower(Extension) IN ('.lnk', '.url') OR lower(FullPath) LIKE '%.lnk' OR lower(FullPath) LIKE '%.url';";
                 int purged = cmd.ExecuteNonQuery();
@@ -347,9 +407,9 @@ namespace AeroSpot.Core.Search
         {
             if (string.IsNullOrWhiteSpace(query) && !enableRecentHistory)
             {
-                EnsureOpen();
                 lock (_lock)
                 {
+                    EnsureOpenLocked();
                     using var cmd = _connection!.CreateCommand();
                     cmd.CommandText = @"
                         SELECT Id, Title, FullPath, Category, Extension, ExecutionTarget, LastModifiedUtcTicks, IsApp
@@ -388,11 +448,11 @@ namespace AeroSpot.Core.Search
 
         public List<IndexedItem> Search(string query, int maxResults = 10, string? categoryFilter = null, List<string>? categoryPriority = null, bool prioritizeExactMatches = false, Config.SpotlightHomeMode homeMode = Config.SpotlightHomeMode.RecentOpened)
         {
-            EnsureOpen();
             var candidates = new List<IndexedItem>();
 
             lock (_lock)
             {
+                EnsureOpenLocked();
                 using var cmd = _connection!.CreateCommand();
                 bool hasFilter = !string.IsNullOrWhiteSpace(categoryFilter) &&
                                  !string.Equals(categoryFilter, "All", StringComparison.OrdinalIgnoreCase) &&
@@ -502,17 +562,24 @@ namespace AeroSpot.Core.Search
                     for (int i = 0; i < terms.Length; i++)
                     {
                         string paramName = $"$term{i}";
+                        string escapedTerm = EscapeLikePattern(terms[i]);
                         if (terms.Length == 1 && terms[0].Length >= 2 && terms[0].Length <= 5)
                         {
-                            string acrPattern = string.Join("%", terms[0].ToCharArray()) + "%";
+                            var acrChars = terms[0].ToCharArray();
+                            var acrParts = new string[acrChars.Length];
+                            for (int c = 0; c < acrChars.Length; c++)
+                            {
+                                acrParts[c] = EscapeLikePattern(acrChars[c].ToString());
+                            }
+                            string acrPattern = string.Join("%", acrParts) + "%";
                             cmd.Parameters.AddWithValue("$acr0", acrPattern);
-                            titleWhereClauses.Add($"(Title LIKE {paramName} OR (IsApp = 1 AND Title LIKE $acr0))");
+                            titleWhereClauses.Add($@"(Title LIKE {paramName} ESCAPE '\' OR (IsApp = 1 AND Title LIKE $acr0 ESCAPE '\'))");
                         }
                         else
                         {
-                            titleWhereClauses.Add($"Title LIKE {paramName}");
+                            titleWhereClauses.Add($@"Title LIKE {paramName} ESCAPE '\'");
                         }
-                        cmd.Parameters.AddWithValue(paramName, $"%{terms[i]}%");
+                        cmd.Parameters.AddWithValue(paramName, $"%{escapedTerm}%");
                     }
 
                     if (hasFilter)
@@ -529,7 +596,7 @@ namespace AeroSpot.Core.Search
                     }
 
                     cmd.Parameters.AddWithValue("$exactQuery", trimmedQuery);
-                    cmd.Parameters.AddWithValue("$prefixQuery", $"{trimmedQuery}%");
+                    cmd.Parameters.AddWithValue("$prefixQuery", $"{EscapeLikePattern(trimmedQuery)}%");
 
                     // Fase 1: Candidati il cui Nome (Title) contiene tutti i termini cercati (non vengono mai saturati da match sul solo percorso)
                     cmd.CommandText = $@"
@@ -538,7 +605,7 @@ namespace AeroSpot.Core.Search
                         WHERE {string.Join(" AND ", titleWhereClauses)}
                         ORDER BY
                             CASE WHEN Title = $exactQuery COLLATE NOCASE THEN 0
-                                 WHEN Title LIKE $prefixQuery THEN 1
+                                 WHEN Title LIKE $prefixQuery ESCAPE '\' THEN 1
                                  ELSE 2 END,
                             IsApp DESC,
                             LastModifiedUtcTicks DESC
@@ -576,8 +643,8 @@ namespace AeroSpot.Core.Search
                         for (int i = 0; i < terms.Length; i++)
                         {
                             string paramName = $"$pterm{i}";
-                            pathWhereClauses.Add($"(Title LIKE {paramName} OR FullPath LIKE {paramName})");
-                            pathCmd.Parameters.AddWithValue(paramName, $"%{terms[i]}%");
+                            pathWhereClauses.Add($@"(Title LIKE {paramName} ESCAPE '\' OR FullPath LIKE {paramName} ESCAPE '\')");
+                            pathCmd.Parameters.AddWithValue(paramName, $"%{EscapeLikePattern(terms[i])}%");
                         }
 
                         if (hasFilter)
@@ -630,9 +697,9 @@ namespace AeroSpot.Core.Search
 
         public int GetTotalCount()
         {
-            EnsureOpen();
             lock (_lock)
             {
+                EnsureOpenLocked();
                 using var cmd = _connection!.CreateCommand();
                 cmd.CommandText = "SELECT COUNT(*) FROM IndexedItems;";
                 object? res = cmd.ExecuteScalar();
@@ -646,9 +713,9 @@ namespace AeroSpot.Core.Search
         public void RecordRecentItem(string fullPath)
         {
             if (string.IsNullOrWhiteSpace(fullPath)) return;
-            EnsureOpen();
             lock (_lock)
             {
+                EnsureOpenLocked();
                 try
                 {
                     using var cmd = _connection!.CreateCommand();
@@ -675,9 +742,9 @@ namespace AeroSpot.Core.Search
         /// </summary>
         public List<IndexedItem> GetRecentItems(int limit = 10)
         {
-            EnsureOpen();
             lock (_lock)
             {
+                EnsureOpenLocked();
                 return GetRecentItemsInternal(limit);
             }
         }
@@ -733,9 +800,9 @@ namespace AeroSpot.Core.Search
         /// </summary>
         public List<IndexedItem> GetMostFrequentItems(int limit = 10)
         {
-            EnsureOpen();
             lock (_lock)
             {
+                EnsureOpenLocked();
                 return GetMostFrequentItemsInternal(limit);
             }
         }
@@ -792,19 +859,20 @@ namespace AeroSpot.Core.Search
         public void RecordSearch(string rawQuery)
         {
             if (string.IsNullOrWhiteSpace(rawQuery)) return;
+            string trimmed = rawQuery.Trim();
 
             // Esclude le espressioni di calcolo matematico o conversione di unità (Bugfix Novembre 2026 - P2)
-            if (ExpressionEvaluator.TryEvaluate(rawQuery, "it") != null || ExpressionEvaluator.TryEvaluate(rawQuery, "en") != null)
+            if (ExpressionEvaluator.TryEvaluate(trimmed) != null)
             {
                 return;
             }
 
-            string normalized = System.Text.RegularExpressions.Regex.Replace(rawQuery.Trim(), @"\s+", " ").ToLowerInvariant();
+            string normalized = System.Text.RegularExpressions.Regex.Replace(trimmed, @"\s+", " ").ToLowerInvariant();
             if (normalized.Length < 2) return;
 
-            EnsureOpen();
             lock (_lock)
             {
+                EnsureOpenLocked();
                 try
                 {
                     using var cmd = _connection!.CreateCommand();
@@ -817,7 +885,7 @@ namespace AeroSpot.Core.Search
                             LastSearchedUtcTicks = $ticks;
                     ";
                     cmd.Parameters.AddWithValue("$norm", normalized);
-                    cmd.Parameters.AddWithValue("$raw", rawQuery.Trim());
+                    cmd.Parameters.AddWithValue("$raw", trimmed);
                     cmd.Parameters.AddWithValue("$ticks", DateTime.UtcNow.Ticks);
                     cmd.ExecuteNonQuery();
                 }
@@ -830,9 +898,9 @@ namespace AeroSpot.Core.Search
 
         public void CleanupCalculatorSearches()
         {
-            EnsureOpen();
             lock (_lock)
             {
+                EnsureOpenLocked();
                 CleanupCalculatorSearchesInternal();
             }
         }
@@ -849,7 +917,7 @@ namespace AeroSpot.Core.Search
                 {
                     string norm = reader.GetString(0);
                     string raw = reader.GetString(1);
-                    if (ExpressionEvaluator.TryEvaluate(raw, "it") != null || ExpressionEvaluator.TryEvaluate(raw, "en") != null)
+                    if (ExpressionEvaluator.TryEvaluate(raw) != null)
                     {
                         toDelete.Add(norm);
                     }
@@ -882,9 +950,9 @@ namespace AeroSpot.Core.Search
         /// </summary>
         public List<string> GetMostFrequentSearches(int limit = 10)
         {
-            EnsureOpen();
             lock (_lock)
             {
+                EnsureOpenLocked();
                 return GetMostFrequentSearchesInternal(limit);
             }
         }
@@ -920,9 +988,9 @@ namespace AeroSpot.Core.Search
         /// </summary>
         public void ClearRecentHistory()
         {
-            EnsureOpen();
             lock (_lock)
             {
+                EnsureOpenLocked();
                 try
                 {
                     using var cmd = _connection!.CreateCommand();
@@ -942,9 +1010,9 @@ namespace AeroSpot.Core.Search
         /// </summary>
         public void ClearAllHistory()
         {
-            EnsureOpen();
             lock (_lock)
             {
+                EnsureOpenLocked();
                 try
                 {
                     using var cmd = _connection!.CreateCommand();
@@ -961,9 +1029,9 @@ namespace AeroSpot.Core.Search
 
         public void SetMeta(string key, string value)
         {
-            EnsureOpen();
             lock (_lock)
             {
+                EnsureOpenLocked();
                 using var cmd = _connection!.CreateCommand();
                 cmd.CommandText = @"
                     INSERT INTO IndexMeta (Key, Value) VALUES ($k, $v)
@@ -977,9 +1045,9 @@ namespace AeroSpot.Core.Search
 
         public string? GetMeta(string key)
         {
-            EnsureOpen();
             lock (_lock)
             {
+                EnsureOpenLocked();
                 using var cmd = _connection!.CreateCommand();
                 cmd.CommandText = "SELECT Value FROM IndexMeta WHERE Key = $k;";
                 cmd.Parameters.AddWithValue("$k", key);
@@ -990,16 +1058,16 @@ namespace AeroSpot.Core.Search
 
         public void ClearAll()
         {
-            EnsureOpen();
             lock (_lock)
             {
+                EnsureOpenLocked();
                 using var cmd = _connection!.CreateCommand();
                 cmd.CommandText = "DELETE FROM IndexedItems; DELETE FROM IndexMeta;";
                 cmd.ExecuteNonQuery();
             }
         }
 
-        private void EnsureOpen()
+        private void EnsureOpenLocked()
         {
             if (_connection == null)
             {
@@ -1013,9 +1081,14 @@ namespace AeroSpot.Core.Search
             {
                 try
                 {
-                    _connection?.Close();
-                    _connection?.Dispose();
+                    var conn = _connection;
                     _connection = null;
+                    if (conn != null)
+                    {
+                        conn.Close();
+                        SqliteConnection.ClearPool(conn);
+                        conn.Dispose();
+                    }
                 }
                 catch { }
             }

@@ -2,11 +2,12 @@ using System;
 using System.Collections.Concurrent;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
-using AeroSpot.Core.Logging;
 using AeroSpot.Core.Native;
 
 namespace AeroSpot.Worker.Services
@@ -14,6 +15,49 @@ namespace AeroSpot.Worker.Services
     public static class IconService
     {
         private static readonly ConcurrentDictionary<string, ImageSource?> _cache = new ConcurrentDictionary<string, ImageSource?>(StringComparer.OrdinalIgnoreCase);
+
+        private sealed record StaIconRequest(string ParsingName, int Size, TaskCompletionSource<ImageSource?> Tcs);
+        private static readonly BlockingCollection<StaIconRequest> _staQueue = new BlockingCollection<StaIconRequest>();
+        private static readonly object _staThreadLock = new object();
+        private static Thread? _staWorkerThread;
+        private static readonly object _vectorIconLock = new object();
+
+        public static void TrimCache()
+        {
+            _cache.Clear();
+        }
+
+        private static void EnsureStaWorkerStarted()
+        {
+            if (_staWorkerThread != null) return;
+            lock (_staThreadLock)
+            {
+                if (_staWorkerThread != null) return;
+                var t = new Thread(StaWorkerLoop)
+                {
+                    IsBackground = true,
+                    Name = "AeroSpot_IconService_STA"
+                };
+                t.SetApartmentState(ApartmentState.STA);
+                t.Start();
+                _staWorkerThread = t;
+            }
+        }
+
+        private static void StaWorkerLoop()
+        {
+            foreach (var req in _staQueue.GetConsumingEnumerable())
+            {
+                try
+                {
+                    req.Tcs.TrySetResult(LoadShellItemIconInternal(req.ParsingName, req.Size));
+                }
+                catch
+                {
+                    req.Tcs.TrySetResult(null);
+                }
+            }
+        }
 
         public static ImageSource? GetIcon(string path, string category)
         {
@@ -136,23 +180,15 @@ namespace AeroSpot.Worker.Services
 
         private static ImageSource? LoadShellItemIcon(string parsingName, int size = 32)
         {
-            if (System.Threading.Thread.CurrentThread.GetApartmentState() == System.Threading.ApartmentState.STA)
+            if (Thread.CurrentThread.GetApartmentState() == ApartmentState.STA)
             {
                 return LoadShellItemIconInternal(parsingName, size);
             }
 
-            ImageSource? result = null;
-            var thread = new System.Threading.Thread(() =>
-            {
-                result = LoadShellItemIconInternal(parsingName, size);
-            })
-            {
-                IsBackground = true
-            };
-            thread.SetApartmentState(System.Threading.ApartmentState.STA);
-            thread.Start();
-            thread.Join(1200);
-            return result;
+            EnsureStaWorkerStarted();
+            var tcs = new TaskCompletionSource<ImageSource?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _staQueue.Add(new StaIconRequest(parsingName, size, tcs));
+            return tcs.Task.Wait(1200) ? tcs.Task.Result : null;
         }
 
         private static ImageSource? LoadShellItemIconInternal(string parsingName, int size = 32)
@@ -184,136 +220,76 @@ namespace AeroSpot.Worker.Services
             return null;
         }
 
-        public static BitmapSource? GetImageFactoryBitmap(string filePath, int size = 1200)
-        {
-            if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath)) return null;
-
-            if (System.Threading.Thread.CurrentThread.GetApartmentState() == System.Threading.ApartmentState.STA)
-            {
-                return ExtractImageFactoryBitmapInternal(filePath, size);
-            }
-
-            BitmapSource? result = null;
-            var thread = new System.Threading.Thread(() =>
-            {
-                result = ExtractImageFactoryBitmapInternal(filePath, size);
-            })
-            {
-                IsBackground = true
-            };
-            thread.SetApartmentState(System.Threading.ApartmentState.STA);
-            thread.Start();
-            thread.Join(1500);
-            return result;
-        }
-
-        private static BitmapSource? ExtractImageFactoryBitmapInternal(string filePath, int size)
-        {
-            try
-            {
-                Win32.SHCreateItemFromParsingName(filePath, IntPtr.Zero, Win32.IID_IShellItemImageFactory, out object itemObj);
-                if (itemObj is Win32.IShellItemImageFactory factory)
-                {
-                    int[] sizes = new[] { size, 800, 512, 256 };
-                    foreach (int sz in sizes)
-                    {
-                        var iconSize = new Win32.SIZE(sz, sz);
-                        int hr = factory.GetImage(iconSize, Win32.SIIGBF.SIIGBF_RESIZETOFIT, out IntPtr hBitmap);
-                        if (hr != 0 || hBitmap == IntPtr.Zero)
-                        {
-                            hr = factory.GetImage(iconSize, Win32.SIIGBF.SIIGBF_BIGGERSIZEOK, out hBitmap);
-                        }
-                        if (hr != 0 || hBitmap == IntPtr.Zero)
-                        {
-                            hr = factory.GetImage(iconSize, 0, out hBitmap);
-                        }
-
-                        if (hr == 0 && hBitmap != IntPtr.Zero)
-                        {
-                            try
-                            {
-                                var img = Imaging.CreateBitmapSourceFromHBitmap(hBitmap, IntPtr.Zero, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
-                                img.Freeze();
-                                return img;
-                            }
-                            finally
-                            {
-                                Win32.DeleteObject(hBitmap);
-                            }
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                AppLogger.Warn($"GetImageFactoryBitmap non riuscito per {filePath}: {ex.Message}");
-            }
-
-            return null;
-        }
-
         private static ImageSource? _calcIcon;
         private static ImageSource? _convIcon;
 
         public static ImageSource? GetCalculatorIcon()
         {
             if (_calcIcon != null) return _calcIcon;
-            try
+            lock (_vectorIconLock)
             {
-                var dv = new DrawingVisual();
-                using (var dc = dv.RenderOpen())
+                if (_calcIcon != null) return _calcIcon;
+                try
                 {
-                    // Icona calcolatrice vettoriale nitida
-                    var bgBrush = new SolidColorBrush(Color.FromRgb(30, 74, 56));
-                    var borderPen = new Pen(new SolidColorBrush(Color.FromRgb(78, 201, 176)), 1.2);
-                    dc.DrawRoundedRectangle(bgBrush, borderPen, new Rect(1, 1, 18, 18), 3, 3);
+                    var dv = new DrawingVisual();
+                    using (var dc = dv.RenderOpen())
+                    {
+                        // Icona calcolatrice vettoriale nitida
+                        var bgBrush = new SolidColorBrush(Color.FromRgb(30, 74, 56));
+                        var borderPen = new Pen(new SolidColorBrush(Color.FromRgb(78, 201, 176)), 1.2);
+                        dc.DrawRoundedRectangle(bgBrush, borderPen, new Rect(1, 1, 18, 18), 3, 3);
 
-                    var textBrush = new SolidColorBrush(Color.FromRgb(78, 201, 176));
-                    var font = new Typeface(new FontFamily("Segoe UI"), FontStyles.Normal, FontWeights.Bold, FontStretches.Normal);
-                    var formattedText = new FormattedText("=", System.Globalization.CultureInfo.InvariantCulture,
-                        FlowDirection.LeftToRight, font, 11, textBrush, 1.25);
-                    dc.DrawText(formattedText, new Point(6, 3));
+                        var textBrush = new SolidColorBrush(Color.FromRgb(78, 201, 176));
+                        var font = new Typeface(new FontFamily("Segoe UI"), FontStyles.Normal, FontWeights.Bold, FontStretches.Normal);
+                        var formattedText = new FormattedText("=", System.Globalization.CultureInfo.InvariantCulture,
+                            FlowDirection.LeftToRight, font, 11, textBrush, 1.25);
+                        dc.DrawText(formattedText, new Point(6, 3));
+                    }
+                    var rtb = new RenderTargetBitmap(20, 20, 96, 96, PixelFormats.Pbgra32);
+                    rtb.Render(dv);
+                    rtb.Freeze();
+                    _calcIcon = rtb;
+                    return _calcIcon;
                 }
-                var rtb = new RenderTargetBitmap(20, 20, 96, 96, PixelFormats.Pbgra32);
-                rtb.Render(dv);
-                rtb.Freeze();
-                _calcIcon = rtb;
-                return _calcIcon;
-            }
-            catch
-            {
-                return null;
+                catch
+                {
+                    return null;
+                }
             }
         }
 
         public static ImageSource? GetConversionIcon()
         {
             if (_convIcon != null) return _convIcon;
-            try
+            lock (_vectorIconLock)
             {
-                var dv = new DrawingVisual();
-                using (var dc = dv.RenderOpen())
+                if (_convIcon != null) return _convIcon;
+                try
                 {
-                    // Icona conversione vettoriale nitida (frecce o simbolo scambio)
-                    var bgBrush = new SolidColorBrush(Color.FromRgb(75, 46, 88));
-                    var borderPen = new Pen(new SolidColorBrush(Color.FromRgb(220, 220, 170)), 1.2);
-                    dc.DrawRoundedRectangle(bgBrush, borderPen, new Rect(1, 1, 18, 18), 3, 3);
+                    var dv = new DrawingVisual();
+                    using (var dc = dv.RenderOpen())
+                    {
+                        // Icona conversione vettoriale nitida (frecce o simbolo scambio)
+                        var bgBrush = new SolidColorBrush(Color.FromRgb(75, 46, 88));
+                        var borderPen = new Pen(new SolidColorBrush(Color.FromRgb(220, 220, 170)), 1.2);
+                        dc.DrawRoundedRectangle(bgBrush, borderPen, new Rect(1, 1, 18, 18), 3, 3);
 
-                    var textBrush = new SolidColorBrush(Color.FromRgb(220, 220, 170));
-                    var font = new Typeface(new FontFamily("Segoe UI"), FontStyles.Normal, FontWeights.Bold, FontStretches.Normal);
-                    var formattedText = new FormattedText("⇄", System.Globalization.CultureInfo.InvariantCulture,
-                        FlowDirection.LeftToRight, font, 11, textBrush, 1.25);
-                    dc.DrawText(formattedText, new Point(4, 2));
+                        var textBrush = new SolidColorBrush(Color.FromRgb(220, 220, 170));
+                        var font = new Typeface(new FontFamily("Segoe UI"), FontStyles.Normal, FontWeights.Bold, FontStretches.Normal);
+                        var formattedText = new FormattedText("⇄", System.Globalization.CultureInfo.InvariantCulture,
+                            FlowDirection.LeftToRight, font, 11, textBrush, 1.25);
+                        dc.DrawText(formattedText, new Point(4, 2));
+                    }
+                    var rtb = new RenderTargetBitmap(20, 20, 96, 96, PixelFormats.Pbgra32);
+                    rtb.Render(dv);
+                    rtb.Freeze();
+                    _convIcon = rtb;
+                    return _convIcon;
                 }
-                var rtb = new RenderTargetBitmap(20, 20, 96, 96, PixelFormats.Pbgra32);
-                rtb.Render(dv);
-                rtb.Freeze();
-                _convIcon = rtb;
-                return _convIcon;
-            }
-            catch
-            {
-                return null;
+                catch
+                {
+                    return null;
+                }
             }
         }
 
@@ -323,72 +299,80 @@ namespace AeroSpot.Worker.Services
         public static ImageSource? GetAeroSpotSettingsIcon()
         {
             if (_aeroSpotSettingsIcon != null) return _aeroSpotSettingsIcon;
-            try
+            lock (_vectorIconLock)
             {
-                var dv = new DrawingVisual();
-                using (var dc = dv.RenderOpen())
+                if (_aeroSpotSettingsIcon != null) return _aeroSpotSettingsIcon;
+                try
                 {
-                    var bgBrush = new SolidColorBrush(Color.FromRgb(12, 74, 110)); // #0C4A6E
-                    var borderPen = new Pen(new SolidColorBrush(Color.FromRgb(56, 189, 248)), 1.2); // #38BDF8
-                    dc.DrawRoundedRectangle(bgBrush, borderPen, new Rect(1, 1, 18, 18), 3, 3);
-
-                    var gearPen = new Pen(new SolidColorBrush(Color.FromRgb(56, 189, 248)), 1.4);
-                    dc.DrawEllipse(null, gearPen, new Point(10, 10), 3.5, 3.5);
-                    for (int i = 0; i < 4; i++)
+                    var dv = new DrawingVisual();
+                    using (var dc = dv.RenderOpen())
                     {
-                        double angle = i * Math.PI / 2.0;
-                        dc.DrawLine(gearPen, new Point(10 + Math.Cos(angle) * 4.2, 10 + Math.Sin(angle) * 4.2),
-                                             new Point(10 + Math.Cos(angle) * 6.2, 10 + Math.Sin(angle) * 6.2));
-                        double diag = angle + Math.PI / 4.0;
-                        dc.DrawLine(gearPen, new Point(10 + Math.Cos(diag) * 4.2, 10 + Math.Sin(diag) * 4.2),
-                                             new Point(10 + Math.Cos(diag) * 6.2, 10 + Math.Sin(diag) * 6.2));
+                        var bgBrush = new SolidColorBrush(Color.FromRgb(12, 74, 110)); // #0C4A6E
+                        var borderPen = new Pen(new SolidColorBrush(Color.FromRgb(56, 189, 248)), 1.2); // #38BDF8
+                        dc.DrawRoundedRectangle(bgBrush, borderPen, new Rect(1, 1, 18, 18), 3, 3);
+
+                        var gearPen = new Pen(new SolidColorBrush(Color.FromRgb(56, 189, 248)), 1.4);
+                        dc.DrawEllipse(null, gearPen, new Point(10, 10), 3.5, 3.5);
+                        for (int i = 0; i < 4; i++)
+                        {
+                            double angle = i * Math.PI / 2.0;
+                            dc.DrawLine(gearPen, new Point(10 + Math.Cos(angle) * 4.2, 10 + Math.Sin(angle) * 4.2),
+                                                 new Point(10 + Math.Cos(angle) * 6.2, 10 + Math.Sin(angle) * 6.2));
+                            double diag = angle + Math.PI / 4.0;
+                            dc.DrawLine(gearPen, new Point(10 + Math.Cos(diag) * 4.2, 10 + Math.Sin(diag) * 4.2),
+                                                 new Point(10 + Math.Cos(diag) * 6.2, 10 + Math.Sin(diag) * 6.2));
+                        }
                     }
+                    var rtb = new RenderTargetBitmap(20, 20, 96, 96, PixelFormats.Pbgra32);
+                    rtb.Render(dv);
+                    rtb.Freeze();
+                    _aeroSpotSettingsIcon = rtb;
+                    return _aeroSpotSettingsIcon;
                 }
-                var rtb = new RenderTargetBitmap(20, 20, 96, 96, PixelFormats.Pbgra32);
-                rtb.Render(dv);
-                rtb.Freeze();
-                _aeroSpotSettingsIcon = rtb;
-                return _aeroSpotSettingsIcon;
-            }
-            catch
-            {
-                return null;
+                catch
+                {
+                    return null;
+                }
             }
         }
 
         public static ImageSource? GetSettingsIcon()
         {
             if (_settingsIcon != null) return _settingsIcon;
-            try
+            lock (_vectorIconLock)
             {
-                var dv = new DrawingVisual();
-                using (var dc = dv.RenderOpen())
+                if (_settingsIcon != null) return _settingsIcon;
+                try
                 {
-                    var bgBrush = new SolidColorBrush(Color.FromRgb(45, 55, 72));
-                    var borderPen = new Pen(new SolidColorBrush(Color.FromRgb(167, 139, 250)), 1.2);
-                    dc.DrawRoundedRectangle(bgBrush, borderPen, new Rect(1, 1, 18, 18), 3, 3);
-
-                    var gearPen = new Pen(new SolidColorBrush(Color.FromRgb(167, 139, 250)), 1.4);
-                    dc.DrawEllipse(null, gearPen, new Point(10, 10), 3.5, 3.5);
-                    for (int i = 0; i < 4; i++)
+                    var dv = new DrawingVisual();
+                    using (var dc = dv.RenderOpen())
                     {
-                        double angle = i * Math.PI / 2.0;
-                        dc.DrawLine(gearPen, new Point(10 + Math.Cos(angle) * 4.2, 10 + Math.Sin(angle) * 4.2),
-                                             new Point(10 + Math.Cos(angle) * 6.2, 10 + Math.Sin(angle) * 6.2));
-                        double diag = angle + Math.PI / 4.0;
-                        dc.DrawLine(gearPen, new Point(10 + Math.Cos(diag) * 4.2, 10 + Math.Sin(diag) * 4.2),
-                                             new Point(10 + Math.Cos(diag) * 6.2, 10 + Math.Sin(diag) * 6.2));
+                        var bgBrush = new SolidColorBrush(Color.FromRgb(45, 55, 72));
+                        var borderPen = new Pen(new SolidColorBrush(Color.FromRgb(167, 139, 250)), 1.2);
+                        dc.DrawRoundedRectangle(bgBrush, borderPen, new Rect(1, 1, 18, 18), 3, 3);
+
+                        var gearPen = new Pen(new SolidColorBrush(Color.FromRgb(167, 139, 250)), 1.4);
+                        dc.DrawEllipse(null, gearPen, new Point(10, 10), 3.5, 3.5);
+                        for (int i = 0; i < 4; i++)
+                        {
+                            double angle = i * Math.PI / 2.0;
+                            dc.DrawLine(gearPen, new Point(10 + Math.Cos(angle) * 4.2, 10 + Math.Sin(angle) * 4.2),
+                                                 new Point(10 + Math.Cos(angle) * 6.2, 10 + Math.Sin(angle) * 6.2));
+                            double diag = angle + Math.PI / 4.0;
+                            dc.DrawLine(gearPen, new Point(10 + Math.Cos(diag) * 4.2, 10 + Math.Sin(diag) * 4.2),
+                                                 new Point(10 + Math.Cos(diag) * 6.2, 10 + Math.Sin(diag) * 6.2));
+                        }
                     }
+                    var rtb = new RenderTargetBitmap(20, 20, 96, 96, PixelFormats.Pbgra32);
+                    rtb.Render(dv);
+                    rtb.Freeze();
+                    _settingsIcon = rtb;
+                    return _settingsIcon;
                 }
-                var rtb = new RenderTargetBitmap(20, 20, 96, 96, PixelFormats.Pbgra32);
-                rtb.Render(dv);
-                rtb.Freeze();
-                _settingsIcon = rtb;
-                return _settingsIcon;
-            }
-            catch
-            {
-                return null;
+                catch
+                {
+                    return null;
+                }
             }
         }
 
@@ -397,28 +381,32 @@ namespace AeroSpot.Worker.Services
         public static ImageSource? GetSearchIcon()
         {
             if (_searchIcon != null) return _searchIcon;
-            try
+            lock (_vectorIconLock)
             {
-                var dv = new DrawingVisual();
-                using (var dc = dv.RenderOpen())
+                if (_searchIcon != null) return _searchIcon;
+                try
                 {
-                    var bgBrush = new SolidColorBrush(Color.FromRgb(30, 41, 59));
-                    var borderPen = new Pen(new SolidColorBrush(Color.FromRgb(148, 163, 184)), 1.2);
-                    dc.DrawRoundedRectangle(bgBrush, borderPen, new Rect(1, 1, 18, 18), 3, 3);
+                    var dv = new DrawingVisual();
+                    using (var dc = dv.RenderOpen())
+                    {
+                        var bgBrush = new SolidColorBrush(Color.FromRgb(30, 41, 59));
+                        var borderPen = new Pen(new SolidColorBrush(Color.FromRgb(148, 163, 184)), 1.2);
+                        dc.DrawRoundedRectangle(bgBrush, borderPen, new Rect(1, 1, 18, 18), 3, 3);
 
-                    var lensPen = new Pen(new SolidColorBrush(Color.FromRgb(148, 163, 184)), 1.4);
-                    dc.DrawEllipse(null, lensPen, new Point(8.5, 8.5), 3.5, 3.5);
-                    dc.DrawLine(lensPen, new Point(11, 11), new Point(14.5, 14.5));
+                        var lensPen = new Pen(new SolidColorBrush(Color.FromRgb(148, 163, 184)), 1.4);
+                        dc.DrawEllipse(null, lensPen, new Point(8.5, 8.5), 3.5, 3.5);
+                        dc.DrawLine(lensPen, new Point(11, 11), new Point(14.5, 14.5));
+                    }
+                    var rtb = new RenderTargetBitmap(20, 20, 96, 96, PixelFormats.Pbgra32);
+                    rtb.Render(dv);
+                    rtb.Freeze();
+                    _searchIcon = rtb;
+                    return _searchIcon;
                 }
-                var rtb = new RenderTargetBitmap(20, 20, 96, 96, PixelFormats.Pbgra32);
-                rtb.Render(dv);
-                rtb.Freeze();
-                _searchIcon = rtb;
-                return _searchIcon;
-            }
-            catch
-            {
-                return null;
+                catch
+                {
+                    return null;
+                }
             }
         }
     }

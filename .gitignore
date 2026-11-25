@@ -3,6 +3,8 @@
 [Oo]bj/
 dist/
 release/
+installer/Output/
+*.iss.bak
 _temp/
 _Cleanup_*/
 _backups/

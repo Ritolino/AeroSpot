@@ -1,10 +1,12 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using AeroSpot.Core.Config;
 using AeroSpot.Core.IPC;
+using AeroSpot.Core.Localization;
 using AeroSpot.Core.Logging;
 
 namespace AeroSpot.Host.Services
@@ -18,10 +20,35 @@ namespace AeroSpot.Host.Services
         private readonly object _lock = new object();
         private readonly SemaphoreSlim _showLauncherLock = new SemaphoreSlim(1, 1);
         private int _pendingShowLauncherCount;
-        private readonly TaskCompletionSource<bool> _workerReadyTcs = new TaskCompletionSource<bool>();
-        private bool _isDisposed;
+        private TaskCompletionSource<bool>? _ipcConnectedTcs;
+        private volatile bool _isDisposed;
 
-        public bool IsWorkerRunning => _workerProcess != null && !_workerProcess.HasExited;
+        public bool IsWorkerRunning
+        {
+            get
+            {
+                lock (_lock)
+                {
+                    if (_workerProcess == null) return false;
+                    try { return !_workerProcess.HasExited; }
+                    catch { return false; }
+                }
+            }
+        }
+
+        public int WorkerProcessId
+        {
+            get
+            {
+                lock (_lock)
+                {
+                    if (_workerProcess == null) return 0;
+                    try { return _workerProcess.HasExited ? 0 : _workerProcess.Id; }
+                    catch { return 0; }
+                }
+            }
+        }
+
         public bool IsIpcConnected => _pipeServer.IsClientConnected;
 
         public event Action<string>? WorkerStatusChanged;
@@ -32,7 +59,10 @@ namespace AeroSpot.Host.Services
 
         public void UpdateConfig(AppConfig config)
         {
-            _config = config;
+            lock (_lock)
+            {
+                _config = config;
+            }
         }
 
         public WorkerManager(AppConfig config, string? customPipeName = null)
@@ -50,14 +80,30 @@ namespace AeroSpot.Host.Services
         {
             lock (_lock)
             {
-                if (!IsWorkerRunning) return "Worker a riposo (Non avviato)";
-                if (IsIpcConnected) return $"Worker attivo (PID: {_workerProcess!.Id})";
-                return "Worker in avvio...";
+                if (_workerProcess == null) return LocalizationService.Get("Tray_Worker_Idle");
+                bool running = false;
+                int pid = 0;
+                try
+                {
+                    running = !_workerProcess.HasExited;
+                    if (running) pid = _workerProcess.Id;
+                }
+                catch { running = false; }
+
+                if (!running) return LocalizationService.Get("Tray_Worker_Idle");
+                if (IsIpcConnected) return $"{LocalizationService.Get("Tray_Worker_Active")} (PID: {pid})";
+                return LocalizationService.Get("Tray_Worker_Starting");
             }
         }
 
         private void OnClientConnected()
         {
+            TaskCompletionSource<bool>? tcs;
+            lock (_lock)
+            {
+                tcs = _ipcConnectedTcs;
+            }
+            tcs?.TrySetResult(true);
             AppLogger.Info("IPC: Worker connesso alla Named Pipe.");
             WorkerStatusChanged?.Invoke(GetStatusString());
         }
@@ -74,7 +120,6 @@ namespace AeroSpot.Host.Services
             switch (msg.Type)
             {
                 case IpcMessageType.WorkerReady:
-                    _workerReadyTcs.TrySetResult(true);
                     break;
                 case IpcMessageType.WorkerState:
                     WorkerStatusChanged?.Invoke(msg.Payload);
@@ -102,19 +147,29 @@ namespace AeroSpot.Host.Services
 
         public async Task<bool> EnsureWorkerStartedAsync(int timeoutMs = 25000)
         {
+            TaskCompletionSource<bool> waitTcs;
             lock (_lock)
             {
-                if (IsWorkerRunning && IsIpcConnected)
+                if (_isDisposed) return false;
+
+                if (_workerProcess != null)
+                {
+                    bool exited = false;
+                    try { exited = _workerProcess.HasExited; } catch { exited = true; }
+                    if (exited)
+                    {
+                        try { _workerProcess.Dispose(); } catch { }
+                        _workerProcess = null;
+                    }
+                }
+
+                bool workerRunning = _workerProcess != null;
+                if (workerRunning && IsIpcConnected)
                 {
                     return true;
                 }
 
-                if (_workerProcess != null && _workerProcess.HasExited)
-                {
-                    _workerProcess = null;
-                }
-
-                if (!IsWorkerRunning)
+                if (!workerRunning)
                 {
                     string workerExe = ResolveWorkerExecutable();
                     if (!File.Exists(workerExe))
@@ -140,18 +195,35 @@ namespace AeroSpot.Host.Services
                         WorkingDirectory = Path.GetDirectoryName(workerExe)
                     };
 
+                    _ipcConnectedTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
                     try
                     {
-                        _workerProcess = Process.Start(psi);
-                        if (_workerProcess != null)
+                        var proc = Process.Start(psi);
+                        _workerProcess = proc;
+                        if (proc != null)
                         {
-                            _workerProcess.EnableRaisingEvents = true;
-                            _workerProcess.Exited += (s, e) =>
+                            proc.EnableRaisingEvents = true;
+                            proc.Exited += (s, e) =>
                             {
+                                var exitedProc = s as Process;
                                 int exitCode = -1;
-                                try { exitCode = _workerProcess.ExitCode; } catch { }
+                                if (exitedProc != null)
+                                {
+                                    try { exitCode = exitedProc.ExitCode; } catch { }
+                                }
                                 AppLogger.Info($"Processo Worker terminato. ExitCode: {exitCode}");
-                                lock (_lock) { _workerProcess = null; }
+                                TaskCompletionSource<bool>? pendingTcs = null;
+                                lock (_lock)
+                                {
+                                    if (ReferenceEquals(_workerProcess, exitedProc))
+                                    {
+                                        try { _workerProcess?.Dispose(); } catch { }
+                                        _workerProcess = null;
+                                        pendingTcs = _ipcConnectedTcs;
+                                    }
+                                }
+                                pendingTcs?.TrySetResult(false);
                                 WorkerStatusChanged?.Invoke(GetStatusString());
                             };
                         }
@@ -159,19 +231,25 @@ namespace AeroSpot.Host.Services
                     catch (Exception ex)
                     {
                         AppLogger.Error("Errore durante l'avvio del processo Worker.", ex);
+                        _ipcConnectedTcs = null;
                         return false;
                     }
                 }
+                else if (_ipcConnectedTcs == null || _ipcConnectedTcs.Task.IsCompleted)
+                {
+                    _ipcConnectedTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                }
+
+                waitTcs = _ipcConnectedTcs!;
             }
 
-            // Attesa della connessione IPC senza lanciare eccezioni se il timeout scade
+            if (IsIpcConnected) return true;
+
+            // Attesa event-driven della connessione IPC senza lanciare eccezioni se il timeout scade
             using var cts = new CancellationTokenSource(timeoutMs);
             try
             {
-                while (!IsIpcConnected && !cts.IsCancellationRequested)
-                {
-                    await Task.Delay(50, cts.Token).ConfigureAwait(false);
-                }
+                await waitTcs.Task.WaitAsync(cts.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -368,8 +446,23 @@ namespace AeroSpot.Host.Services
                 proc = _workerProcess;
             }
 
-            if (proc == null || proc.HasExited)
+            if (proc == null)
             {
+                return true;
+            }
+
+            bool alreadyExited = false;
+            try { alreadyExited = proc.HasExited; } catch { alreadyExited = true; }
+            if (alreadyExited)
+            {
+                lock (_lock)
+                {
+                    if (ReferenceEquals(_workerProcess, proc))
+                    {
+                        try { _workerProcess.Dispose(); } catch { }
+                        _workerProcess = null;
+                    }
+                }
                 return true;
             }
 
@@ -377,7 +470,24 @@ namespace AeroSpot.Host.Services
             await _pipeServer.SendMessageAsync(new IpcMessage(IpcMessageType.CloseWorker), timeoutMs).ConfigureAwait(false);
 
             // Attesa uscita pulita
-            bool exited = proc.WaitForExit(timeoutMs);
+            bool exited = false;
+            using (var cts = new CancellationTokenSource(timeoutMs))
+            {
+                try
+                {
+                    await proc.WaitForExitAsync(cts.Token).ConfigureAwait(false);
+                    exited = true;
+                }
+                catch (OperationCanceledException)
+                {
+                    exited = false;
+                }
+                catch
+                {
+                    exited = true;
+                }
+            }
+
             if (!exited)
             {
                 AppLogger.Warn("Il Worker non e' terminato entro il timeout. Terminazione forzata (Kill)...");
@@ -390,7 +500,11 @@ namespace AeroSpot.Host.Services
 
             lock (_lock)
             {
-                _workerProcess = null;
+                if (ReferenceEquals(_workerProcess, proc))
+                {
+                    try { _workerProcess.Dispose(); } catch { }
+                    _workerProcess = null;
+                }
             }
 
             return true;
@@ -402,7 +516,13 @@ namespace AeroSpot.Host.Services
             string exeName = "AeroSpot.Worker.exe";
 
             // 1. Stessa cartella (produzione o pacchetto unificato)
-            string candidate = Path.Combine(baseDir, _config.WorkerRelativePath);
+            string relativePath;
+            lock (_lock)
+            {
+                relativePath = _config.WorkerRelativePath;
+            }
+
+            string candidate = Path.Combine(baseDir, relativePath);
             if (File.Exists(candidate))
             {
                 AppLogger.Info($"Worker localizzato in: {candidate}");
@@ -410,7 +530,7 @@ namespace AeroSpot.Host.Services
             }
 
             string sameDir = Path.Combine(baseDir, exeName);
-            if (File.Exists(sameDir))
+            if (!string.Equals(sameDir, candidate, StringComparison.OrdinalIgnoreCase) && File.Exists(sameDir))
             {
                 AppLogger.Info($"Worker localizzato in: {sameDir}");
                 return sameDir;
@@ -438,7 +558,7 @@ namespace AeroSpot.Host.Services
                 }
             }
 
-            // 3. Ricerca risalendo l'albero fino alla radice della solution
+            // 3. Ricerca risalendo l'albero fino alla radice della solution (escludendo obj/ e release/)
             try
             {
                 var dir = new DirectoryInfo(baseDir);
@@ -447,6 +567,7 @@ namespace AeroSpot.Host.Services
                     if (File.Exists(Path.Combine(dir.FullName, "AeroSpot.sln")))
                     {
                         var found = dir.GetFiles(exeName, SearchOption.AllDirectories)
+                            .Where(f => !IsExcludedScanPath(dir.FullName, f.FullName))
                             .OrderByDescending(f => f.LastWriteTimeUtc)
                             .FirstOrDefault();
                         if (found != null && File.Exists(found.FullName))
@@ -468,6 +589,22 @@ namespace AeroSpot.Host.Services
             return candidate;
         }
 
+        private static bool IsExcludedScanPath(string rootDir, string filePath)
+        {
+            string relative = Path.GetRelativePath(rootDir, filePath);
+            string[] segments = relative.Split(new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar }, StringSplitOptions.RemoveEmptyEntries);
+            foreach (string seg in segments)
+            {
+                if (string.Equals(seg, "obj", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(seg, "release", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(seg, ".git", StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         public void Dispose()
         {
             if (_isDisposed) return;
@@ -475,9 +612,22 @@ namespace AeroSpot.Host.Services
             try
             {
                 _pipeServer.Dispose();
-                if (IsWorkerRunning)
+                lock (_lock)
                 {
-                    _workerProcess?.Kill();
+                    _ipcConnectedTcs?.TrySetResult(false);
+                    if (_workerProcess != null)
+                    {
+                        try
+                        {
+                            if (!_workerProcess.HasExited)
+                            {
+                                _workerProcess.Kill();
+                            }
+                        }
+                        catch { }
+                        try { _workerProcess.Dispose(); } catch { }
+                        _workerProcess = null;
+                    }
                 }
             }
             catch { }

@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.IO.Pipes;
+using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Threading;
 using System.Threading.Tasks;
@@ -39,31 +40,46 @@ namespace AeroSpot.Core.IPC
             _ = RunServerLoopAsync(_cts.Token);
         }
 
+        private NamedPipeServerStream CreateSecurePipeServer()
+        {
+            var pipeSecurity = new PipeSecurity();
+            var currentUserSid = WindowsIdentity.GetCurrent().User;
+            if (currentUserSid != null)
+            {
+                pipeSecurity.AddAccessRule(new PipeAccessRule(currentUserSid, PipeAccessRights.FullControl, AccessControlType.Allow));
+            }
+
+            return NamedPipeServerStreamAcl.Create(
+                _pipeName,
+                PipeDirection.InOut,
+                1, // Single client (one worker at a time)
+                PipeTransmissionMode.Byte,
+                PipeOptions.Asynchronous,
+                0,
+                0,
+                pipeSecurity);
+        }
+
         private async Task RunServerLoopAsync(CancellationToken token)
         {
             while (!token.IsCancellationRequested && !_isDisposed)
             {
+                bool connectedRaised = false;
                 try
                 {
-                    _serverStream = new NamedPipeServerStream(
-                        _pipeName,
-                        PipeDirection.InOut,
-                        1, // Single client (one worker at a time)
-                        PipeTransmissionMode.Byte,
-                        PipeOptions.Asynchronous);
+                    _serverStream = CreateSecurePipeServer();
 
                     await _serverStream.WaitForConnectionAsync(token).ConfigureAwait(false);
 
                     // Security check: ensure caller belongs to the same Windows user
+                    bool clientAuthorized = true;
                     try
                     {
                         string clientUser = _serverStream.GetImpersonationUserName();
                         string currentUser = WindowsIdentity.GetCurrent().Name;
                         if (!string.Equals(clientUser, currentUser, StringComparison.OrdinalIgnoreCase))
                         {
-                            _serverStream.Disconnect();
-                            _serverStream.Dispose();
-                            continue;
+                            clientAuthorized = false;
                         }
                     }
                     catch
@@ -71,6 +87,13 @@ namespace AeroSpot.Core.IPC
                         // Ignore impersonation check failures on platforms where not supported
                     }
 
+                    if (!clientAuthorized)
+                    {
+                        // Let finally block cleanly disconnect and dispose _serverStream without double-dispose
+                        continue;
+                    }
+
+                    connectedRaised = true;
                     ClientConnected?.Invoke();
 
                     // Read loop
@@ -92,7 +115,11 @@ namespace AeroSpot.Core.IPC
                 }
                 finally
                 {
-                    ClientDisconnected?.Invoke();
+                    if (connectedRaised)
+                    {
+                        ClientDisconnected?.Invoke();
+                    }
+
                     try
                     {
                         if (_serverStream != null)
@@ -109,6 +136,8 @@ namespace AeroSpot.Core.IPC
 
         public async Task<bool> SendMessageAsync(IpcMessage message, int timeoutMs = 3000, CancellationToken token = default)
         {
+            if (_isDisposed) return false;
+
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(token);
             cts.CancelAfter(timeoutMs);
 
@@ -120,22 +149,36 @@ namespace AeroSpot.Core.IPC
                 waitMs += 15;
             }
 
-            if (_serverStream == null || !_serverStream.IsConnected) return false;
-
-            await _sendLock.WaitAsync(cts.Token).ConfigureAwait(false);
+            bool lockAcquired = false;
             try
             {
-                if (_serverStream == null || !_serverStream.IsConnected) return false;
-                await IpcMessage.WriteAsync(_serverStream, message, cts.Token).ConfigureAwait(false);
+                await _sendLock.WaitAsync(cts.Token).ConfigureAwait(false);
+                lockAcquired = true;
+
+                var stream = _serverStream;
+                if (stream == null || !stream.IsConnected) return false;
+
+                await IpcMessage.WriteAsync(stream, message, cts.Token).ConfigureAwait(false);
                 return true;
             }
-            catch
+            catch (OperationCanceledException)
+            {
+                return false;
+            }
+            catch (ObjectDisposedException)
+            {
+                return false;
+            }
+            catch (IOException)
             {
                 return false;
             }
             finally
             {
-                _sendLock.Release();
+                if (lockAcquired)
+                {
+                    try { _sendLock.Release(); } catch (ObjectDisposedException) { }
+                }
             }
         }
 

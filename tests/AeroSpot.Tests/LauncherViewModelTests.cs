@@ -1,6 +1,9 @@
 using System;
+using System.Collections.Generic;
+using System.IO;
 using System.Linq;
-using AeroSpot.Worker.Models;
+using AeroSpot.Core.Config;
+using AeroSpot.Core.Search;
 using AeroSpot.Worker.ViewModels;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -9,10 +12,52 @@ namespace AeroSpot.Tests
     [TestClass]
     public class LauncherViewModelTests
     {
+        private string _tempDir = null!;
+        private string _tempDbPath = null!;
+
+        [TestInitialize]
+        public void Setup()
+        {
+            PathFilter.ResetToDefault();
+            _tempDir = Path.Combine(Path.GetTempPath(), $"AeroSpot_LvmTest_{Guid.NewGuid():N}");
+            Directory.CreateDirectory(_tempDir);
+            _tempDbPath = Path.Combine(_tempDir, "test_launcher.db");
+        }
+
+        [TestCleanup]
+        public void Cleanup()
+        {
+            PathFilter.ResetToDefault();
+            try
+            {
+                if (Directory.Exists(_tempDir))
+                {
+                    Directory.Delete(_tempDir, recursive: true);
+                }
+            }
+            catch { }
+        }
+
+        private SqliteIndexDatabase CreateSeededDb()
+        {
+            var db = new SqliteIndexDatabase(_tempDbPath);
+            db.Initialize();
+            PathFilter.Configure(new[] { "C", "E" }, Array.Empty<string>());
+            db.UpsertBatch(new List<IndexedItem>
+            {
+                new IndexedItem("Google Chrome", @"C:\Program Files\Google\Chrome\Application\chrome.exe", "Applicazione", "chrome.exe", isApp: true),
+                new IndexedItem("Blocco note", @"C:\Windows\System32\notepad.exe", "Applicazione", "notepad.exe", isApp: true),
+                new IndexedItem("Gestione attività", @"C:\Windows\System32\taskmgr.exe", "Applicazione", "taskmgr.exe", isApp: true),
+                new IndexedItem("Calcolatrice", @"C:\Windows\System32\calc.exe", "Applicazione", "calc.exe", isApp: true)
+            });
+            return db;
+        }
+
         [TestMethod]
         public void InitialState_HasDefaultResults_NoPrematureSelection()
         {
-            var vm = new LauncherViewModel();
+            using var db = CreateSeededDb();
+            using var vm = new LauncherViewModel(db);
 
             Assert.IsNotEmpty(vm.FilteredResults, "Dovrebbero esserci risultati predefiniti caricati.");
             Assert.IsTrue(vm.HasResults, "HasResults dovrebbe essere true.");
@@ -24,7 +69,8 @@ namespace AeroSpot.Tests
         [TestMethod]
         public void SearchFiltering_FiltersCorrectly_CaseInsensitive()
         {
-            var vm = new LauncherViewModel();
+            using var db = CreateSeededDb();
+            using var vm = new LauncherViewModel(db);
 
             vm.SearchText = "chrome";
             Assert.IsTrue(vm.HasSearchText);
@@ -45,7 +91,8 @@ namespace AeroSpot.Tests
         [TestMethod]
         public void SearchWithSpaces_PreservesSpaces_AndFindsMatches()
         {
-            var vm = new LauncherViewModel();
+            using var db = CreateSeededDb();
+            using var vm = new LauncherViewModel(db);
 
             // Cerca "Gestione attività" contenente spazio
             vm.SearchText = "Gestione attività";
@@ -57,7 +104,8 @@ namespace AeroSpot.Tests
         [TestMethod]
         public void Navigation_MoveSelectionDownAndUp_CyclesWrapAround()
         {
-            var vm = new LauncherViewModel();
+            using var db = CreateSeededDb();
+            using var vm = new LauncherViewModel(db);
             int total = vm.FilteredResults.Count;
             Assert.IsGreaterThanOrEqualTo(2, total);
 
@@ -90,7 +138,8 @@ namespace AeroSpot.Tests
         [TestMethod]
         public void EmptyResults_StateIsConsistent()
         {
-            var vm = new LauncherViewModel();
+            using var db = CreateSeededDb();
+            using var vm = new LauncherViewModel(db);
             vm.SearchText = "NonEsisteAssolutamenteQuestoFile123456789";
 
             Assert.IsEmpty(vm.FilteredResults);
@@ -117,55 +166,40 @@ namespace AeroSpot.Tests
             Assert.AreEqual(620.0, expectedLeft);
             Assert.AreEqual(194.4, expectedTop, 0.001);
         }
+
         [TestMethod]
         public void MultiWordSearch_MatchesAllTerms()
         {
-            string tempDb = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"AeroSpot_MultiWordTest_{Guid.NewGuid():N}.db");
-            try
+            using var db = new SqliteIndexDatabase(_tempDbPath);
+            db.Initialize();
+            db.UpsertBatch(new List<IndexedItem>
             {
-                using (var db = new AeroSpot.Core.Search.SqliteIndexDatabase(tempDb))
+                new IndexedItem
                 {
-                    db.UpsertBatch(new System.Collections.Generic.List<AeroSpot.Core.Search.IndexedItem>
-                    {
-                        new AeroSpot.Core.Search.IndexedItem
-                        {
-                            Title = "AeroSpot — Roadmap",
-                            FullPath = @"E:\Antigravity\AeroSpot\Progetto\ROADMAP.md",
-                            Category = "Documento"
-                        }
-                    });
-
-                    var vm = new LauncherViewModel(db);
-
-                    // Cerca "aero roadmap"
-                    vm.SearchText = "aero roadmap";
-                    Assert.IsNotEmpty(vm.FilteredResults);
-                    Assert.IsTrue(vm.FilteredResults.Any(r => r.Title.Contains("Roadmap", StringComparison.OrdinalIgnoreCase) || r.Subtitle.Contains("ROADMAP", StringComparison.OrdinalIgnoreCase)));
-
-                    // Cerca termini in ordine inverso: "roadmap aero"
-                    vm.SearchText = "roadmap aero";
-                    Assert.IsNotEmpty(vm.FilteredResults);
-                    Assert.IsTrue(vm.FilteredResults.Any(r => r.Title.Contains("Roadmap", StringComparison.OrdinalIgnoreCase) || r.Subtitle.Contains("ROADMAP", StringComparison.OrdinalIgnoreCase)));
+                    Title = "AeroSpot — Roadmap",
+                    FullPath = @"E:\Antigravity\AeroSpot\Progetto\ROADMAP.md",
+                    Category = "Documento"
                 }
-            }
-            finally
-            {
-                try
-                {
-                    if (System.IO.File.Exists(tempDb)) System.IO.File.Delete(tempDb);
-                    string wal = tempDb + "-wal";
-                    if (System.IO.File.Exists(wal)) System.IO.File.Delete(wal);
-                    string shm = tempDb + "-shm";
-                    if (System.IO.File.Exists(shm)) System.IO.File.Delete(shm);
-                }
-                catch { }
-            }
+            });
+
+            using var vm = new LauncherViewModel(db);
+
+            // Cerca "aero roadmap"
+            vm.SearchText = "aero roadmap";
+            Assert.IsNotEmpty(vm.FilteredResults);
+            Assert.IsTrue(vm.FilteredResults.Any(r => r.Title.Contains("Roadmap", StringComparison.OrdinalIgnoreCase) || r.Subtitle.Contains("ROADMAP", StringComparison.OrdinalIgnoreCase)));
+
+            // Cerca termini in ordine inverso: "roadmap aero"
+            vm.SearchText = "roadmap aero";
+            Assert.IsNotEmpty(vm.FilteredResults);
+            Assert.IsTrue(vm.FilteredResults.Any(r => r.Title.Contains("Roadmap", StringComparison.OrdinalIgnoreCase) || r.Subtitle.Contains("ROADMAP", StringComparison.OrdinalIgnoreCase)));
         }
 
         [TestMethod]
         public void EscapeLogic_ClearsQueryFirst_ThenRequestsHide()
         {
-            var vm = new LauncherViewModel();
+            using var db = CreateSeededDb();
+            using var vm = new LauncherViewModel(db);
             vm.SearchText = "qualcosa";
 
             bool hideRequested = false;
@@ -194,8 +228,8 @@ namespace AeroSpot.Tests
         [TestMethod]
         public void ResetSearchImmediate_ClearsSearchTextAndFilteredResultsSynchronously()
         {
-            var vm = new LauncherViewModel();
-            vm.EnableAsyncDebounce = true;
+            using var db = CreateSeededDb();
+            using var vm = new LauncherViewModel(db) { EnableAsyncDebounce = true };
 
             vm.SearchText = "calc";
             Assert.AreEqual("calc", vm.SearchText);
@@ -214,7 +248,8 @@ namespace AeroSpot.Tests
         [TestMethod]
         public void LauncherViewModel_EmptySearch_DoesNotBlockUI()
         {
-            var vm = new LauncherViewModel(enableAsyncDebounce: false);
+            using var db = CreateSeededDb();
+            using var vm = new LauncherViewModel(db, enableAsyncDebounce: false);
             vm.SearchText = "test";
             Assert.IsTrue(vm.HasSearchText);
 

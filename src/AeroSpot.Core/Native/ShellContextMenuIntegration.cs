@@ -8,31 +8,47 @@ namespace AeroSpot.Core.Native
 {
     public static class ShellContextMenuIntegration
     {
-        private const string ImageKeyPath = @"Software\Classes\SystemFileAssociations\image\shell\AeroSpot";
-        private const string VideoKeyPath = @"Software\Classes\SystemFileAssociations\video\shell\AeroSpot";
-        private const string AudioKeyPath = @"Software\Classes\SystemFileAssociations\audio\shell\AeroSpot";
-        private const string PdfKeyPath = @"Software\Classes\SystemFileAssociations\.pdf\shell\AeroSpot";
-        private const string DocxKeyPath = @"Software\Classes\SystemFileAssociations\.docx\shell\AeroSpot";
-        private const string TxtKeyPath = @"Software\Classes\SystemFileAssociations\.txt\shell\AeroSpot";
-        private const string MdKeyPath = @"Software\Classes\SystemFileAssociations\.md\shell\AeroSpot";
+        private const string DefaultBaseClassesKey = @"Software\Classes\SystemFileAssociations";
 
-        private static readonly string[] AllKeyPaths = new[]
+        private static string NormalizeBaseKey(string? baseClassesKeyOverride)
         {
-            ImageKeyPath,
-            VideoKeyPath,
-            AudioKeyPath,
-            PdfKeyPath,
-            DocxKeyPath,
-            TxtKeyPath,
-            MdKeyPath
-        };
+            return string.IsNullOrWhiteSpace(baseClassesKeyOverride)
+                ? DefaultBaseClassesKey
+                : baseClassesKeyOverride.Trim().TrimEnd('\\');
+        }
 
-        public static bool IsRegistered()
+        private static string[] GetAllKeyPaths(string? baseClassesKeyOverride)
+        {
+            string baseKey = NormalizeBaseKey(baseClassesKeyOverride);
+            return new[]
+            {
+                $@"{baseKey}\image\shell\AeroSpot",
+                $@"{baseKey}\video\shell\AeroSpot",
+                $@"{baseKey}\audio\shell\AeroSpot",
+                $@"{baseKey}\.pdf\shell\AeroSpot",
+                $@"{baseKey}\.docx\shell\AeroSpot",
+                $@"{baseKey}\.txt\shell\AeroSpot",
+                $@"{baseKey}\.md\shell\AeroSpot",
+                $@"{baseKey}\.rtf\shell\AeroSpot",
+                $@"{baseKey}\.odt\shell\AeroSpot"
+            };
+        }
+
+        private static string GetLocalized(string key, string lang)
+        {
+            var dict = string.Equals(lang, "it", StringComparison.OrdinalIgnoreCase)
+                ? LocalizationService.Italian
+                : LocalizationService.English;
+            return dict.TryGetValue(key, out string? value) ? value : LocalizationService.Get(key);
+        }
+
+        public static bool IsRegistered(string? baseClassesKeyOverride = null)
         {
             try
             {
-                using var key = Registry.CurrentUser.OpenSubKey(ImageKeyPath);
-                using var pdfKey = Registry.CurrentUser.OpenSubKey(PdfKeyPath);
+                string baseKey = NormalizeBaseKey(baseClassesKeyOverride);
+                using var key = Registry.CurrentUser.OpenSubKey($@"{baseKey}\image\shell\AeroSpot");
+                using var pdfKey = Registry.CurrentUser.OpenSubKey($@"{baseKey}\.pdf\shell\AeroSpot");
                 return key != null && pdfKey != null;
             }
             catch
@@ -41,7 +57,7 @@ namespace AeroSpot.Core.Native
             }
         }
 
-        public static void Register(string appBaseDir, string language)
+        public static void Register(string appBaseDir, string language, string? baseClassesKeyOverride = null)
         {
             try
             {
@@ -67,66 +83,73 @@ namespace AeroSpot.Core.Native
 
                 string lang = LocalizationService.ResolveLanguageCode(language);
                 bool isIt = lang == "it";
+                string baseKey = NormalizeBaseKey(baseClassesKeyOverride);
+                string rootLabel = GetLocalized("ShellMenu_Root", lang);
 
                 // Pulisce prima eventuali registrazioni precedenti
-                Unregister();
+                Unregister(baseClassesKeyOverride);
 
                 // 1. Menu a cascata per IMMAGINI (JPG, PNG, WEBP, BMP, GIF, ecc.)
                 RegisterCascadeMenu(
-                    ImageKeyPath,
+                    $@"{baseKey}\image\shell\AeroSpot",
+                    rootLabel,
                     launcherExe,
                     new (string id, string text, string cmd, string? appliesTo)[]
                     {
-                        ("01_ConvertJpg", isIt ? "Converti in JPG" : "Convert to JPG", $"\"{toolsExe}\" --convert-jpg \"%1\"", "NOT System.FileExtension:=.jpg AND NOT System.FileExtension:=.jpeg"),
-                        ("02_ConvertPng", isIt ? "Converti in PNG" : "Convert to PNG", $"\"{toolsExe}\" --convert-png \"%1\"", "NOT System.FileExtension:=.png"),
-                        ("03_ConvertPdf", isIt ? "Converti in PDF" : "Convert to PDF", $"\"{toolsExe}\" --convert-pdf \"%1\"", null),
+                        ("01_ConvertJpg", GetLocalized("ShellMenu_ConvertJpg", lang), $"\"{toolsExe}\" --convert-jpg \"%1\"", "NOT System.FileExtension:=.jpg AND NOT System.FileExtension:=.jpeg"),
+                        ("02_ConvertPng", GetLocalized("ShellMenu_ConvertPng", lang), $"\"{toolsExe}\" --convert-png \"%1\"", "NOT System.FileExtension:=.png"),
+                        ("03_ConvertPdf", GetLocalized("ShellMenu_ConvertPdf", lang), $"\"{toolsExe}\" --convert-pdf \"%1\"", null),
                         ("04_ImagesToPdf", isIt ? "Unisci foto in unico PDF" : "Combine photos into single PDF", $"\"{toolsExe}\" --images-to-pdf \"%1\"", null),
-                        ("05_RemoveBg", isIt ? "Rimuovi sfondo (AI)" : "Remove Background (AI)", $"\"{toolsExe}\" --remove-bg \"%1\"", null)
+                        ("05_RemoveBg", GetLocalized("ShellMenu_RemoveBg", lang), $"\"{toolsExe}\" --remove-bg \"%1\"", null)
                     }
                 );
 
                 // 2. Menu a cascata per DOCUMENTI PDF (.pdf) - Supporto unione aggregata multi-file
                 RegisterCascadeMenu(
-                    PdfKeyPath,
+                    $@"{baseKey}\.pdf\shell\AeroSpot",
+                    rootLabel,
                     launcherExe,
                     new (string id, string text, string cmd, string? appliesTo)[]
                     {
-                        ("01_MergePdf", isIt ? "Unisci PDF selezionati" : "Merge selected PDFs", $"\"{toolsExe}\" --merge-pdf \"%1\"", null)
+                        ("01_MergePdf", GetLocalized("ShellMenu_MergePdf", lang), $"\"{toolsExe}\" --merge-pdf \"%1\"", null)
                     }
                 );
 
                 // 3. Menu a cascata per VIDEO (MP4, MKV, AVI, MOV, WMV, WEBM)
                 RegisterCascadeMenu(
-                    VideoKeyPath,
+                    $@"{baseKey}\video\shell\AeroSpot",
+                    rootLabel,
                     launcherExe,
                     new (string id, string text, string cmd, string? appliesTo)[]
                     {
-                        ("01_ConvertMp4", isIt ? "Converti in MP4" : "Convert to MP4", $"\"{toolsExe}\" --convert-mp4 \"%1\"", "NOT System.FileExtension:=.mp4"),
-                        ("02_ExtractMp3", isIt ? "Estrai audio MP3" : "Extract MP3 Audio", $"\"{toolsExe}\" --extract-mp3 \"%1\"", null),
-                        ("03_ExtractWav", isIt ? "Estrai audio WAV" : "Extract WAV Audio", $"\"{toolsExe}\" --extract-wav \"%1\"", null)
+                        ("01_ConvertMp4", GetLocalized("ShellMenu_ConvertMp4", lang), $"\"{toolsExe}\" --convert-mp4 \"%1\"", "NOT System.FileExtension:=.mp4"),
+                        ("02_ExtractMp3", GetLocalized("ShellMenu_ExtractMp3", lang), $"\"{toolsExe}\" --extract-mp3 \"%1\"", null),
+                        ("03_ExtractWav", GetLocalized("ShellMenu_ExtractWav", lang), $"\"{toolsExe}\" --extract-wav \"%1\"", null)
                     }
                 );
 
                 // 4. Menu a cascata per AUDIO (MP3, WAV, FLAC, AAC, OGG)
                 RegisterCascadeMenu(
-                    AudioKeyPath,
+                    $@"{baseKey}\audio\shell\AeroSpot",
+                    rootLabel,
                     launcherExe,
                     new (string id, string text, string cmd, string? appliesTo)[]
                     {
-                        ("01_ConvertMp3", isIt ? "Converti in MP3" : "Convert to MP3", $"\"{toolsExe}\" --extract-mp3 \"%1\"", "NOT System.FileExtension:=.mp3"),
-                        ("02_ConvertWav", isIt ? "Converti in WAV" : "Convert to WAV", $"\"{toolsExe}\" --extract-wav \"%1\"", "NOT System.FileExtension:=.wav")
+                        ("01_ConvertMp3", GetLocalized("Spotlight_Menu_ConvertMp3", lang), $"\"{toolsExe}\" --extract-mp3 \"%1\"", "NOT System.FileExtension:=.mp3"),
+                        ("02_ConvertWav", GetLocalized("Spotlight_Menu_ConvertWav", lang), $"\"{toolsExe}\" --extract-wav \"%1\"", "NOT System.FileExtension:=.wav")
                     }
                 );
 
-                // 5. Menu per DOCUMENTI di testo (.docx, .txt, .md)
-                foreach (string docKey in new[] { DocxKeyPath, TxtKeyPath, MdKeyPath })
+                // 5. Menu per DOCUMENTI di testo (.docx, .txt, .md, .rtf, .odt)
+                foreach (string ext in new[] { ".docx", ".txt", ".md", ".rtf", ".odt" })
                 {
                     RegisterCascadeMenu(
-                        docKey,
+                        $@"{baseKey}\{ext}\shell\AeroSpot",
+                        rootLabel,
                         launcherExe,
                         new (string id, string text, string cmd, string? appliesTo)[]
                         {
-                            ("01_ConvertPdf", isIt ? "Converti in PDF" : "Convert to PDF", $"\"{toolsExe}\" --convert-pdf \"%1\"", null)
+                            ("01_ConvertPdf", GetLocalized("ShellMenu_ConvertPdf", lang), $"\"{toolsExe}\" --convert-pdf \"%1\"", null)
                         }
                     );
                 }
@@ -141,13 +164,14 @@ namespace AeroSpot.Core.Native
 
         private static void RegisterCascadeMenu(
             string parentKeyPath,
+            string rootLabel,
             string iconExe,
             (string id, string text, string cmd, string? appliesTo)[] subCommands)
         {
             using var parentKey = Registry.CurrentUser.CreateSubKey(parentKeyPath);
             if (parentKey == null) return;
 
-            parentKey.SetValue("MUIVerb", "AeroSpot");
+            parentKey.SetValue("MUIVerb", rootLabel);
             parentKey.SetValue("SubCommands", "");
             parentKey.SetValue("MultiSelectModel", "Player");
             if (File.Exists(iconExe)) parentKey.SetValue("Icon", $"\"{iconExe}\"");
@@ -174,11 +198,11 @@ namespace AeroSpot.Core.Native
             }
         }
 
-        public static void Unregister()
+        public static void Unregister(string? baseClassesKeyOverride = null)
         {
             try
             {
-                foreach (string path in AllKeyPaths)
+                foreach (string path in GetAllKeyPaths(baseClassesKeyOverride))
                 {
                     Registry.CurrentUser.DeleteSubKeyTree(path, throwOnMissingSubKey: false);
                 }

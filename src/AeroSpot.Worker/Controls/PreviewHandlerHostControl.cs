@@ -410,8 +410,6 @@ namespace AeroSpot.Worker.Controls
 
         private void NotifyViewportChanged()
         {
-            ZoomChanged?.Invoke(_zoomScale);
-
             GetHostPixelSize(out double baseW, out _);
             double scaledW = baseW * _zoomScale;
             double maxOffset = Math.Max(0.0, scaledW - baseW);
@@ -616,17 +614,6 @@ namespace AeroSpot.Worker.Controls
             }
 
             return base.WndProc(hwnd, msg, wParam, lParam, ref handled);
-        }
-
-        public double ZoomScale => _zoomScale;
-        public double ZoomPanX => _zoomPanX;
-        public double ZoomPanY => _zoomPanY;
-        public IntPtr ViewportHandle => _hwndViewport;
-        public event Action<double>? ZoomChanged;
-
-        public void ZoomAtScreenPoint(int delta, int screenX, int screenY)
-        {
-            ApplyCtrlWheelZoom(delta, screenX, screenY);
         }
 
         public void ForwardMouseWheel(int delta, bool isCtrl)

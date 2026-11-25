@@ -124,7 +124,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ## 5. FFMpegCore & FFmpeg (Out-of-Process Media Transcoding & Probing)
 
-- **Component:** `FFMpegCore`
+- **Component:** `FFMpegCore` & `FFMpegInstaller.Windows.x64` (`0.1.10`)
 - **Author:** Tobias Haimerl / FFMpegCore Contributors
 - **License:** MIT License
 - **Project URL:** https://github.com/rosenbjerg/FFMpegCore
@@ -153,10 +153,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-- **Underlying FFmpeg Binaries (`ffmpeg.exe`, `ffprobe.exe`):**
+- **Underlying FFmpeg Binaries (`ffmpeg.exe`, `ffprobe.exe` via `FFMpegInstaller.Windows.x64`):**
   - **License:** GNU Lesser General Public License (LGPL) version 2.1 or later.
   - **Project URL:** https://ffmpeg.org
-  - **Architecture Compliance:** AeroSpot does not link against FFmpeg C/C++ libraries or incorporate FFmpeg object code. FFmpeg is executed strictly as a standalone, out-of-process CLI tool (`Process.Start`) managed dynamically for container audio conversion and container metadata probing.
+  - **Architecture Compliance:** AeroSpot does not link against FFmpeg C/C++ libraries or incorporate FFmpeg object code. FFmpeg binaries are bundled as standalone CLI executables via `FFMpegInstaller.Windows.x64` and executed strictly out-of-process (`Process.Start`) for container audio conversion and metadata probing.
 
 ---
 
@@ -177,6 +177,6 @@ SOFTWARE.
 - **Author:** empira Software GmbH
 - **License:** MIT License
 - **Project URL:** https://github.com/empira/PDFsharp
-- **Usage:** Used in `AeroSpot.Worker` and `AeroSpot.Tools` strictly for lossless multi-file PDF merging (`--merge-pdf`).
+- **Usage:** Used in `AeroSpot.Worker` and `AeroSpot.Tools` (moved out of `AeroSpot.Core`) for lossless multi-file PDF merging (`--merge-pdf`) and document/image PDF export.
 
 

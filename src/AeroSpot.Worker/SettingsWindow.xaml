@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:AeroSpot.Worker"
         xmlns:loc="clr-namespace:AeroSpot.Worker.Localization"
-        Title="Impostazioni AeroSpot"
+        Title="{loc:Loc Settings_Title}"
         Width="680" Height="730"
         WindowStartupLocation="CenterScreen"
         WindowStyle="None" AllowsTransparency="True"
@@ -154,60 +154,6 @@
             </Setter>
         </Style>
 
-        <!-- Barra di Scorrimento Sottile e Scura (macOS / Fluent dark gray) -->
-        <Style x:Key="SlimDarkScrollBarThumb" TargetType="{x:Type Thumb}">
-            <Setter Property="OverridesDefaultStyle" Value="True"/>
-            <Setter Property="IsTabStop" Value="False"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="{x:Type Thumb}">
-                        <Border Background="#45454A" CornerRadius="3" Margin="1" />
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter Property="Background" Value="#71717A"/>
-                            </Trigger>
-                            <Trigger Property="IsDragging" Value="True">
-                                <Setter Property="Background" Value="#A1A1AA"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-
-        <Style x:Key="SlimDarkScrollBar" TargetType="{x:Type ScrollBar}">
-            <Setter Property="OverridesDefaultStyle" Value="True"/>
-            <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="{x:Type ScrollBar}">
-                        <Grid Background="Transparent" SnapsToDevicePixels="True">
-                            <Track x:Name="PART_Track" IsDirectionReversed="True">
-                                <Track.DecreaseRepeatButton>
-                                    <RepeatButton Command="{x:Static ScrollBar.PageUpCommand}" Opacity="0" Focusable="False" />
-                                </Track.DecreaseRepeatButton>
-                                <Track.Thumb>
-                                    <Thumb Style="{StaticResource SlimDarkScrollBarThumb}" />
-                                </Track.Thumb>
-                                <Track.IncreaseRepeatButton>
-                                    <RepeatButton Command="{x:Static ScrollBar.PageDownCommand}" Opacity="0" Focusable="False" />
-                                </Track.IncreaseRepeatButton>
-                            </Track>
-                        </Grid>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="Orientation" Value="Vertical">
-                                <Setter Property="Width" Value="7"/>
-                                <Setter Property="MinWidth" Value="7"/>
-                            </Trigger>
-                            <Trigger Property="Orientation" Value="Horizontal">
-                                <Setter Property="Height" Value="7"/>
-                                <Setter Property="MinHeight" Value="7"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
     </Window.Resources>
 
     <Border Background="#16191E" BorderBrush="#334155" BorderThickness="1" CornerRadius="12" Padding="24">
@@ -223,7 +169,7 @@
             </Grid.RowDefinitions>
 
             <!-- Header -->
-            <Grid Grid.Row="0" Margin="0,0,0,16">
+            <Grid Grid.Row="0" Margin="0,0,0,16" Background="Transparent" MouseLeftButtonDown="Header_MouseLeftButtonDown">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="*"/>
@@ -392,7 +338,7 @@
                                 <Border Grid.Column="1" Background="#0F172A" BorderBrush="#475569" BorderThickness="1" CornerRadius="6" Height="36" Cursor="Hand" MouseLeftButtonDown="SpotlightBorder_Click">
                                     <TextBox x:Name="TxtSpotlightHotkey" Background="Transparent" Foreground="#38BDF8" BorderThickness="0"
                                              FontSize="13.5" FontWeight="Bold" HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
-                                             IsReadOnly="True" Cursor="Hand" Text="Alt + Spazio"
+                                             IsReadOnly="True" Cursor="Hand" Text=""
                                              GotFocus="HotkeyBox_GotFocus" LostFocus="HotkeyBox_LostFocus"
                                              PreviewKeyDown="SpotlightHotkey_PreviewKeyDown" />
                                 </Border>
@@ -411,7 +357,7 @@
                                 <Border Grid.Column="1" Background="#0F172A" BorderBrush="#475569" BorderThickness="1" CornerRadius="6" Height="36" Cursor="Hand" MouseLeftButtonDown="QuickLookBorder_Click">
                                     <TextBox x:Name="TxtQuickLookHotkey" Background="Transparent" Foreground="#38BDF8" BorderThickness="0"
                                              FontSize="13.5" FontWeight="Bold" HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
-                                             IsReadOnly="True" Cursor="Hand" Text="Spazio"
+                                             IsReadOnly="True" Cursor="Hand" Text=""
                                              GotFocus="HotkeyBox_GotFocus" LostFocus="HotkeyBox_LostFocus"
                                              PreviewKeyDown="QuickLookHotkey_PreviewKeyDown" />
                                 </Border>
@@ -430,7 +376,7 @@
                                 <Border Grid.Column="1" Background="#0F172A" BorderBrush="#475569" BorderThickness="1" CornerRadius="6" Height="36" Cursor="Hand" MouseLeftButtonDown="DeleteBorder_Click">
                                     <TextBox x:Name="TxtDeleteHotkey" Background="Transparent" Foreground="#38BDF8" BorderThickness="0"
                                              FontSize="13.5" FontWeight="Bold" HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
-                                             IsReadOnly="True" Cursor="Hand" Text="Canc"
+                                             IsReadOnly="True" Cursor="Hand" Text=""
                                              GotFocus="HotkeyBox_GotFocus" LostFocus="HotkeyBox_LostFocus"
                                              PreviewKeyDown="DeleteHotkey_PreviewKeyDown" />
                                 </Border>
@@ -535,7 +481,7 @@
                                     <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" x:Name="TxtDataModeInfo" Text="Modalità: Standard (%LocalAppData%\AeroSpot)" Foreground="#94A3B8" FontSize="11.5" VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="0" x:Name="TxtDataModeInfo" Text="{loc:Loc Settings_DataDir_Mode_Standard}" Foreground="#94A3B8" FontSize="11.5" VerticalAlignment="Center"/>
                                 <TextBlock Grid.Column="1" x:Name="TxtIndexDiskUsage" Text="" Foreground="#38BDF8" FontSize="11.5" FontWeight="SemiBold" VerticalAlignment="Center"/>
                             </Grid>
 
@@ -550,7 +496,7 @@
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Text="{loc:Loc Settings_Updates_Title}" Foreground="#38BDF8" FontSize="15" FontWeight="Bold" VerticalAlignment="Center"/>
-                                <TextBlock x:Name="TxtCurrentAppVersion" Grid.Column="1" Text="v1.6.1" Foreground="#64748B" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                <TextBlock x:Name="TxtCurrentAppVersion" Grid.Column="1" Text="" Foreground="#64748B" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
                             </Grid>
 
                             <TextBlock Text="{loc:Loc Settings_Updates_Desc}" Foreground="#CBD5E1" FontSize="12" Margin="0,0,0,10" TextWrapping="Wrap"/>
@@ -719,7 +665,7 @@
                                 </Button>
                             </Grid>
 
-                            <TextBlock x:Name="TxtAppVersionInfo" Text="AeroSpot v1.6.1 (Build 20.11.2026)" Foreground="#64748B" FontSize="11.5" Margin="0,4,0,0"/>
+                            <TextBlock x:Name="TxtAppVersionInfo" Text="" Foreground="#64748B" FontSize="11.5" Margin="0,4,0,0"/>
                         </StackPanel>
                     </Border>
 
@@ -931,7 +877,7 @@
                                                       Foreground="#F8FAFC" FontSize="13" VerticalAlignment="Center" Cursor="Hand" Margin="0,0,10,0"/>
 
                                             <!-- Badge Standard: solo etichetta testuale discreta, senza sfondo a bottone, allineata a destra -->
-                                            <TextBlock Grid.Column="1" Text="Standard" FontSize="11.5" Foreground="#64748B" FontStyle="Italic"
+                                            <TextBlock Grid.Column="1" Text="{loc:Loc Settings_Exclusions_Badge_Standard}" FontSize="11.5" Foreground="#64748B" FontStyle="Italic"
                                                        HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,8,0"
                                                        Visibility="{Binding IsCustom, Converter={StaticResource InverseBoolToVisibility}}"/>
 
@@ -939,7 +885,7 @@
                                             <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Width="92"
                                                         Visibility="{Binding IsCustom, Converter={StaticResource BoolToVisibility}}">
                                                 <Border Background="#1E3A5F" CornerRadius="4" Width="60" Height="24" Margin="0,0,6,0" VerticalAlignment="Center">
-                                                    <TextBlock Text="Custom" FontSize="11.5" Foreground="#38BDF8" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                    <TextBlock Text="{loc:Loc Settings_Exclusions_Badge_Custom}" FontSize="11.5" Foreground="#38BDF8" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                                 </Border>
                                                 <Button Content="🗑" Width="26" Height="24" Background="Transparent" Foreground="#EF4444"
                                                         BorderThickness="0" Cursor="Hand" ToolTip="{loc:Loc Settings_Exclusions_Btn_Delete_Tooltip}"

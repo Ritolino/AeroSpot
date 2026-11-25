@@ -4,12 +4,12 @@ using System.IO;
 namespace AeroSpot.Core.Config
 {
     /// <summary>
-    /// Resolves the application data directory based on portable marker (portable.txt) or %LocalAppData%.
+    /// Resolves the application data directory based on test override, portable marker (portable.txt), or %LocalAppData%.
     /// </summary>
     public static class AppDataPath
     {
         private static readonly object _lock = new object();
-        private static string? _cachedDataDir;
+        private static volatile string? _cachedDataDir;
         private static bool _isPortable;
         private static bool _fallbackOccurred;
 
@@ -64,6 +64,11 @@ namespace AeroSpot.Core.Config
             }
         }
 
+        /// <summary>
+        /// Alias for <see cref="ResetCache"/> intended for automated test cleanup.
+        /// </summary>
+        public static void ResetCacheForTesting() => ResetCache();
+
         private static void EnsureInitialized()
         {
             if (_cachedDataDir != null) return;
@@ -71,6 +76,19 @@ namespace AeroSpot.Core.Config
             lock (_lock)
             {
                 if (_cachedDataDir != null) return;
+
+                string? testDataDir = Environment.GetEnvironmentVariable("AEROSPOT_TEST_DATA_DIR");
+                if (!string.IsNullOrWhiteSpace(testDataDir))
+                {
+                    if (!Directory.Exists(testDataDir))
+                    {
+                        Directory.CreateDirectory(testDataDir);
+                    }
+                    _isPortable = false;
+                    _fallbackOccurred = false;
+                    _cachedDataDir = testDataDir;
+                    return;
+                }
 
                 string baseDir = AppDomain.CurrentDomain.BaseDirectory;
                 string markerPath = Path.Combine(baseDir, "portable.txt");

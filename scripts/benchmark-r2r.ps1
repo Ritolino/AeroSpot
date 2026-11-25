@@ -35,7 +35,7 @@ function Measure-WorkerStartup($exePath) {
     $sorted = $times | Sort-Object
     $min = $sorted[0]
     $max = $sorted[-1]
-    $med = $sorted[5]
+    $med = ($sorted[4] + $sorted[5]) / 2.0
     return [PSCustomObject]@{
         Min = $min
         Median = $med
@@ -44,8 +44,8 @@ function Measure-WorkerStartup($exePath) {
     }
 }
 
-$benchNoR2R = Measure-WorkerStartup "$dirNoR2R\AeroSpot.Worker.exe"
-$benchR2R = Measure-WorkerStartup "$dirR2R\AeroSpot.Worker.exe"
+$benchNoR2R = Measure-WorkerStartup "$dirNoR2R\app\AeroSpot.Worker.exe"
+$benchR2R = Measure-WorkerStartup "$dirR2R\app\AeroSpot.Worker.exe"
 
 Write-Output "=== RISULTATI CONFRONTO READYTORUN ==="
 Write-Output "Senza ReadyToRun:"

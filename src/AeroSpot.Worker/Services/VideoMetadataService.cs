@@ -15,6 +15,7 @@ namespace AeroSpot.Worker.Services
         public uint Height { get; set; }
         public TimeSpan Duration { get; set; }
         public int RotationDegrees { get; set; } // 0, 90, 180, 270
+        public string? VideoCodec { get; set; }
         public string AudioCodec { get; set; } = string.Empty;
         public int AudioChannels { get; set; } = 2;
         public uint SampleRate { get; set; } = 48000;
@@ -44,20 +45,13 @@ namespace AeroSpot.Worker.Services
                         int rotation = vStream != null ? vStream.Rotation : 0;
                         var duration = analysis.Duration;
 
+                        string? videoCodec = vStream?.CodecName;
                         string codec = aStream?.CodecName ?? string.Empty;
                         int channels = aStream != null ? aStream.Channels : 2;
                         uint sampleRate = aStream != null ? (uint)aStream.SampleRateHz : 48000;
                         string trackName = aStream?.Tags?.FirstOrDefault(t => t.Key.Equals("title", StringComparison.OrdinalIgnoreCase)).Value ?? string.Empty;
 
-                        bool isBitstream = false;
-                        string upperCodec = codec.ToUpperInvariant();
-                        if (upperCodec.Contains("AC3") || upperCodec.Contains("AC-3") ||
-                            upperCodec.Contains("EC3") || upperCodec.Contains("E-AC3") || 
-                            upperCodec.Contains("DTS") || upperCodec.Contains("DOLBY") ||
-                            upperCodec.Contains("TRUEHD"))
-                        {
-                            isBitstream = true;
-                        }
+                        bool isBitstream = MediaCompatibilityService.IsBitstreamAudioCodec(codec);
 
                         return new VideoMetadata
                         {
@@ -65,6 +59,7 @@ namespace AeroSpot.Worker.Services
                             Height = h,
                             Duration = duration,
                             RotationDegrees = rotation,
+                            VideoCodec = videoCodec,
                             AudioCodec = codec,
                             AudioChannels = channels,
                             SampleRate = sampleRate,

@@ -6,6 +6,23 @@ namespace AeroSpot.Core.Search
 {
     public static class PathFilter
     {
+        private static readonly string WindowsDirLower = NormalizeDirLower(Environment.GetFolderPath(Environment.SpecialFolder.Windows));
+        private static readonly string WindowsDirWithSlashLower = string.IsNullOrEmpty(WindowsDirLower) ? string.Empty : WindowsDirLower + "\\";
+        private static readonly string ProgramFilesWithSlashLower = NormalizeDirWithSlashLower(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles));
+        private static readonly string ProgramFilesX86WithSlashLower = NormalizeDirWithSlashLower(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86));
+
+        private static string NormalizeDirLower(string? path)
+        {
+            if (string.IsNullOrWhiteSpace(path)) return string.Empty;
+            return path.Trim().Replace('/', '\\').TrimEnd('\\').ToLowerInvariant();
+        }
+
+        private static string NormalizeDirWithSlashLower(string? path)
+        {
+            string norm = NormalizeDirLower(path);
+            return string.IsNullOrEmpty(norm) ? string.Empty : norm + "\\";
+        }
+
         private static HashSet<char> _allowedDriveLetters = InitializeDefaultDrives();
 
         private static HashSet<char> InitializeDefaultDrives()
@@ -86,7 +103,7 @@ namespace AeroSpot.Core.Search
 
         public static void ResetToDefault()
         {
-            _allowedDriveLetters = new HashSet<char> { 'C', 'c', 'E', 'e' };
+            _allowedDriveLetters = InitializeDefaultDrives();
             _excludedSegments = new List<string>
             {
                 @"\steamlibrary\",
@@ -162,8 +179,8 @@ namespace AeroSpot.Core.Search
             }
 
             // 3. Trattamento speciale cartella Windows: escluso dalla scansione generale
-            string winDir = Environment.GetFolderPath(Environment.SpecialFolder.Windows).ToLowerInvariant();
-            if (lower.StartsWith(winDir + "\\") || lower == winDir)
+            if (!string.IsNullOrEmpty(WindowsDirLower) &&
+                (lower.StartsWith(WindowsDirWithSlashLower) || lower == WindowsDirLower))
             {
                 foreach (var exe in AllowedWindowsExecutables)
                 {
@@ -190,14 +207,12 @@ namespace AeroSpot.Core.Search
                 return true;
             }
 
-            string pf = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles).ToLowerInvariant();
-            if (!string.IsNullOrEmpty(pf) && lowerWithSlash.StartsWith(pf.EndsWith('\\') ? pf : pf + "\\"))
+            if (!string.IsNullOrEmpty(ProgramFilesWithSlashLower) && lowerWithSlash.StartsWith(ProgramFilesWithSlashLower))
             {
                 return true;
             }
 
-            string pf86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86).ToLowerInvariant();
-            if (!string.IsNullOrEmpty(pf86) && lowerWithSlash.StartsWith(pf86.EndsWith('\\') ? pf86 : pf86 + "\\"))
+            if (!string.IsNullOrEmpty(ProgramFilesX86WithSlashLower) && lowerWithSlash.StartsWith(ProgramFilesX86WithSlashLower))
             {
                 return true;
             }
@@ -223,7 +238,8 @@ namespace AeroSpot.Core.Search
         public static IEnumerable<string> GetWhitelistedScanRoots()
         {
             var roots = new List<string>();
-            char sysDriveChar = Path.GetPathRoot(Environment.SystemDirectory)?.TrimEnd('\\', ':').ToUpperInvariant()[0] ?? 'C';
+            string? rootTrimmed = Path.GetPathRoot(Environment.SystemDirectory)?.TrimEnd('\\', ':');
+            char sysDriveChar = !string.IsNullOrEmpty(rootTrimmed) ? char.ToUpperInvariant(rootTrimmed[0]) : 'C';
 
             // Aggiungi le radici dei dischi configurati abilitati (escludendo l'unità di sistema gestita selettivamente sotto)
             foreach (var d in _allowedDriveLetters)

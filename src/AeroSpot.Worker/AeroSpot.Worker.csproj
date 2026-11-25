@@ -12,6 +12,7 @@
     <Product>AeroSpot</Product>
     <AssemblyTitle>AeroSpot Worker</AssemblyTitle>
     <Description>AeroSpot Worker Process</Description>
+    <NoWarn>$(NoWarn);NU1510</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
@@ -19,8 +20,8 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </None>
-    <None Include="..\..\Docs\**\*.*">
-      <Link>Docs\%(RecursiveDir)%(FileName)%(Extension)</Link>
+    <None Include="..\..\Docs\instructions.*.html">
+      <Link>Docs\%(FileName)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </None>
@@ -38,7 +39,9 @@
     <PackageReference Include="FFMpegCore" Version="5.5.0" />
     <PackageReference Include="FFMpegInstaller.Windows.x64" Version="0.1.10" />
     <PackageReference Include="Docnet.Core" Version="2.6.0" />
+    <PackageReference Include="PDFsharp" Version="6.2.4" />
     <PackageReference Include="SharpVectors.Wpf" Version="1.8.6" />
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.15" />
   </ItemGroup>
 
 </Project>

@@ -1,6 +1,4 @@
-using System;
 using System.Linq;
-using System.Threading;
 using System.Windows;
 using AeroSpot.Core.Search;
 using AeroSpot.Worker;
@@ -14,12 +12,11 @@ namespace AeroSpot.Tests
         [TestMethod]
         public void SettingsWindow_ReloadSettings_ClearsStatusMessages()
         {
-            Exception? threadEx = null;
-            var t = new Thread(() =>
+            StaTestRunner.Run(() =>
             {
+                var window = new SettingsWindow();
                 try
                 {
-                    var window = new SettingsWindow();
                     window.TxtStatus.Text = "✓ Impostazioni salvate correttamente";
                     Assert.IsFalse(string.IsNullOrEmpty(window.TxtStatus.Text));
 
@@ -28,32 +25,21 @@ namespace AeroSpot.Tests
 
                     Assert.AreEqual(string.Empty, window.TxtStatus.Text, "TxtStatus.Text should be cleared when ReloadSettings is called upon reopening.");
                 }
-                catch (Exception ex)
+                finally
                 {
-                    threadEx = ex;
+                    window.Hide();
                 }
             });
-
-            t.SetApartmentState(ApartmentState.STA);
-            t.Start();
-            t.Join(TimeSpan.FromSeconds(5));
-
-            if (threadEx != null)
-            {
-                throw new AssertFailedException("SettingsWindow lifecycle test failed with exception: " + threadEx.Message, threadEx);
-            }
         }
 
         [TestMethod]
         public void SettingsWindow_SelectTab_SwitchesSections()
         {
-            Exception? threadEx = null;
-            var t = new Thread(() =>
+            StaTestRunner.Run(() =>
             {
+                var window = new SettingsWindow();
                 try
                 {
-                    var window = new SettingsWindow();
-
                     // Tab 0: Generali
                     window.SelectTab(0);
                     Assert.AreEqual(Visibility.Visible, window.GeneralSettingsPanel.Visibility);
@@ -82,20 +68,11 @@ namespace AeroSpot.Tests
                     window.SelectTab("general");
                     Assert.AreEqual(Visibility.Visible, window.GeneralSettingsPanel.Visibility);
                 }
-                catch (Exception ex)
+                finally
                 {
-                    threadEx = ex;
+                    window.Hide();
                 }
             });
-
-            t.SetApartmentState(ApartmentState.STA);
-            t.Start();
-            t.Join(TimeSpan.FromSeconds(5));
-
-            if (threadEx != null)
-            {
-                throw new AssertFailedException("SettingsWindow tab switching test failed with exception: " + threadEx.Message, threadEx);
-            }
         }
 
         [TestMethod]
@@ -124,29 +101,19 @@ namespace AeroSpot.Tests
         [TestMethod]
         public void SettingsWindow_QuickLookAlwaysOnTop_LoadsAndBindsProperly()
         {
-            Exception? threadEx = null;
-            var t = new Thread(() =>
+            StaTestRunner.Run(() =>
             {
+                var window = new SettingsWindow();
                 try
                 {
-                    var window = new SettingsWindow();
                     Assert.IsNotNull(window.ChkAlwaysOnTop, "ChkAlwaysOnTop deve essere presente in SettingsWindow.");
                     Assert.IsFalse(window.ChkAlwaysOnTop.IsChecked ?? false);
                 }
-                catch (Exception ex)
+                finally
                 {
-                    threadEx = ex;
+                    window.Hide();
                 }
             });
-
-            t.SetApartmentState(ApartmentState.STA);
-            t.Start();
-            t.Join(TimeSpan.FromSeconds(5));
-
-            if (threadEx != null)
-            {
-                throw new AssertFailedException("SettingsWindow AlwaysOnTop binding test failed: " + threadEx.Message, threadEx);
-            }
         }
 
         [TestMethod]
@@ -181,29 +148,19 @@ namespace AeroSpot.Tests
         [TestMethod]
         public void SettingsWindow_DragDropMode_BindsThreeOptions()
         {
-            Exception? threadEx = null;
-            var t = new Thread(() =>
+            StaTestRunner.Run(() =>
             {
+                var window = new SettingsWindow();
                 try
                 {
-                    var window = new SettingsWindow();
                     Assert.IsNotNull(window.CmbDragDropMode, "CmbDragDropMode deve essere presente nella scheda Spot.");
                     Assert.AreEqual(3, window.CmbDragDropMode.Items.Count, "CmbDragDropMode deve contenere esattamente 3 opzioni.");
                 }
-                catch (Exception ex)
+                finally
                 {
-                    threadEx = ex;
+                    window.Hide();
                 }
             });
-
-            t.SetApartmentState(ApartmentState.STA);
-            t.Start();
-            t.Join(TimeSpan.FromSeconds(5));
-
-            if (threadEx != null)
-            {
-                throw new AssertFailedException("SettingsWindow DragDropMode test failed: " + threadEx.Message, threadEx);
-            }
         }
     }
 }

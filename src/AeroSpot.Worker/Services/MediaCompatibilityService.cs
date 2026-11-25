@@ -6,6 +6,8 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using AeroSpot.Core.Config;
+using AeroSpot.Core.Localization;
 using AeroSpot.Core.Logging;
 using FFMpegCore;
 using FFMpegCore.Enums;
@@ -85,20 +87,19 @@ namespace AeroSpot.Worker.Services
     {
         private static readonly ConcurrentDictionary<string, Task<string>> _inFlightRemuxes = new(StringComparer.OrdinalIgnoreCase);
 
+        public static bool IsBitstreamAudioCodec(string? audioCodec)
+        {
+            string codec = (audioCodec ?? string.Empty).ToUpperInvariant();
+            return codec.Contains("AC3") || codec.Contains("AC-3") ||
+                   codec.Contains("EC3") || codec.Contains("E-AC3") ||
+                   codec.Contains("DTS") || codec.Contains("TRUEHD") ||
+                   codec.Contains("DOLBY");
+        }
+
         public static bool IsRemuxNeeded(bool isBitstream, string? audioCodec, int channels)
         {
             if (isBitstream) return true;
-
-            string codec = (audioCodec ?? string.Empty).ToUpperInvariant();
-            if (codec.Contains("AC3") || codec.Contains("AC-3") || 
-                codec.Contains("EC3") || codec.Contains("E-AC3") ||
-                codec.Contains("DTS") || codec.Contains("TRUEHD") ||
-                codec.Contains("DOLBY"))
-            {
-                return true;
-            }
-
-            return false;
+            return IsBitstreamAudioCodec(audioCodec);
         }
 
         public static bool IsRemuxNeeded(VideoMetadata? meta)
@@ -109,7 +110,7 @@ namespace AeroSpot.Worker.Services
 
         public static string GetCacheDirectory()
         {
-            string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AeroSpot", "MediaCache");
+            string dir = Path.Combine(AppDataPath.GetDataDirectory(), "MediaCache");
             if (!Directory.Exists(dir))
             {
                 Directory.CreateDirectory(dir);
@@ -185,9 +186,10 @@ namespace AeroSpot.Worker.Services
             IProgress<double>? progress = null,
             CancellationToken cancellationToken = default)
         {
+            bool isIt = LocalizationService.CurrentLanguage == "it";
             if (string.IsNullOrWhiteSpace(sourcePath) || !File.Exists(sourcePath))
             {
-                throw new FileNotFoundException("File video originale non trovato.", sourcePath);
+                throw new FileNotFoundException(isIt ? "File video originale non trovato." : "Source video file not found.", sourcePath);
             }
 
             // 1. Controllo cache hit immediato
@@ -208,17 +210,24 @@ namespace AeroSpot.Worker.Services
 
                 try
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
+
                     var sourceFi = new FileInfo(sourcePath);
                     var drive = new DriveInfo(Path.GetPathRoot(cacheDir) ?? "C:\\");
                     long requiredBytes = (long)(sourceFi.Length * 1.1) + 150_000_000L;
                     if (drive.AvailableFreeSpace < requiredBytes)
                     {
-                        throw new InvalidOperationException($"Spazio su disco insufficiente sul volume {drive.Name} per completare il remux audio compatibile (richiesti ~{requiredBytes / (1024 * 1024)} MB).");
+                        long requiredMb = requiredBytes / (1024 * 1024);
+                        throw new InvalidOperationException(isIt
+                            ? $"Spazio su disco insufficiente sul volume {drive.Name} per completare il remux audio compatibile (richiesti ~{requiredMb} MB)."
+                            : $"Insufficient disk space on drive {drive.Name} to complete compatible audio remux (~{requiredMb} MB required).");
                     }
 
                     if (!FFmpegLocator.ConfigureGlobalFFOptions())
                     {
-                        throw new FileNotFoundException("Eseguibile FFmpeg non trovato per il remux compatibile.");
+                        throw new FileNotFoundException(isIt
+                            ? "Eseguibile FFmpeg non trovato per il remux compatibile."
+                            : "FFmpeg executable not found for compatible remux.");
                     }
 
                     if (File.Exists(tempPath))
@@ -246,7 +255,9 @@ namespace AeroSpot.Worker.Services
 
                     if (!success || !File.Exists(tempPath) || new FileInfo(tempPath).Length < 1024)
                     {
-                        throw new InvalidOperationException("Il processo FFmpeg non ha generato un file video compatibile valido.");
+                        throw new InvalidOperationException(isIt
+                            ? "Il processo FFmpeg non ha generato un file video compatibile valido."
+                            : "FFmpeg did not generate a valid compatible video file.");
                     }
 
                     if (File.Exists(targetPath))
@@ -269,7 +280,7 @@ namespace AeroSpot.Worker.Services
                         try { File.Delete(tempPath); } catch { }
                     }
                 }
-            }, cancellationToken));
+            }));
         }
 
         public static Task<string> EnsureCompatibleVideoAsync(
@@ -282,8 +293,21 @@ namespace AeroSpot.Worker.Services
         public static async Task<string> RemuxVideoAsync(string sourcePath, string? targetPath = null, IProgress<double>? progress = null, CancellationToken cancellationToken = default)
         {
             var meta = await VideoMetadataService.GetMetadataAsync(sourcePath);
-            string dest = targetPath ?? GetCacheFilePath(sourcePath, meta);
-            return await EnsureCompatibleVideoAsync(sourcePath, meta, progress, cancellationToken);
+            string cachedPath = await EnsureCompatibleVideoAsync(sourcePath, meta, progress, cancellationToken);
+            if (!string.IsNullOrWhiteSpace(targetPath))
+            {
+                string? destDir = Path.GetDirectoryName(targetPath);
+                if (!string.IsNullOrEmpty(destDir) && !Directory.Exists(destDir))
+                {
+                    Directory.CreateDirectory(destDir);
+                }
+                if (!string.Equals(Path.GetFullPath(cachedPath), Path.GetFullPath(targetPath), StringComparison.OrdinalIgnoreCase))
+                {
+                    File.Copy(cachedPath, targetPath, overwrite: true);
+                }
+                return targetPath;
+            }
+            return cachedPath;
         }
 
         private static void PruneCacheSafely(string cacheDir, long maxSizeBytes)

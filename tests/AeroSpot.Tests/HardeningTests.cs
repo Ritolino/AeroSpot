@@ -67,33 +67,41 @@ namespace AeroSpot.Tests
 
             string pipeName = $"AeroSpot_TestPipe_Crash_{Guid.NewGuid():N}";
             using var manager = new WorkerManager(config, pipeName);
+            try
+            {
+                // 1. Avvia inizialmente il Worker
+                bool startedFirst = await manager.ShowLauncherAsync();
+                Assert.IsTrue(startedFirst, "Il Worker deve avviarsi correttamente la prima volta.");
+                Assert.IsTrue(manager.IsWorkerRunning, "Il processo Worker deve essere in esecuzione.");
 
-            // 1. Avvia inizialmente il Worker
-            bool startedFirst = await manager.ShowLauncherAsync();
-            Assert.IsTrue(startedFirst, "Il Worker deve avviarsi correttamente la prima volta.");
-            Assert.IsTrue(manager.IsWorkerRunning, "Il processo Worker deve essere in esecuzione.");
+                // 2. Simula un crash improvviso del Worker (SIGKILL / Process.Kill)
+                var workerProcessField = typeof(WorkerManager).GetField("_workerProcess", BindingFlags.NonPublic | BindingFlags.Instance);
+                Assert.IsNotNull(workerProcessField, "Il campo _workerProcess deve esistere per il test di resilienza.");
 
-            // 2. Simula un crash improvviso del Worker (SIGKILL / Process.Kill)
-            var workerProcessField = typeof(WorkerManager).GetField("_workerProcess", BindingFlags.NonPublic | BindingFlags.Instance);
-            Assert.IsNotNull(workerProcessField, "Il campo _workerProcess deve esistere per il test di resilienza.");
+                var proc = workerProcessField.GetValue(manager) as System.Diagnostics.Process;
+                Assert.IsNotNull(proc, "L'istanza di Process del Worker deve essere attiva.");
+                int firstPid = proc.Id;
 
-            var proc = workerProcessField.GetValue(manager) as System.Diagnostics.Process;
-            Assert.IsNotNull(proc, "L'istanza di Process del Worker deve essere attiva.");
+                proc.Kill();
 
-            proc.Kill();
-            proc.WaitForExit(3000);
-            Assert.IsTrue(proc.HasExited, "Il processo Worker deve essere terminato.");
+                // Attendi che WorkerManager rilevi l'uscita e pulisca _workerProcess
+                var disconnectDeadline = DateTime.UtcNow.AddSeconds(3);
+                while (manager.IsWorkerRunning && DateTime.UtcNow < disconnectDeadline)
+                {
+                    await Task.Delay(25);
+                }
+                Assert.IsFalse(manager.IsWorkerRunning, "WorkerManager deve rilevare la terminazione del Worker.");
 
-            // Breve pausa per permettere al sistema operativo di notificare la chiusura
-            await Task.Delay(200);
-
-            // 3. Verifica che una successiva richiesta riavvii trasparentemente il Worker senza errori
-            bool startedSecond = await manager.ShowLauncherAsync();
-            Assert.IsTrue(startedSecond, "Host deve rilevare la disconnessione e rilanciare automaticamente un nuovo processo Worker.");
-            Assert.IsTrue(manager.IsWorkerRunning, "Un nuovo processo Worker deve essere in esecuzione.");
-
-            // Cleanup pulito
-            await manager.StopWorkerAsync();
+                // 3. Verifica che una successiva richiesta riavvii trasparentemente il Worker senza errori
+                bool startedSecond = await manager.ShowLauncherAsync();
+                Assert.IsTrue(startedSecond, "Host deve rilevare la disconnessione e rilanciare automaticamente un nuovo processo Worker.");
+                Assert.IsTrue(manager.IsWorkerRunning, "Un nuovo processo Worker deve essere in esecuzione.");
+                Assert.AreNotEqual(firstPid, manager.WorkerProcessId, "Il nuovo Worker deve avere un PID diverso.");
+            }
+            finally
+            {
+                await manager.StopWorkerAsync();
+            }
         }
 
         [TestMethod]
@@ -116,20 +124,24 @@ namespace AeroSpot.Tests
         [TestMethod]
         public void PathFilter_HandlesMissingOrDisconnectedDrives_RejectsCleanly()
         {
-            // Dischi non consentiti o non collegati
-            Assert.IsFalse(PathFilter.IsPathAllowed(@"Z:\MissingDrive\Folder\file.txt"), "Disco Z: non consentito deve essere rifiutato.");
-            Assert.IsFalse(PathFilter.IsPathAllowed(@"D:\Games\Steam\steamapps\game.exe"), "Disco D: deve essere rifiutato.");
-            Assert.IsFalse(PathFilter.IsPathAllowed(@"F:\Backups\Archive.zip"), "Disco F: deve essere rifiutato.");
-            Assert.IsFalse(PathFilter.IsPathAllowed(@"G:\Media\Movie.mp4"), "Disco G: deve essere rifiutato.");
-            Assert.IsFalse(PathFilter.IsPathAllowed(@"\\NetworkShare\Folder\file.txt"), "Percorsi di rete UNC devono essere rifiutati.");
-
-            // Percorsi consentiti
-            string sysDrive = Path.GetPathRoot(Environment.SystemDirectory)?.TrimEnd('\\', ':').ToUpperInvariant() ?? "C";
-            Assert.IsTrue(PathFilter.IsPathAllowed($@"{sysDrive}:\Windows\System32\cmd.exe"), "Percorso su unità di sistema deve essere accettato.");
-            var config = AeroSpot.Core.Config.AppConfig.Load();
-            if (config.IncludedDrives.Contains("E", StringComparer.OrdinalIgnoreCase))
+            PathFilter.Configure(new[] { "C", "E" });
+            try
             {
+                // Dischi non consentiti o non collegati
+                Assert.IsFalse(PathFilter.IsPathAllowed(@"Z:\MissingDrive\Folder\file.txt"), "Disco Z: non consentito deve essere rifiutato.");
+                Assert.IsFalse(PathFilter.IsPathAllowed(@"D:\Games\Steam\steamapps\game.exe"), "Disco D: deve essere rifiutato.");
+                Assert.IsFalse(PathFilter.IsPathAllowed(@"F:\Backups\Archive.zip"), "Disco F: deve essere rifiutato.");
+                Assert.IsFalse(PathFilter.IsPathAllowed(@"G:\Media\Movie.mp4"), "Disco G: deve essere rifiutato.");
+                Assert.IsFalse(PathFilter.IsPathAllowed(@"\\NetworkShare\Folder\file.txt"), "Percorsi di rete UNC devono essere rifiutati.");
+
+                // Percorsi consentiti
+                string sysDrive = Path.GetPathRoot(Environment.SystemDirectory)?.TrimEnd('\\', ':').ToUpperInvariant() ?? "C";
+                Assert.IsTrue(PathFilter.IsPathAllowed($@"{sysDrive}:\Windows\System32\cmd.exe"), "Percorso su unità di sistema deve essere accettato.");
                 Assert.IsTrue(PathFilter.IsPathAllowed(@"E:\Projects\Doc.txt"), "Percorso su disco E: configurato deve essere accettato.");
+            }
+            finally
+            {
+                PathFilter.ResetToDefault();
             }
 
             // Input anomali e null

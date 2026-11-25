@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading;
@@ -16,22 +17,28 @@ namespace AeroSpot.Host.Native
         private readonly Action? _onClosePreviewRequested;
         private readonly Action? _onCloseAllRequested;
         private readonly Func<bool>? _isPreviewActiveFunc;
+        private readonly Func<int>? _getWorkerPidFunc;
         private readonly Win32.HookProc _hookProcDelegate;
+        private readonly object _staLock = new object();
 
         private IntPtr _hookHandle = IntPtr.Zero;
         private bool _isQuickLookKeyDown;
         private bool _suppressNextKeyUp;
-        private bool _isDisposed;
+        private uint _lastQuickLookKeyDownTime;
+        private BlockingCollection<Action>? _staQueue;
+        private Thread? _staThread;
+        private volatile bool _isDisposed;
 
         public bool IsHookInstalled => _hookHandle != IntPtr.Zero;
 
         public KeyboardHookManager(
-            uint quickLookKey, 
-            uint quickLookModifiers, 
-            Action<string> onPreviewRequested, 
-            Action? onClosePreviewRequested = null, 
+            uint quickLookKey,
+            uint quickLookModifiers,
+            Action<string> onPreviewRequested,
+            Action? onClosePreviewRequested = null,
             Func<bool>? isPreviewActiveFunc = null,
-            Action? onCloseAllRequested = null)
+            Action? onCloseAllRequested = null,
+            Func<int>? getWorkerPidFunc = null)
         {
             _quickLookKey = quickLookKey;
             _quickLookModifiers = quickLookModifiers;
@@ -39,16 +46,18 @@ namespace AeroSpot.Host.Native
             _onClosePreviewRequested = onClosePreviewRequested;
             _onCloseAllRequested = onCloseAllRequested;
             _isPreviewActiveFunc = isPreviewActiveFunc;
+            _getWorkerPidFunc = getWorkerPidFunc;
             _hookProcDelegate = LowLevelKeyboardProc;
         }
 
         public KeyboardHookManager(
-            uint quickLookKey, 
-            Action<string> onPreviewRequested, 
-            Action? onClosePreviewRequested = null, 
+            uint quickLookKey,
+            Action<string> onPreviewRequested,
+            Action? onClosePreviewRequested = null,
             Func<bool>? isPreviewActiveFunc = null,
-            Action? onCloseAllRequested = null)
-            : this(quickLookKey, 0, onPreviewRequested, onClosePreviewRequested, isPreviewActiveFunc, onCloseAllRequested)
+            Action? onCloseAllRequested = null,
+            Func<int>? getWorkerPidFunc = null)
+            : this(quickLookKey, 0, onPreviewRequested, onClosePreviewRequested, isPreviewActiveFunc, onCloseAllRequested, getWorkerPidFunc)
         {
         }
 
@@ -103,16 +112,35 @@ namespace AeroSpot.Host.Native
                 {
                     var kbd = Marshal.PtrToStructure<Win32.KBDLLHOOKSTRUCT>(lParam);
 
+                    // Sanity check UIPI: se il tasto QuickLook è stato rilasciato su una finestra elevata (Admin),
+                    // l'evento KEYUP non raggiunge questo hook. Resetta lo stato se non è più fisicamente premuto.
+                    if ((_isQuickLookKeyDown || _suppressNextKeyUp) &&
+                        kbd.vkCode != _quickLookKey &&
+                        (Win32.GetAsyncKeyState((int)_quickLookKey) & 0x8000) == 0)
+                    {
+                        _isQuickLookKeyDown = false;
+                        _suppressNextKeyUp = false;
+                    }
+
                     if (kbd.vkCode == _quickLookKey)
                     {
                         if (isKeyDown)
                         {
                             if (_isQuickLookKeyDown)
                             {
-                                // Auto-repeat soppresso: non avviare thread aggiuntivi se il tasto viene tenuto premuto
-                                return (IntPtr)1;
+                                if ((Win32.GetAsyncKeyState((int)_quickLookKey) & 0x8000) == 0 &&
+                                    unchecked(kbd.time - _lastQuickLookKeyDownTime) > 1200)
+                                {
+                                    _isQuickLookKeyDown = false;
+                                    _suppressNextKeyUp = false;
+                                }
+                                else
+                                {
+                                    _lastQuickLookKeyDownTime = kbd.time;
+                                    // Auto-repeat soppresso: non avviare lavoro aggiuntivo se il tasto viene tenuto premuto
+                                    return (IntPtr)1;
+                                }
                             }
-                            _isQuickLookKeyDown = true;
 
                             // Verifica corrispondenza tasti modificatori (Ctrl, Alt, Shift, Win)
                             bool ctrlDown = (Win32.GetAsyncKeyState(Win32.VK_CONTROL) & 0x8000) != 0;
@@ -134,11 +162,13 @@ namespace AeroSpot.Host.Native
 
                             IntPtr fgHwnd = Win32.GetForegroundWindow();
                             bool isPreviewActive = _isPreviewActiveFunc?.Invoke() ?? false;
-                            bool isQuickLookWindow = IsQuickLookOrChildWindow(fgHwnd);
+                            bool isQuickLookWindow = isPreviewActive && IsQuickLookOrChildWindow(fgHwnd);
 
                             // Scenario chiusura rapida quando la finestra attiva in primo piano è proprio QuickLook
                             if (isPreviewActive && isQuickLookWindow)
                             {
+                                _isQuickLookKeyDown = true;
+                                _lastQuickLookKeyDownTime = kbd.time;
                                 _suppressNextKeyUp = true;
                                 _onClosePreviewRequested?.Invoke();
                                 return (IntPtr)1;
@@ -152,10 +182,12 @@ namespace AeroSpot.Host.Native
                                 {
                                     // CRITICO: Non invocare chiamate COM sincrone (IShellWindows) all'interno del callback
                                     // WH_KEYBOARD_LL (causa COMException 0x8001010D RPC_E_CANTCALLOUT_ININPUTSYNCCALL).
-                                    // Sopprimi immediatamente l'evento Spazio nativo e delega la risoluzione a un thread STA dedicato.
+                                    // Sopprimi immediatamente l'evento Spazio nativo e delega la risoluzione al thread STA dedicato.
+                                    _isQuickLookKeyDown = true;
+                                    _lastQuickLookKeyDownTime = kbd.time;
                                     _suppressNextKeyUp = true;
 
-                                    var thread = new Thread(() =>
+                                    EnqueueStaWork(() =>
                                     {
                                         try
                                         {
@@ -177,13 +209,7 @@ namespace AeroSpot.Host.Native
                                         {
                                             AppLogger.Error("Hook STA: eccezione durante la risoluzione del percorso con focus Shell", ex);
                                         }
-                                    })
-                                    {
-                                        IsBackground = true,
-                                        Name = "ShellFocusResolver"
-                                    };
-                                    thread.SetApartmentState(ApartmentState.STA);
-                                    thread.Start();
+                                    });
 
                                     return (IntPtr)1; // Sopprimi l'evento Spazio nativo immediatamente
                                 }
@@ -229,7 +255,52 @@ namespace AeroSpot.Host.Native
             return Win32.CallNextHookEx(_hookHandle, nCode, wParam, lParam);
         }
 
-        private static bool IsQuickLookOrChildWindow(IntPtr hWnd)
+        private void EnqueueStaWork(Action action)
+        {
+            lock (_staLock)
+            {
+                if (_isDisposed) return;
+                if (_staQueue == null)
+                {
+                    _staQueue = new BlockingCollection<Action>(boundedCapacity: 8);
+                    _staThread = new Thread(RunStaWorkerLoop)
+                    {
+                        IsBackground = true,
+                        Name = "ShellFocusResolver"
+                    };
+                    _staThread.SetApartmentState(ApartmentState.STA);
+                    _staThread.Start();
+                }
+
+                _staQueue.TryAdd(action);
+            }
+        }
+
+        private void RunStaWorkerLoop()
+        {
+            var queue = _staQueue;
+            if (queue == null) return;
+
+            try
+            {
+                foreach (var action in queue.GetConsumingEnumerable())
+                {
+                    if (_isDisposed) break;
+                    try
+                    {
+                        action();
+                    }
+                    catch (Exception ex)
+                    {
+                        AppLogger.Error("Hook STA: eccezione durante l'esecuzione del task STA", ex);
+                    }
+                }
+            }
+            catch (ObjectDisposedException) { }
+            catch (InvalidOperationException) { }
+        }
+
+        private bool IsQuickLookOrChildWindow(IntPtr hWnd)
         {
             if (hWnd == IntPtr.Zero) return false;
             try
@@ -237,11 +308,16 @@ namespace AeroSpot.Host.Native
                 Win32.GetWindowThreadProcessId(hWnd, out uint pid);
                 if (pid == 0) return false;
 
+                int workerPid = _getWorkerPidFunc?.Invoke() ?? 0;
+                if (workerPid > 0)
+                {
+                    return pid == (uint)workerPid;
+                }
+
                 using var proc = Process.GetProcessById((int)pid);
                 string procName = proc.ProcessName;
                 if (string.Equals(procName, "AeroSpot.Worker", StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(procName, "prevhost", StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(procName, "msedgewebview2", StringComparison.OrdinalIgnoreCase))
+                    string.Equals(procName, "prevhost", StringComparison.OrdinalIgnoreCase))
                 {
                     return true;
                 }
@@ -255,6 +331,26 @@ namespace AeroSpot.Host.Native
             if (_isDisposed) return;
             _isDisposed = true;
             Uninstall();
+
+            BlockingCollection<Action>? queue;
+            Thread? thread;
+            lock (_staLock)
+            {
+                queue = _staQueue;
+                thread = _staThread;
+                _staQueue = null;
+                _staThread = null;
+            }
+
+            if (queue != null)
+            {
+                try { queue.CompleteAdding(); } catch { }
+                bool joined = thread == null || !thread.IsAlive || Thread.CurrentThread == thread || thread.Join(500);
+                if (joined)
+                {
+                    try { queue.Dispose(); } catch { }
+                }
+            }
         }
     }
 }

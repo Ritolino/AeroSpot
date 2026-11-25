@@ -86,5 +86,23 @@ namespace AeroSpot.Worker
                 Win32.SetWindowLong(hwnd, Win32.GWL_EXSTYLE, exStyle | 0x00000020 | 0x00000080 | 0x08000000);
             }
         }
+
+        public void MoveToCursor(int offsetX = 16, int offsetY = 16)
+        {
+            if (!Win32.GetCursorPos(out var pt)) return;
+
+            IntPtr hwnd = new WindowInteropHelper(this).Handle;
+            if (hwnd != IntPtr.Zero)
+            {
+                Win32.SetWindowPos(
+                    hwnd,
+                    Win32.HWND_TOPMOST,
+                    pt.X + offsetX,
+                    pt.Y + offsetY,
+                    0,
+                    0,
+                    Win32.SWP_NOSIZE | Win32.SWP_NOACTIVATE);
+            }
+        }
     }
 }

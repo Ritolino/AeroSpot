@@ -2,8 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
+using System.Linq;
 using System.Text;
 using System.Xml.Linq;
+using AeroSpot.Core.Localization;
 using AeroSpot.Core.Logging;
 
 namespace AeroSpot.Worker.Services
@@ -53,7 +55,35 @@ namespace AeroSpot.Worker.Services
                     }
                 }
 
-                // 2. Lettura struttura fogli (xl/workbook.xml)
+                // 2. Lettura relazioni workbook (xl/_rels/workbook.xml.rels) per risolvere r:id -> target effettivo
+                var relsMap = new Dictionary<string, string>(StringComparer.Ordinal);
+                var relsEntry = archive.GetEntry("xl/_rels/workbook.xml.rels");
+                if (relsEntry != null)
+                {
+                    using var relsStream = relsEntry.Open();
+                    var relsDoc = XDocument.Load(relsStream);
+                    XNamespace pkgRelNs = "http://schemas.openxmlformats.org/package/2006/relationships";
+                    foreach (var rel in relsDoc.Descendants(pkgRelNs + "Relationship"))
+                    {
+                        string? id = (string?)rel.Attribute("Id");
+                        string? target = (string?)rel.Attribute("Target");
+                        if (!string.IsNullOrEmpty(id) && !string.IsNullOrEmpty(target))
+                        {
+                            string normalized = target.Replace('\\', '/').TrimStart('/');
+                            if (normalized.StartsWith("./", StringComparison.Ordinal))
+                            {
+                                normalized = normalized.Substring(2);
+                            }
+                            if (!normalized.StartsWith("xl/", StringComparison.OrdinalIgnoreCase))
+                            {
+                                normalized = "xl/" + normalized;
+                            }
+                            relsMap[id] = normalized;
+                        }
+                    }
+                }
+
+                // 3. Lettura struttura fogli (xl/workbook.xml)
                 var sheetDefs = new List<(string Name, string Path)>();
                 var wbEntry = archive.GetEntry("xl/workbook.xml");
                 if (wbEntry != null)
@@ -61,11 +91,15 @@ namespace AeroSpot.Worker.Services
                     using var wbStream = wbEntry.Open();
                     var xDoc = XDocument.Load(wbStream);
                     XNamespace ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+                    XNamespace rNs = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
                     int idx = 1;
                     foreach (var sheet in xDoc.Descendants(ns + "sheet"))
                     {
-                        string name = (string?)sheet.Attribute("name") ?? $"Foglio {idx}";
-                        string path = $"xl/worksheets/sheet{idx}.xml";
+                        string name = (string?)sheet.Attribute("name") ?? LocalizationService.Get("Xlsx_Sheet_Default", idx);
+                        string? relId = (string?)sheet.Attribute(rNs + "id");
+                        string path = (!string.IsNullOrEmpty(relId) && relsMap.TryGetValue(relId, out string? resolvedPath))
+                            ? resolvedPath
+                            : $"xl/worksheets/sheet{idx}.xml";
                         sheetDefs.Add((name, path));
                         idx++;
                     }
@@ -74,7 +108,7 @@ namespace AeroSpot.Worker.Services
                 if (sheetDefs.Count == 0)
                 {
                     // Fallback se workbook.xml non definisce fogli espliciti
-                    sheetDefs.Add(("Foglio 1", "xl/worksheets/sheet1.xml"));
+                    sheetDefs.Add((LocalizationService.Get("Xlsx_Sheet_Default", 1), "xl/worksheets/sheet1.xml"));
                 }
 
                 var model = new SpreadsheetModel
@@ -82,11 +116,12 @@ namespace AeroSpot.Worker.Services
                     Title = Path.GetFileName(filePath)
                 };
 
-                // 3. Lettura contenuto di ciascun foglio
+                // 4. Lettura contenuto di ciascun foglio
                 XNamespace sheetNs = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
                 foreach (var (name, path) in sheetDefs)
                 {
-                    var sheetEntry = archive.GetEntry(path);
+                    var sheetEntry = archive.GetEntry(path)
+                        ?? archive.Entries.FirstOrDefault(e => string.Equals(e.FullName, path, StringComparison.OrdinalIgnoreCase));
                     if (sheetEntry == null) continue;
 
                     var sheetObj = new SpreadsheetSheet { Name = name };
@@ -131,7 +166,9 @@ namespace AeroSpot.Worker.Services
                             }
                             else if (cellType == "b")
                             {
-                                val = cElem.Element(sheetNs + "v")?.Value == "1" ? "VERO" : "FALSO";
+                                val = cElem.Element(sheetNs + "v")?.Value == "1"
+                                    ? LocalizationService.Get("Xlsx_Bool_True")
+                                    : LocalizationService.Get("Xlsx_Bool_False");
                             }
                             else
                             {
@@ -182,94 +219,6 @@ namespace AeroSpot.Worker.Services
                 AppLogger.Warn($"Impossibile leggere file Excel '{filePath}': {ex.Message}");
                 return null;
             }
-        }
-
-        public static SpreadsheetModel? ReadCsv(string filePath, int maxRows = 250, int maxCols = 40)
-        {
-            if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath)) return null;
-
-            try
-            {
-                var rows = new List<List<string>>();
-                int maxCol = 0;
-
-                using var reader = new StreamReader(filePath, Encoding.UTF8, true);
-                string? line;
-                int count = 0;
-
-                // Determina delimitatore (virgola o punto e virgola)
-                char delimiter = ',';
-                string? firstLine = reader.ReadLine();
-                if (firstLine != null)
-                {
-                    if (firstLine.Split(';').Length > firstLine.Split(',').Length)
-                    {
-                        delimiter = ';';
-                    }
-                    reader.BaseStream.Seek(0, SeekOrigin.Begin);
-                    reader.DiscardBufferedData();
-                }
-
-                while ((line = reader.ReadLine()) != null && count < maxRows)
-                {
-                    var parts = SplitCsvLine(line, delimiter);
-                    if (parts.Count > maxCol) maxCol = Math.Min(parts.Count, maxCols);
-                    rows.Add(parts);
-                    count++;
-                }
-
-                var sheet = new SpreadsheetSheet
-                {
-                    Name = Path.GetFileNameWithoutExtension(filePath),
-                    TotalColCount = maxCol,
-                    TotalRowCount = rows.Count,
-                    Rows = rows
-                };
-
-                for (int i = 0; i < maxCol; i++)
-                {
-                    sheet.ColumnHeaders.Add(IndexToColumnName(i));
-                }
-
-                var model = new SpreadsheetModel
-                {
-                    Title = Path.GetFileName(filePath)
-                };
-                model.Sheets.Add(sheet);
-                return model;
-            }
-            catch (Exception ex)
-            {
-                AppLogger.Warn($"Impossibile leggere CSV '{filePath}': {ex.Message}");
-                return null;
-            }
-        }
-
-        private static List<string> SplitCsvLine(string line, char delimiter)
-        {
-            var res = new List<string>();
-            var sb = new StringBuilder();
-            bool inQuotes = false;
-
-            for (int i = 0; i < line.Length; i++)
-            {
-                char c = line[i];
-                if (c == '"')
-                {
-                    inQuotes = !inQuotes;
-                }
-                else if (c == delimiter && !inQuotes)
-                {
-                    res.Add(sb.ToString().Trim(' ', '"'));
-                    sb.Clear();
-                }
-                else
-                {
-                    sb.Append(c);
-                }
-            }
-            res.Add(sb.ToString().Trim(' ', '"'));
-            return res;
         }
 
         private static int ExtractColumnIndex(string cellRef)

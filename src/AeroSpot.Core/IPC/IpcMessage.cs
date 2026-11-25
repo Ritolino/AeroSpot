@@ -1,7 +1,7 @@
 using System;
+using System.Buffers.Binary;
 using System.IO;
 using System.Text;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -17,7 +17,6 @@ namespace AeroSpot.Core.IPC
         ShowPreview = 12,
         ShowSettings = 13,
         ConfigReloaded = 14,
-        RefreshIndex = 15,
         PreviewOpened = 16,
         PreviewClosed = 17,
         HidePreview = 18,
@@ -26,15 +25,15 @@ namespace AeroSpot.Core.IPC
         ShutdownHost = 21,
         ShowUpdateNotification = 22,
         WorkerReady = 30,
-        WorkerState = 31,
-        StatusQuery = 40,
-        StatusReply = 41
+        WorkerState = 31
     }
 
     public sealed class IpcMessage
     {
         public const uint MagicHeader = 0x4F524541; // 'A','E','R','O' in little-endian
         public const byte ProtocolVersion = 1;
+        private const int HeaderSize = 11;
+        private const int MaxPayloadBytes = 10 * 1024 * 1024; // 10 MB sanity limit
 
         public IpcMessageType Type { get; set; }
         public string Payload { get; set; } = string.Empty;
@@ -49,38 +48,37 @@ namespace AeroSpot.Core.IPC
 
         public static async Task WriteAsync(Stream stream, IpcMessage message, CancellationToken cancellationToken = default)
         {
-            byte[] payloadBytes = Encoding.UTF8.GetBytes(message.Payload);
-            byte[] header = new byte[11];
-            
-            // Magic (4 bytes)
-            BitConverter.GetBytes(MagicHeader).CopyTo(header, 0);
-            // Version (1 byte)
-            header[4] = ProtocolVersion;
-            // Type (2 bytes)
-            BitConverter.GetBytes((ushort)message.Type).CopyTo(header, 5);
-            // Payload Length (4 bytes)
-            BitConverter.GetBytes(payloadBytes.Length).CopyTo(header, 7);
+            string payload = message.Payload ?? string.Empty;
+            int payloadLength = Encoding.UTF8.GetByteCount(payload);
+            byte[] packet = new byte[HeaderSize + payloadLength];
 
-            await stream.WriteAsync(header, 0, header.Length, cancellationToken).ConfigureAwait(false);
-            if (payloadBytes.Length > 0)
+            BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(0, 4), MagicHeader);
+            packet[4] = ProtocolVersion;
+            BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(5, 2), (ushort)message.Type);
+            BinaryPrimitives.WriteInt32LittleEndian(packet.AsSpan(7, 4), payloadLength);
+
+            if (payloadLength > 0)
             {
-                await stream.WriteAsync(payloadBytes, 0, payloadBytes.Length, cancellationToken).ConfigureAwait(false);
+                Encoding.UTF8.GetBytes(payload, packet.AsSpan(HeaderSize, payloadLength));
             }
+
+            await stream.WriteAsync(packet, cancellationToken).ConfigureAwait(false);
             await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
         }
 
         public static async Task<IpcMessage?> ReadAsync(Stream stream, CancellationToken cancellationToken = default)
         {
-            byte[] header = new byte[11];
-            int read = 0;
-            while (read < header.Length)
+            byte[] header = new byte[HeaderSize];
+            try
             {
-                int r = await stream.ReadAsync(header, read, header.Length - read, cancellationToken).ConfigureAwait(false);
-                if (r == 0) return null; // End of stream
-                read += r;
+                await stream.ReadExactlyAsync(header, cancellationToken).ConfigureAwait(false);
+            }
+            catch (EndOfStreamException)
+            {
+                return null;
             }
 
-            uint magic = BitConverter.ToUInt32(header, 0);
+            uint magic = BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(0, 4));
             if (magic != MagicHeader)
             {
                 throw new InvalidDataException($"Invalid IPC magic header: 0x{magic:X8}");
@@ -92,10 +90,10 @@ namespace AeroSpot.Core.IPC
                 throw new InvalidDataException($"Unsupported IPC protocol version: {version}");
             }
 
-            IpcMessageType type = (IpcMessageType)BitConverter.ToUInt16(header, 5);
-            int payloadLength = BitConverter.ToInt32(header, 7);
+            IpcMessageType type = (IpcMessageType)BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(5, 2));
+            int payloadLength = BinaryPrimitives.ReadInt32LittleEndian(header.AsSpan(7, 4));
 
-            if (payloadLength < 0 || payloadLength > 10 * 1024 * 1024) // 10 MB sanity limit
+            if (payloadLength < 0 || payloadLength > MaxPayloadBytes)
             {
                 throw new InvalidDataException($"Invalid IPC payload length: {payloadLength}");
             }
@@ -104,12 +102,13 @@ namespace AeroSpot.Core.IPC
             if (payloadLength > 0)
             {
                 byte[] payloadBytes = new byte[payloadLength];
-                int pRead = 0;
-                while (pRead < payloadLength)
+                try
                 {
-                    int r = await stream.ReadAsync(payloadBytes, pRead, payloadLength - pRead, cancellationToken).ConfigureAwait(false);
-                    if (r == 0) return null;
-                    pRead += r;
+                    await stream.ReadExactlyAsync(payloadBytes, cancellationToken).ConfigureAwait(false);
+                }
+                catch (EndOfStreamException)
+                {
+                    return null;
                 }
                 payload = Encoding.UTF8.GetString(payloadBytes);
             }

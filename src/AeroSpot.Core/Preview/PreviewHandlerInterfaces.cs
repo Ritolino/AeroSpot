@@ -100,11 +100,11 @@ namespace AeroSpot.Core.Preview
             IntPtr pstmTemplate,
             out IStream ppstm);
 
-        [DllImport("shell32.dll", CharSet = CharSet.Unicode, PreserveSig = false)]
-        public static extern void SHCreateItemFromParsingName(
+        public static void SHCreateItemFromParsingName(
             string pszPath,
             IntPtr pbc,
-            [In, MarshalAs(UnmanagedType.LPStruct)] Guid riid,
-            [Out, MarshalAs(UnmanagedType.Interface)] out object ppv);
+            Guid riid,
+            out object ppv)
+            => Win32.SHCreateItemFromParsingName(pszPath, pbc, riid, out ppv);
     }
 }

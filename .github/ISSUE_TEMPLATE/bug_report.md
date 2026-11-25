@@ -9,7 +9,7 @@ assignees: ''
 
 ## 📌 Environment Information
 
-- **AeroSpot Version:** (e.g. `1.5.0`, `1.5.1`)
+- **AeroSpot Version:** (e.g. `1.6.0`, `1.6.1`)
 - **Edition Used:** 
   - [ ] Installed (`Setup.exe`)
   - [ ] Portable (`.zip`)

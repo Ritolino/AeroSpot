@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.6.2] — 2026-11-25 (Fullscreen Zoom, Explorer Arrow Navigation & Docs Alignment)
+
+### Added
+- **Documentation & Packaging Alignment (`README*.md`, `Docs/*.md`, `scripts/*.ps1`):**
+  - Updated `scripts\make-instructions-html.ps1` with full support for ordered lists (`<ol>`), fenced code blocks (`<pre><code>`), inline links (`<a>`), localized IT/EN footers, and repository-first `Docs\` source resolution.
+  - Added optional `-Version` forwarding from `scripts\build-release.ps1` to `compile-launcher.ps1` and `compile-uninstaller.ps1`, dynamic NuGet `NUGET_PACKAGES` lookup for `FFMpegInstaller.Windows.x64`, and UTF-8 without BOM output for `SHA256SUMS.txt`.
+
+### Fixed
+- **Cursor-Anchored Image Zoom in Fullscreen / Letterboxed Photos & Auto-Reset on Fullscreen Toggle (`PreviewWindow.xaml`, `PreviewWindow.xaml.cs`):** Moved `ImageScaleTransform` and `ImageTranslateTransform` from centered `PreviewImage` onto a full-bleed `ImageZoomContainer` (`Grid` stretched to `ImageView`) so `e.GetPosition(ImageView)` shares the exact `(0, 0)` transform origin even when portrait or aspect-mismatched photos are centered in fullscreen; `ToggleFullscreen()` now calls `ResetZoom()` in both directions so switching between windowed and fullscreen never leaves stale zoom/pan offsets.
+- **QuickLook Arrow-Key Folder Navigation & Non-Focus-Stealing Dynamic Updates (`ExplorerFocusResolver.cs`, `PreviewWindow.xaml.cs`):** Added COM `IFolderView` selection stepping (`ExplorerFocusResolver.TryNavigateSelection` with `StrCmpLogicalW` directory fallback `TryGetAdjacentItemInDirectory`) so pressing `Left`/`Right`/`Up`/`Down` while QuickLook has focus — including right after opening with Spacebar or after zooming/panning a photo — moves the selection in File Explorer/Desktop in its exact current sort order and updates QuickLook instantly without losing focus. Also prevented `ShowPreviewForFileAsync` from stealing foreground focus back from Explorer on dynamic updates when QuickLook is already visible.
+- **Wave 1–3 Hardening, Code Quality & Docs Accuracy (`Core`, `Host`, `Worker`, `Tools`, `Docs`):**
+  - Aligned `README.md`/`README.it.md`, `Docs/INSTRUCTIONS.md`/`Docs/ISTRUZIONI.md`, `Docs/BUILDING*.md`, `00_MAIN_BRIEF.md`, `THIRD_PARTY_NOTICES.md`, and `.github/ISSUE_TEMPLATE/bug_report.md` with strict 1:1 IT/EN parity, accurate `%LOCALAPPDATA%\AeroSpot\` paths, Tri-Process architecture, PDFium/HTML/3MF/`R`-reset details, AI model sizes (`RMBG-1.4` ~176 MB / `u2netp` ~4.7 MB fallback), and real Settings/Tray controls.
+  - Updated `scripts\deploy-local.ps1` (`robocopy /MIR /XD "Data"`, stopping `AeroSpot.Tools` and `AeroSpot` alongside Host/Worker, direct `Start-Process` launch) and `scripts\benchmark-r2r.ps1` (`app\AeroSpot.Worker.exe` path and exact 10-sample median).
+  - Hardened logging, IPC/UI lifecycle, media/preview readers, search indexing, and test isolation across Wave 1–3.
+
+### Changed
+- **Repository & Documentation Alignment (`/ideazione` + `/github-publishing`):**
+  - Consolidated `design\` into canonical `assets\`, removed duplicate `Docs\screenshots\` and stale `RELEASE_PROCEDURE.md` build copies, updated icon paths in `scripts\compile-launcher.ps1` and `scripts\compile-uninstaller.ps1`, and added `installer/Output/` ignores in `.gitignore`.
+  - Streamlined `AGENTS.md` and aligned `README.md` / `README.it.md` to `/github-publishing` AEO/GEO standards (centered `assets/app_icon.png` header, coordinated Shields.io badges, Privacy & Footprint top-2 hierarchy, comparative benchmark table, conversational FAQ, and transparent disclaimer).
+
+---
+
 ## [1.6.1] — 2026-11-20 (1-Click Auto-Update, Native RTF/ODT & Search/Drag-Drop Fixes)
 
 ### Added

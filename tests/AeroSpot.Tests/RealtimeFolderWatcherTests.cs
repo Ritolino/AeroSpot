@@ -1,9 +1,8 @@
 using System;
-using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading;
-using AeroSpot.Core.Config;
 using AeroSpot.Core.Search;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -19,7 +18,7 @@ namespace AeroSpot.Tests
         [TestInitialize]
         public void SetUp()
         {
-            PathFilter.Configure(new[] { "C", "D", "E" }, new string[0]);
+            PathFilter.Configure(new[] { "C", "D", "E" }, Array.Empty<string>());
             _testDir = Path.Combine(Path.GetTempPath(), "AeroSpot_WatcherTest_" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(_testDir);
             _dbPath = Path.Combine(_testDir, "test_index.db");
@@ -42,6 +41,32 @@ namespace AeroSpot.Tests
             PathFilter.ResetToDefault();
         }
 
+        private static bool WaitForCondition(RealtimeFolderWatcher watcher, Func<bool> predicate, int timeoutMs = 5000)
+        {
+            if (predicate()) return true;
+
+            using var signal = new ManualResetEventSlim(false);
+            Action handler = () => signal.Set();
+            watcher.ItemsChanged += handler;
+            try
+            {
+                var sw = Stopwatch.StartNew();
+                while (sw.ElapsedMilliseconds < timeoutMs)
+                {
+                    if (predicate()) return true;
+                    int remaining = (int)(timeoutMs - sw.ElapsedMilliseconds);
+                    if (remaining <= 0) break;
+                    signal.Wait(Math.Min(150, remaining));
+                    signal.Reset();
+                }
+                return predicate();
+            }
+            finally
+            {
+                watcher.ItemsChanged -= handler;
+            }
+        }
+
         [TestMethod]
         public void RealtimeFolderWatcher_Creation_InsertsFileIntoDatabase()
         {
@@ -50,21 +75,11 @@ namespace AeroSpot.Tests
             string filePath = Path.Combine(_testDir, "documento_fiscale.pdf");
             File.WriteAllText(filePath, "%PDF-1.4 dummy test");
 
-            // Attende che scatti il debounce (100ms) ed esegua l'upsert
-            bool found = false;
-            for (int i = 0; i < 20; i++)
-            {
-                Thread.Sleep(50);
-                var results = _db.Search("documento_fiscale", 10);
-                if (results.Any(r => r.FullPath.Equals(filePath, StringComparison.OrdinalIgnoreCase)))
-                {
-                    found = true;
-                    Assert.AreEqual("Documento", results.First().Category);
-                    break;
-                }
-            }
+            bool found = WaitForCondition(watcher, () =>
+                _db.Search("documento_fiscale", 10).Any(r => r.FullPath.Equals(filePath, StringComparison.OrdinalIgnoreCase)));
 
             Assert.IsTrue(found, "Il file creato nella cartella monitorata deve essere indicizzato automaticamente in tempo reale.");
+            Assert.AreEqual("Documento", _db.Search("documento_fiscale", 10).First().Category);
         }
 
         [TestMethod]
@@ -76,8 +91,19 @@ namespace AeroSpot.Tests
             string finalZipPath = Path.Combine(_testDir, "progetto_architettura.zip");
 
             // 1. Browser crea il file temporaneo .crdownload
-            File.WriteAllText(crdownloadPath, "partial bytes...");
-            Thread.Sleep(200);
+            using var crEvent = new ManualResetEventSlim(false);
+            Action onChange = () => crEvent.Set();
+            watcher.ItemsChanged += onChange;
+            try
+            {
+                File.WriteAllText(crdownloadPath, "partial bytes...");
+                // Attende brevemente oltre il debounce per confermare che nessun evento indicizzi il .crdownload
+                crEvent.Wait(250);
+            }
+            finally
+            {
+                watcher.ItemsChanged -= onChange;
+            }
 
             var initialResults = _db.Search("progetto_architettura", 10);
             Assert.IsEmpty(initialResults, "I file temporanei .crdownload non devono essere inseriti nell'indice.");
@@ -85,20 +111,11 @@ namespace AeroSpot.Tests
             // 2. Browser completa il download e rinomina nel file definitivo
             File.Move(crdownloadPath, finalZipPath);
 
-            bool foundFinal = false;
-            for (int i = 0; i < 20; i++)
-            {
-                Thread.Sleep(50);
-                var results = _db.Search("progetto_architettura", 10);
-                if (results.Any(r => r.FullPath.Equals(finalZipPath, StringComparison.OrdinalIgnoreCase)))
-                {
-                    foundFinal = true;
-                    Assert.AreEqual("Archivio", results.First().Category);
-                    break;
-                }
-            }
+            bool foundFinal = WaitForCondition(watcher, () =>
+                _db.Search("progetto_architettura", 10).Any(r => r.FullPath.Equals(finalZipPath, StringComparison.OrdinalIgnoreCase)));
 
             Assert.IsTrue(foundFinal, "Il file rinominato dopo il download deve essere indicizzato tempestivamente.");
+            Assert.AreEqual("Archivio", _db.Search("progetto_architettura", 10).First().Category);
         }
 
         [TestMethod]
@@ -109,34 +126,13 @@ namespace AeroSpot.Tests
             string filePath = Path.Combine(_testDir, "rimuovimi.txt");
             File.WriteAllText(filePath, "testo da eliminare");
 
-            // Attende inserimento iniziale
-            bool inserted = false;
-            for (int i = 0; i < 20; i++)
-            {
-                Thread.Sleep(50);
-                if (_db.Search("rimuovimi", 10).Count > 0)
-                {
-                    inserted = true;
-                    break;
-                }
-            }
+            bool inserted = WaitForCondition(watcher, () => _db.Search("rimuovimi", 10).Count > 0);
             Assert.IsTrue(inserted, "Il file iniziale deve essere presente prima della cancellazione.");
 
             // Elimina il file fisico
             File.Delete(filePath);
 
-            // Attende rimozione dall'indice
-            bool removed = false;
-            for (int i = 0; i < 20; i++)
-            {
-                Thread.Sleep(50);
-                if (_db.Search("rimuovimi", 10).Count == 0)
-                {
-                    removed = true;
-                    break;
-                }
-            }
-
+            bool removed = WaitForCondition(watcher, () => _db.Search("rimuovimi", 10).Count == 0);
             Assert.IsTrue(removed, "Il file eliminato fisicamente deve essere rimosso dall'indice in tempo reale.");
         }
 
@@ -152,18 +148,7 @@ namespace AeroSpot.Tests
                 File.WriteAllText(path, "image bytes");
             }
 
-            bool allIndexed = false;
-            for (int i = 0; i < 25; i++)
-            {
-                Thread.Sleep(50);
-                var results = _db.Search("batch_file", 20);
-                if (results.Count >= fileCount)
-                {
-                    allIndexed = true;
-                    break;
-                }
-            }
-
+            bool allIndexed = WaitForCondition(watcher, () => _db.Search("batch_file", 20).Count >= fileCount);
             Assert.IsTrue(allIndexed, "Tutti i file creati in raffica devono essere indicizzati tramite micro-batching.");
         }
     }

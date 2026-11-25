@@ -1,5 +1,4 @@
 using System;
-using System.Threading;
 using System.Threading.Tasks;
 using AeroSpot.Core.IPC;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
@@ -17,8 +16,8 @@ namespace AeroSpot.Tests
             using var server = new NamedPipeHostServer(pipeName);
             using var client = new NamedPipeWorkerClient(pipeName);
 
-            var serverReceivedTcs = new TaskCompletionSource<IpcMessage>();
-            var clientReceivedTcs = new TaskCompletionSource<IpcMessage>();
+            var serverReceivedTcs = new TaskCompletionSource<IpcMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var clientReceivedTcs = new TaskCompletionSource<IpcMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
 
             server.MessageReceived += msg => serverReceivedTcs.TrySetResult(msg);
             client.MessageReceived += msg => clientReceivedTcs.TrySetResult(msg);
@@ -55,6 +54,18 @@ namespace AeroSpot.Tests
             string pipeName = $"AeroSpot_TestPipe_Reconnect_{Guid.NewGuid():N}";
 
             using var server = new NamedPipeHostServer(pipeName);
+            var firstConnectedTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var firstDisconnectedTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var secondConnectedTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            int connectionCount = 0;
+            server.ClientConnected += () =>
+            {
+                int count = System.Threading.Interlocked.Increment(ref connectionCount);
+                if (count == 1) firstConnectedTcs.TrySetResult(true);
+                else if (count == 2) secondConnectedTcs.TrySetResult(true);
+            };
+            server.ClientDisconnected += () => firstDisconnectedTcs.TrySetResult(true);
             server.Start();
 
             // First client connects and disconnects
@@ -62,19 +73,28 @@ namespace AeroSpot.Tests
             {
                 bool connected = await client1.ConnectAsync(3000);
                 Assert.IsTrue(connected);
+                await Task.WhenAny(firstConnectedTcs.Task, Task.Delay(3000));
                 client1.Disconnect();
             }
 
-            await Task.Delay(200); // Give server time to reset
+            var disconnectedDone = await Task.WhenAny(firstDisconnectedTcs.Task, Task.Delay(3000));
+            Assert.AreEqual(firstDisconnectedTcs.Task, disconnectedDone, "Server did not observe first client disconnect in time.");
 
-            // Second client connects
-            var secondClientReceivedTcs = new TaskCompletionSource<IpcMessage>();
+            // Second client connects (poll ConnectAsync briefly if server loop is mid-recreate)
+            var secondClientReceivedTcs = new TaskCompletionSource<IpcMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
             using (var client2 = new NamedPipeWorkerClient(pipeName))
             {
                 client2.MessageReceived += msg => secondClientReceivedTcs.TrySetResult(msg);
-                bool connected = await client2.ConnectAsync(3000);
+
+                bool connected = false;
+                var deadline = DateTime.UtcNow.AddSeconds(3);
+                while (!connected && DateTime.UtcNow < deadline)
+                {
+                    connected = await client2.ConnectAsync(500);
+                }
                 Assert.IsTrue(connected, "Second client failed to connect after first client disconnected.");
 
+                await Task.WhenAny(secondConnectedTcs.Task, Task.Delay(3000));
                 bool sent = await server.SendMessageAsync(new IpcMessage(IpcMessageType.Ping));
                 Assert.IsTrue(sent);
 

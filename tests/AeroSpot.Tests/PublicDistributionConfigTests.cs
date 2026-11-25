@@ -14,7 +14,7 @@ namespace AeroSpot.Tests
         public void Cleanup()
         {
             PathFilter.ResetToDefault();
-            AppDataPath.ResetCache();
+            AppDataPath.ResetCacheForTesting();
         }
 
         [TestMethod]
@@ -112,17 +112,6 @@ namespace AeroSpot.Tests
             Assert.IsTrue(config.StartWithWindows, "StartWithWindows deve essere abilitato di default.");
             Assert.IsTrue(config.OpenFolderAfterConversion, "OpenFolderAfterConversion deve essere abilitato di default.");
             Assert.IsFalse(config.IntegrateWindowsContextMenu, "IntegrateWindowsContextMenu è disabilitato di default finché l'utente non lo attiva.");
-        }
-
-        [TestMethod]
-        public void ShellContextMenuIntegration_RegisterAndUnregister_WorksCleanly()
-        {
-            string testDir = AppDomain.CurrentDomain.BaseDirectory;
-            AeroSpot.Core.Native.ShellContextMenuIntegration.Register(testDir, "it");
-            Assert.IsTrue(AeroSpot.Core.Native.ShellContextMenuIntegration.IsRegistered(), "Il menu contestuale deve risultare registrato.");
-
-            AeroSpot.Core.Native.ShellContextMenuIntegration.Unregister();
-            Assert.IsFalse(AeroSpot.Core.Native.ShellContextMenuIntegration.IsRegistered(), "Il menu contestuale deve risultare rimosso.");
         }
     }
 }

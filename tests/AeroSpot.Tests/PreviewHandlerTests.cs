@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Threading.Tasks;
+using System.Windows.Threading;
 using AeroSpot.Core.Preview;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -37,7 +39,7 @@ namespace AeroSpot.Tests
         }
 
         [TestMethod]
-        public void Preview_Pdfium_NativeViewerZoomPanAndRamCleanup()
+        public async Task Preview_Pdfium_NativeViewerZoomPanAndRamCleanup()
         {
             string pdfPath = Path.Combine(Path.GetTempPath(), $"aerospot_pdf_multipage_{Guid.NewGuid():N}.pdf");
             try
@@ -54,41 +56,27 @@ namespace AeroSpot.Tests
 
                 Assert.IsTrue(File.Exists(pdfPath), $"PDF multi-pagina di test non trovato: {pdfPath}");
 
-                Exception? threadEx = null;
                 string diagReport = string.Empty;
 
-                Action runTestOnDispatcher = () =>
+                await StaTestRunner.RunAsync(async () =>
                 {
+                    GC.Collect();
+                    GC.WaitForPendingFinalizers();
+                    GC.Collect();
+
+                    using var curProc = Process.GetCurrentProcess();
+                    curProc.Refresh();
+                    long baseWorkingSetMb = curProc.WorkingSet64 / (1024 * 1024);
+                    long basePrivateMb = curProc.PrivateMemorySize64 / (1024 * 1024);
+
+                    var existingWebViewPids = CollectProcessIds("msedgewebview2");
+                    var existingWordPids = CollectProcessIds("WINWORD");
+
+                    var win = new AeroSpot.Worker.PreviewWindow();
                     try
                     {
-                        if (System.Windows.Application.Current == null)
-                        {
-                            _ = new System.Windows.Application
-                            {
-                                ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown
-                            };
-                        }
-
-                        System.Threading.SynchronizationContext.SetSynchronizationContext(
-                            new System.Windows.Threading.DispatcherSynchronizationContext(
-                                System.Windows.Threading.Dispatcher.CurrentDispatcher));
-                        GC.Collect();
-                        GC.WaitForPendingFinalizers();
-                        GC.Collect();
-
-                        using var curProc = Process.GetCurrentProcess();
-                        curProc.Refresh();
-                        long baseWorkingSetMb = curProc.WorkingSet64 / (1024 * 1024);
-                        long basePrivateMb = curProc.PrivateMemorySize64 / (1024 * 1024);
-
-                        var existingWebViewPids = CollectProcessIds("msedgewebview2");
-                        var existingWordPids = CollectProcessIds("WINWORD");
-
-                        var win = new AeroSpot.Worker.PreviewWindow();
-                        var task = win.ShowPreviewForFileAsync(pdfPath, isFromSpotlight: true);
-
-                        PumpDispatcherUntil(() => task.IsCompleted, 10000);
-                        if (task.IsFaulted) throw task.Exception!;
+                        await win.ShowPreviewForFileAsync(pdfPath, isFromSpotlight: true);
+                        await Dispatcher.Yield(DispatcherPriority.Background);
 
                         Assert.AreEqual(System.Windows.Visibility.Visible, win.PdfView.Visibility, "PdfView deve essere visibile.");
                         Assert.AreEqual(5, win.PdfPagesStack.Children.Count, "PdfPagesStack deve contenere tutte le 5 pagine del documento.");
@@ -135,14 +123,11 @@ namespace AeroSpot.Tests
                         // Simula riapertura dello stesso PDF dopo un'attesa con bonifica RAM
                         GC.Collect();
                         GC.WaitForPendingFinalizers();
-                        PumpDispatcherUntil(() => false, 400);
+                        await Task.Delay(250);
 
-                        var task2 = win.ShowPreviewForFileAsync(pdfPath, isFromSpotlight: true);
-                        PumpDispatcherUntil(() => task2.IsCompleted, 10000);
-                        if (task2.IsFaulted) throw task2.Exception!;
-
+                        await win.ShowPreviewForFileAsync(pdfPath, isFromSpotlight: true);
                         win.UpdateLayout();
-                        PumpDispatcherUntil(() => false, 200);
+                        await Dispatcher.Yield(DispatcherPriority.Background);
 
                         Assert.AreEqual(System.Windows.Visibility.Visible, win.PdfView.Visibility, "Al reopen, PdfView deve essere visibile.");
                         Assert.AreEqual(5, win.PdfPagesStack.Children.Count, "Al reopen, PdfPagesStack deve contenere tutte le 5 pagine.");
@@ -154,12 +139,11 @@ namespace AeroSpot.Tests
                         Assert.IsNotNull(reopenImg0?.Source, "Al reopen, la prima pagina deve avere una sorgente valida.");
 
                         win.HidePreview();
-                        win.Close();
 
                         GC.Collect();
                         GC.WaitForPendingFinalizers();
                         GC.Collect();
-                        PumpDispatcherUntil(() => false, 300);
+                        await Dispatcher.Yield(DispatcherPriority.Background);
 
                         curProc.Refresh();
                         long afterCloseWorkingSetMb = curProc.WorkingSet64 / (1024 * 1024);
@@ -167,26 +151,16 @@ namespace AeroSpot.Tests
 
                         diagReport = $"[RAM PDFium Nativo] File={Path.GetFileName(pdfPath)} | Baseline: WS={baseWorkingSetMb}MB, Priv={basePrivateMb}MB | Aperto: WS={activeWorkingSetMb}MB, Priv={activePrivateMb}MB | Chiuso: WS={afterCloseWorkingSetMb}MB, Priv={afterClosePrivateMb}MB";
                     }
-                    catch (Exception ex)
-                    {
-                        threadEx = ex;
-                    }
                     finally
                     {
-                        System.Windows.Threading.Dispatcher.CurrentDispatcher.InvokeShutdown();
+                        win.HidePreview();
                     }
-                };
-
-                var t = new System.Threading.Thread(() => runTestOnDispatcher());
-                t.SetApartmentState(System.Threading.ApartmentState.STA);
-                t.Start();
-                t.Join(TimeSpan.FromSeconds(35));
+                }, timeoutMs: 35000);
 
                 if (!string.IsNullOrEmpty(diagReport))
                 {
                     TestContext?.WriteLine(diagReport);
                 }
-                if (threadEx != null) throw new Exception("Errore in Preview_Pdfium_NativeViewerZoomPanAndRamCleanup", threadEx);
             }
             finally
             {
@@ -217,21 +191,6 @@ namespace AeroSpot.Tests
                 finally { p.Dispose(); }
             }
             return count;
-        }
-
-        private static void PumpDispatcherUntil(Func<bool> condition, int timeoutMs)
-        {
-            var sw = Stopwatch.StartNew();
-            while (!condition() && sw.ElapsedMilliseconds < timeoutMs)
-            {
-                var frame = new System.Windows.Threading.DispatcherFrame();
-                System.Windows.Threading.Dispatcher.CurrentDispatcher.BeginInvoke(
-                    System.Windows.Threading.DispatcherPriority.Background,
-                    new System.Windows.Threading.DispatcherOperationCallback(f => { ((System.Windows.Threading.DispatcherFrame)f).Continue = false; return null; }),
-                    frame);
-                System.Windows.Threading.Dispatcher.PushFrame(frame);
-                System.Threading.Thread.Sleep(20);
-            }
         }
 
         public TestContext? TestContext { get; set; }

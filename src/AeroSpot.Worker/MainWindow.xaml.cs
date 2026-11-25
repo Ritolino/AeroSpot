@@ -23,7 +23,6 @@ namespace AeroSpot.Worker
         public LauncherViewModel ViewModel { get; }
 
         public event Action? HideRequested;
-        public event Action? CloseRequested;
         public event Action? CloseAllRequested;
         public event Action? SettingsRequested;
         public event Action<string>? PreviewRequested;
@@ -32,7 +31,23 @@ namespace AeroSpot.Worker
         public bool IsPreviewActive { get; set; }
 
         private bool _isNavigatingResults;
+        private bool _isConfirmingDelete;
         private AeroSpot.Core.Config.AppConfig _config = AeroSpot.Core.Config.AppConfig.Load();
+
+        private static readonly SolidColorBrush FilterSelectedBg = CreateFrozenBrush("#0284C7");
+        private static readonly SolidColorBrush FilterSelectedBorder = CreateFrozenBrush("#38BDF8");
+        private static readonly SolidColorBrush FilterUnselectedBg = CreateFrozenBrush("#262C36");
+        private static readonly SolidColorBrush FilterUnselectedFg = CreateFrozenBrush("#CBD5E1");
+        private static readonly SolidColorBrush FilterUnselectedBorder = CreateFrozenBrush("#3B4252");
+        private static readonly Thickness FilterSelectedThickness = new Thickness(1.8);
+        private static readonly Thickness FilterUnselectedThickness = new Thickness(1.0);
+
+        private static SolidColorBrush CreateFrozenBrush(string hex)
+        {
+            var brush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex));
+            brush.Freeze();
+            return brush;
+        }
 
         public void UpdateConfig(AeroSpot.Core.Config.AppConfig config)
         {
@@ -61,8 +76,8 @@ namespace AeroSpot.Worker
             this.Deactivated += (s, e) =>
             {
                 // Quando la finestra perde il focus (es. utente clicca fuori), nascondila
-                // purché non ci sia un'anteprima QuickLook attualmente aperta
-                if (!App.IsShuttingDown && !IsPreviewActive)
+                // purché non ci sia un'anteprima QuickLook o una finestra di conferma eliminazione aperta
+                if (!App.IsShuttingDown && !IsPreviewActive && !_isConfirmingDelete)
                 {
                     SetSelectedFilter("All");
                     HideRequested?.Invoke();
@@ -112,17 +127,17 @@ namespace AeroSpot.Worker
                 bool isSelected = string.Equals(btn.Tag as string, categoryTag, StringComparison.OrdinalIgnoreCase);
                 if (isSelected)
                 {
-                    btn.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#0284C7"));
+                    btn.Background = FilterSelectedBg;
                     btn.Foreground = Brushes.White;
-                    btn.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#38BDF8"));
-                    btn.BorderThickness = new Thickness(1.8);
+                    btn.BorderBrush = FilterSelectedBorder;
+                    btn.BorderThickness = FilterSelectedThickness;
                 }
                 else
                 {
-                    btn.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#262C36"));
-                    btn.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#CBD5E1"));
-                    btn.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#3B4252"));
-                    btn.BorderThickness = new Thickness(1.0);
+                    btn.Background = FilterUnselectedBg;
+                    btn.Foreground = FilterUnselectedFg;
+                    btn.BorderBrush = FilterUnselectedBorder;
+                    btn.BorderThickness = FilterUnselectedThickness;
                 }
             }
         }
@@ -260,28 +275,80 @@ namespace AeroSpot.Worker
             ResultsList.SelectedIndex = -1;
         }
 
-        private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
+        private static uint GetCurrentWin32Modifiers()
+        {
+            uint mod = 0;
+            var km = Keyboard.Modifiers;
+            if ((km & ModifierKeys.Alt) != 0) mod |= Win32.MOD_ALT;
+            if ((km & ModifierKeys.Control) != 0) mod |= Win32.MOD_CONTROL;
+            if ((km & ModifierKeys.Shift) != 0) mod |= Win32.MOD_SHIFT;
+            if ((km & ModifierKeys.Windows) != 0) mod |= Win32.MOD_WIN;
+            return mod;
+        }
+
+        private bool IsDeleteShortcutPressed(KeyEventArgs e)
         {
             uint vk = (uint)KeyInterop.VirtualKeyFromKey(e.Key == Key.System ? e.SystemKey : e.Key);
-            bool isDeleteKey = (e.Key == Key.Delete || vk == 46 || (_config.DeleteKey != 0 && vk == _config.DeleteKey));
+            uint currentMod = GetCurrentWin32Modifiers();
+            uint configuredMod = _config.DeleteModifiers & (Win32.MOD_ALT | Win32.MOD_CONTROL | Win32.MOD_SHIFT | Win32.MOD_WIN);
 
-            if (isDeleteKey)
+            if (_config.DeleteKey != 0)
             {
+                return vk == _config.DeleteKey && currentMod == configuredMod;
+            }
+
+            return (e.Key == Key.Delete || vk == Win32.VK_DELETE) && currentMod == 0;
+        }
+
+        private bool TryDeleteSelectedItemWithConfirmation()
+        {
+            if (ViewModel.SelectedItem == null || ViewModel.SelectedItem.IsActionItem)
+            {
+                return false;
+            }
+
+            AppLogger.Info($"Richiesta eliminazione elemento: {ViewModel.SelectedItem.TargetPath}");
+            _isConfirmingDelete = true;
+            bool deleted;
+            try
+            {
+                deleted = ViewModel.DeleteSelectedItem();
+            }
+            finally
+            {
+                _isConfirmingDelete = false;
+            }
+
+            if (deleted)
+            {
+                var toast = FloatingNotificationWindow.Spawn(LocalizationService.Get("Notification_FileRecycled"), "🗑️");
+                toast.SetSuccess(LocalizationService.Get("Notification_FileRecycled"), string.Empty);
+            }
+
+            if (IsVisible)
+            {
+                Activate();
+            }
+
+            return true;
+        }
+
+        private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
+        {
+            if (IsDeleteShortcutPressed(e))
+            {
+                uint configuredMod = _config.DeleteModifiers & (Win32.MOD_ALT | Win32.MOD_CONTROL | Win32.MOD_SHIFT | Win32.MOD_WIN);
+                bool isBareDeleteKey = configuredMod == 0 && (_config.DeleteKey == 0 || _config.DeleteKey == Win32.VK_DELETE);
+
                 // Se la SearchBox è attiva e l'utente sta digitando (non sta scorrendo i risultati),
-                // lasciamo che Delete cancelli il testo come un normale editor
-                if (SearchBox.IsKeyboardFocused && !_isNavigatingResults)
+                // lasciamo che Delete senza modificatori cancelli il testo come un normale editor
+                if (SearchBox.IsKeyboardFocused && !_isNavigatingResults && isBareDeleteKey)
                 {
                     return;
                 }
 
-                if (ViewModel.SelectedItem != null && !ViewModel.SelectedItem.IsActionItem)
+                if (TryDeleteSelectedItemWithConfirmation())
                 {
-                    AppLogger.Info($"Richiesta eliminazione elemento tramite tasto Canc/Delete: {ViewModel.SelectedItem.TargetPath}");
-                    if (ViewModel.DeleteSelectedItem())
-                    {
-                        var toast = FloatingNotificationWindow.Spawn(LocalizationService.Get("Notification_FileRecycled"), "🗑️");
-                        toast.SetSuccess(LocalizationService.Get("Notification_FileRecycled"), string.Empty);
-                    }
                     e.Handled = true;
                 }
             }
@@ -289,18 +356,6 @@ namespace AeroSpot.Worker
 
         private void SearchBox_PreviewKeyDown(object sender, KeyEventArgs e)
         {
-            uint vk = (uint)KeyInterop.VirtualKeyFromKey(e.Key == Key.System ? e.SystemKey : e.Key);
-            if (vk == _config.DeleteKey && _isNavigatingResults && ViewModel.SelectedItem != null && !ViewModel.SelectedItem.IsActionItem)
-            {
-                if (ViewModel.DeleteSelectedItem())
-                {
-                    var toast = FloatingNotificationWindow.Spawn(LocalizationService.Get("Notification_FileRecycled"), "🗑️");
-                    toast.SetSuccess(LocalizationService.Get("Notification_FileRecycled"), string.Empty);
-                }
-                e.Handled = true;
-                return;
-            }
-
             switch (e.Key)
             {
                 case Key.Down:
@@ -365,18 +420,6 @@ namespace AeroSpot.Worker
 
         private void ResultsList_PreviewKeyDown(object sender, KeyEventArgs e)
         {
-            uint vk = (uint)KeyInterop.VirtualKeyFromKey(e.Key == Key.System ? e.SystemKey : e.Key);
-            if (vk == _config.DeleteKey)
-            {
-                if (ViewModel.DeleteSelectedItem())
-                {
-                    var toast = FloatingNotificationWindow.Spawn(LocalizationService.Get("Notification_FileRecycled"), "🗑️");
-                    toast.SetSuccess(LocalizationService.Get("Notification_FileRecycled"), string.Empty);
-                }
-                e.Handled = true;
-                return;
-            }
-
             if (e.Key == Key.Space)
             {
                 if (ViewModel.SelectedItem != null && !string.IsNullOrWhiteSpace(ViewModel.SelectedItem.TargetPath))
@@ -456,11 +499,13 @@ namespace AeroSpot.Worker
         }
 
         private Point _dragStartPoint;
+        private Point _dragStartListPoint;
         private bool _isDragging;
 
         private void ResultsList_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
             _dragStartPoint = e.GetPosition(null);
+            _dragStartListPoint = e.GetPosition(ResultsList);
         }
 
         private void ResultsList_PreviewMouseMove(object sender, MouseEventArgs e)
@@ -473,7 +518,20 @@ namespace AeroSpot.Worker
                 if (Math.Abs(diff.X) > SystemParameters.MinimumHorizontalDragDistance ||
                     Math.Abs(diff.Y) > SystemParameters.MinimumVerticalDragDistance)
                 {
-                    var item = ViewModel.SelectedItem;
+                    SearchResultItem? item = null;
+                    var hit = VisualTreeHelper.HitTest(ResultsList, _dragStartListPoint);
+                    DependencyObject? current = hit?.VisualHit;
+                    while (current != null && current != ResultsList)
+                    {
+                        if (current is ListBoxItem lbi && lbi.DataContext is SearchResultItem hitItem)
+                        {
+                            item = hitItem;
+                            lbi.IsSelected = true;
+                            break;
+                        }
+                        current = VisualTreeHelper.GetParent(current);
+                    }
+
                     if (item != null && !item.IsActionItem && !string.IsNullOrWhiteSpace(item.TargetPath) &&
                         (File.Exists(item.TargetPath) || Directory.Exists(item.TargetPath)))
                     {
@@ -481,26 +539,15 @@ namespace AeroSpot.Worker
                         DragGhostWindow? ghost = null;
                         try
                         {
-                            var dpi = VisualTreeHelper.GetDpi(this);
-                            double dpiScaleX = dpi.DpiScaleX > 0 ? dpi.DpiScaleX : 1.0;
-                            double dpiScaleY = dpi.DpiScaleY > 0 ? dpi.DpiScaleY : 1.0;
-
                             ghost = new DragGhostWindow(item.Icon, item.Title);
-                            if (Win32.GetCursorPos(out var pt))
-                            {
-                                ghost.Left = (pt.X / dpiScaleX) + 14;
-                                ghost.Top = (pt.Y / dpiScaleY) + 14;
-                            }
+                            new WindowInteropHelper(ghost).EnsureHandle();
                             ghost.Show();
+                            ghost.MoveToCursor(14, 14);
 
                             GiveFeedbackEventHandler feedbackHandler = (s, args) =>
                             {
                                 args.UseDefaultCursors = true;
-                                if (Win32.GetCursorPos(out var p))
-                                {
-                                    ghost.Left = (p.X / dpiScaleX) + 16;
-                                    ghost.Top = (p.Y / dpiScaleY) + 16;
-                                }
+                                ghost.MoveToCursor(16, 16);
                             };
 
                             ResultsList.GiveFeedback += feedbackHandler;
@@ -647,7 +694,7 @@ namespace AeroSpot.Worker
             bool isJpg = ext is ".jpg" or ".jpeg";
             bool isPng = ext is ".png";
             bool isPdf = ext is ".pdf";
-            bool isDoc = ext is ".md" or ".txt" or ".docx";
+            bool isDoc = ext is ".md" or ".txt" or ".docx" or ".rtf" or ".odt";
             bool isImage = isJpg || isPng || ext is ".webp" or ".bmp" or ".gif" or ".tiff" or ".ico";
             bool isVideo = ext is ".mp4" or ".mkv" or ".mov" or ".avi" or ".wmv" or ".flv" or ".m4v" or ".webm" or ".ts";
             bool isMp3 = ext is ".mp3";
@@ -728,11 +775,6 @@ namespace AeroSpot.Worker
             _ = FileActionService.ExecuteConvertMp4Async(path, _config);
         }
 
-        private void ContextExtractMp3_Click(object sender, RoutedEventArgs e)
-        {
-            ContextConvertMp3_Click(sender, e);
-        }
-
         private void ContextRemoveBg_Click(object sender, RoutedEventArgs e)
         {
             string? path = ViewModel.SelectedItem?.TargetPath;
@@ -744,11 +786,7 @@ namespace AeroSpot.Worker
 
         private void ContextRecycleFile_Click(object sender, RoutedEventArgs e)
         {
-            if (ViewModel.DeleteSelectedItem())
-            {
-                var toast = FloatingNotificationWindow.Spawn(LocalizationService.Get("Notification_FileRecycled"), "🗑️");
-                toast.SetSuccess(LocalizationService.Get("Notification_FileRecycled"), string.Empty);
-            }
+            TryDeleteSelectedItemWithConfirmation();
         }
 
         private void ContextOpenPath_Click(object sender, RoutedEventArgs e)
@@ -758,23 +796,6 @@ namespace AeroSpot.Worker
                 string target = ViewModel.SelectedItem.TargetPath;
                 FileActionService.RevealFileInExplorer(target);
                 HideRequested?.Invoke();
-            }
-        }
-
-        private void ContextOpen_Click(object sender, RoutedEventArgs e)
-        {
-            if (ViewModel.ExecuteSelected())
-            {
-                HideRequested?.Invoke();
-            }
-        }
-
-        private void ContextPreview_Click(object sender, RoutedEventArgs e)
-        {
-            if (ViewModel.SelectedItem != null && !string.IsNullOrWhiteSpace(ViewModel.SelectedItem.TargetPath))
-            {
-                IsPreviewActive = true;
-                PreviewRequested?.Invoke(ViewModel.SelectedItem.TargetPath);
             }
         }
 
@@ -818,10 +839,7 @@ namespace AeroSpot.Worker
 
             try
             {
-                await Task.Run(() =>
-                {
-                    ViewModel.TriggerFullReindex(force: true);
-                });
+                await ViewModel.TriggerFullReindexAsync(force: true);
 
                 if (BtnReindexNow != null)
                 {
@@ -840,21 +858,6 @@ namespace AeroSpot.Worker
                     BtnReindexNow.IsEnabled = true;
                 }
             }
-        }
-
-        public void SetIpcStatus(string status)
-        {
-            // Telemetria/status diagnostico
-        }
-
-        public void SetIdleStatus(string status)
-        {
-            // Telemetria/status idle
-        }
-
-        public void RequestClose()
-        {
-            CloseRequested?.Invoke();
         }
 
         private void Window_PreviewMouseWheel(object sender, MouseWheelEventArgs e)

@@ -175,7 +175,7 @@ namespace AeroSpot.Core.Search
 
                             string formattedResult = FormatNumber(convertedVal, currentLanguage);
                             string resultWithUnit = $"{formattedResult} {uTo.Symbol}";
-                            string copyBadge = currentLanguage == "it" ? "invio per copiare" : "enter to copy";
+                            string copyBadge = GetLocalized("Spotlight_Calc_EnterToCopy", currentLanguage);
 
                             return new ExpressionResult(resultWithUnit, string.Empty, copyBadge, formattedResult, isCalculator: false);
                         }
@@ -205,7 +205,7 @@ namespace AeroSpot.Core.Search
                         {
                             string formatted = FormatNumber(mathResult, currentLanguage);
                             string title = formatted;
-                            string copyBadge = currentLanguage == "it" ? "invio per copiare" : "enter to copy";
+                            string copyBadge = GetLocalized("Spotlight_Calc_EnterToCopy", currentLanguage);
 
                             return new ExpressionResult(title, explanation ?? string.Empty, copyBadge, formatted, isCalculator: true);
                         }
@@ -218,6 +218,21 @@ namespace AeroSpot.Core.Search
             }
 
             return null;
+        }
+
+        private static string GetLocalized(string key, string language, params object[] args)
+        {
+            var dict = string.Equals(language, "it", StringComparison.OrdinalIgnoreCase)
+                ? Localization.LocalizationService.Italian
+                : Localization.LocalizationService.English;
+
+            string template = dict.TryGetValue(key, out var val)
+                ? val
+                : Localization.LocalizationService.Get(key);
+
+            return args.Length == 0
+                ? template
+                : string.Format(CultureInfo.InvariantCulture, template, args);
         }
 
         private static double ConvertTemperature(double val, string from, string to)
@@ -371,7 +386,6 @@ namespace AeroSpot.Core.Search
                     if (right.IsPercent)
                     {
                         double delta = left.Value * right.Value / 100.0;
-                        bool isIt = string.Equals(_language, "it", StringComparison.OrdinalIgnoreCase);
                         string pctStr = FormatNumber(right.Value, _language);
                         string deltaStr = FormatNumber(delta, _language);
 
@@ -383,9 +397,7 @@ namespace AeroSpot.Core.Search
                         else
                         {
                             left.Value = left.Value - delta;
-                            _explanation = isIt 
-                                ? $"Sconto {pctStr}% (-{deltaStr})" 
-                                : $"Discount {pctStr}% (-{deltaStr})";
+                            _explanation = GetLocalized("Spotlight_Calc_Discount", _language, pctStr, deltaStr);
                         }
                         left.IsPercent = false;
                     }
@@ -417,8 +429,6 @@ namespace AeroSpot.Core.Search
                     _pos++;
                     Operand right = Power();
 
-                    bool isIt = string.Equals(_language, "it", StringComparison.OrdinalIgnoreCase);
-
                     if (right.IsPercent)
                     {
                         double pct = right.Value / 100.0;
@@ -428,9 +438,7 @@ namespace AeroSpot.Core.Search
                         if (op == TokenType.Multiply)
                         {
                             left.Value = left.Value * pct;
-                            _explanation = isIt
-                                ? $"{pctStr}% di {baseStr}"
-                                : $"{pctStr}% of {baseStr}";
+                            _explanation = GetLocalized("Spotlight_Calc_PercentOf", _language, pctStr, baseStr);
                         }
                         else
                         {
@@ -448,9 +456,7 @@ namespace AeroSpot.Core.Search
                         if (op == TokenType.Multiply)
                         {
                             left.Value = pct * right.Value;
-                            _explanation = isIt
-                                ? $"{pctStr}% di {numStr}"
-                                : $"{pctStr}% of {numStr}";
+                            _explanation = GetLocalized("Spotlight_Calc_PercentOf", _language, pctStr, numStr);
                         }
                         else
                         {
@@ -473,9 +479,9 @@ namespace AeroSpot.Core.Search
             private Operand Power()
             {
                 Operand left = Primary();
-                while (Match(TokenType.Power))
+                if (Match(TokenType.Power))
                 {
-                    Operand right = Primary();
+                    Operand right = Power();
                     left.Value = Math.Pow(left.Value, right.Value);
                     left.IsPercent = false;
                 }

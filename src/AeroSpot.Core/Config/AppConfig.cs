@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
+using System.Threading;
+using AeroSpot.Core.Logging;
 
 namespace AeroSpot.Core.Config
 {
@@ -33,6 +35,8 @@ namespace AeroSpot.Core.Config
 
     public sealed class AppConfig
     {
+        private List<string>? _includedDrives;
+
         public int SchemaVersion { get; set; } = 5;
 
         public string Language { get; set; } = "auto";
@@ -114,8 +118,12 @@ namespace AeroSpot.Core.Config
         // QuickLook behavior: Always on top (true) vs Contextual Topmost (false, default: active on open, backgroundable on deactivation)
         public bool QuickLookAlwaysOnTop { get; set; } = false;
 
-        // Drive selection (default: system drive + detected local fixed drives)
-        public List<string> IncludedDrives { get; set; } = GetDefaultIncludedDrives();
+        // Drive selection (lazily initialized on first access when not supplied by JSON)
+        public List<string> IncludedDrives
+        {
+            get => _includedDrives ??= GetDefaultIncludedDrives();
+            set => _includedDrives = value;
+        }
 
         // Excluded folders and directories
         public List<string> ExcludedDirectoryNames { get; set; } = GetDefaultExcludedDirectories();
@@ -162,8 +170,9 @@ namespace AeroSpot.Core.Config
                     }
                 }
             }
-            catch
+            catch (Exception ex)
             {
+                AppLogger.Warn("AppConfig.GetDefaultIncludedDrives failed", ex);
                 if (!list.Contains("C", StringComparer.OrdinalIgnoreCase)) list.Add("C");
             }
 
@@ -195,15 +204,37 @@ namespace AeroSpot.Core.Config
 
         public static AppConfig Load(string? customPath = null)
         {
-            try
+            const int maxAttempts = 3;
+            const int retryDelayMs = 40;
+
+            string path = customPath ?? GetConfigPath();
+            if (!File.Exists(path))
             {
-                string path = customPath ?? GetConfigPath();
-                if (File.Exists(path))
+                return new AppConfig();
+            }
+
+            for (int attempt = 1; attempt <= maxAttempts; attempt++)
+            {
+                try
                 {
                     string json = File.ReadAllText(path);
                     var cfg = JsonSerializer.Deserialize<AppConfig>(json);
                     if (cfg != null)
                     {
+                        // Populate collection defaults if missing or empty after deserialization
+                        if (cfg._includedDrives == null || cfg._includedDrives.Count == 0)
+                        {
+                            cfg._includedDrives = GetDefaultIncludedDrives();
+                        }
+                        if (cfg.ExcludedDirectoryNames == null || cfg.ExcludedDirectoryNames.Count == 0)
+                        {
+                            cfg.ExcludedDirectoryNames = GetDefaultExcludedDirectories();
+                        }
+                        if (cfg.CategoryPriority == null || cfg.CategoryPriority.Count == 0)
+                        {
+                            cfg.CategoryPriority = GetDefaultCategoryPriority();
+                        }
+
                         // Automatic migration from previous schemas (without SchemaVersion or SchemaVersion < 2)
                         bool needsSave = false;
                         if (!json.Contains("\"SchemaVersion\"", StringComparison.OrdinalIgnoreCase))
@@ -214,14 +245,6 @@ namespace AeroSpot.Core.Config
                         if (cfg.SchemaVersion < 2)
                         {
                             cfg.SchemaVersion = 2;
-                            if (cfg.IncludedDrives == null || cfg.IncludedDrives.Count == 0)
-                            {
-                                cfg.IncludedDrives = GetDefaultIncludedDrives();
-                            }
-                            if (cfg.ExcludedDirectoryNames == null || cfg.ExcludedDirectoryNames.Count == 0)
-                            {
-                                cfg.ExcludedDirectoryNames = GetDefaultExcludedDirectories();
-                            }
                             needsSave = true;
                         }
 
@@ -236,7 +259,7 @@ namespace AeroSpot.Core.Config
                         {
                             cfg.SchemaVersion = 4;
                             cfg.HomeDisplayMode = cfg.EnableRecentHistory ? SpotlightHomeMode.MostFrequentSearches : SpotlightHomeMode.None;
-                            if (cfg.CategoryPriority != null && !cfg.CategoryPriority.Contains("Impostazioni", StringComparer.OrdinalIgnoreCase))
+                            if (!cfg.CategoryPriority.Contains("Impostazioni", StringComparer.OrdinalIgnoreCase))
                             {
                                 cfg.CategoryPriority.Insert(0, "Impostazioni");
                             }
@@ -256,26 +279,48 @@ namespace AeroSpot.Core.Config
                         }
                         return cfg;
                     }
+                    break;
+                }
+                catch (IOException ex) when (attempt < maxAttempts)
+                {
+                    AppLogger.Warn($"AppConfig.Load I/O error on attempt {attempt}/{maxAttempts} for '{path}'", ex);
+                    Thread.Sleep(retryDelayMs);
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Warn($"AppConfig.Load failed for '{path}', falling back to defaults", ex);
+                    break;
                 }
             }
-            catch { }
+
             return new AppConfig();
         }
 
         public void Save(string? customPath = null)
         {
+            string path = customPath ?? GetConfigPath();
+            string tmpPath = path + ".tmp";
             try
             {
-                string path = customPath ?? GetConfigPath();
                 string? dir = Path.GetDirectoryName(path);
                 if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
                 {
                     Directory.CreateDirectory(dir);
                 }
+
                 string json = JsonSerializer.Serialize(this, _jsonOptions);
-                File.WriteAllText(path, json);
+                File.WriteAllText(tmpPath, json);
+                File.Move(tmpPath, path, overwrite: true);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                AppLogger.Warn($"AppConfig.Save failed for '{path}'", ex);
+                try
+                {
+                    if (File.Exists(tmpPath)) File.Delete(tmpPath);
+                }
+                catch { }
+            }
         }
     }
 }

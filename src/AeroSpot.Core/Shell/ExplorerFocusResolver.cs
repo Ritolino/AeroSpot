@@ -69,13 +69,45 @@ namespace AeroSpot.Core.Shell
         void SetToolbarItems(IntPtr lpButtons, uint nButtons, uint uFlags);
     }
 
+    [ComImport]
+    [Guid("cde725b0-ccc9-4519-917e-325d72fab4ce")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    public interface IFolderView
+    {
+        [PreserveSig] int GetCurrentViewMode(out uint pViewMode);
+        [PreserveSig] int SetCurrentViewMode(uint viewMode);
+        [PreserveSig] int GetFolder(ref Guid riid, out IntPtr ppv);
+        [PreserveSig] int Item(int iItemIndex, out IntPtr ppidl);
+        [PreserveSig] int ItemCount(uint uFlags, out int pcItems);
+        [PreserveSig] int Items(uint uFlags, ref Guid riid, out IntPtr ppv);
+        [PreserveSig] int GetSelectionMarkedItem(out int piItem);
+        [PreserveSig] int GetFocusedItem(out int piItem);
+        [PreserveSig] int GetItemPosition(IntPtr pidl, out Win32.POINT ppt);
+        [PreserveSig] int GetSpacing(ref Win32.POINT ppt);
+        [PreserveSig] int GetDefaultSpacing(out Win32.POINT ppt);
+        [PreserveSig] int GetAutoArrange();
+        [PreserveSig] int SelectItem(int iItem, uint dwFlags);
+        [PreserveSig] int SelectAndPositionItems(uint cidl, IntPtr apidl, IntPtr apt, uint dwFlags);
+    }
+
     public static class ExplorerFocusResolver
     {
         private const int SWC_DESKTOP = 0x00000008;
         private const int SWFO_NEEDDISPATCH = 0x00000001;
+        private const uint SVGIO_ALLVIEW = 0x00000002;
+        private const uint SVSI_SELECT_FOCUS_SINGLE = 0x00000001 | 0x00000004 | 0x00000008 | 0x00000010;
         private static readonly Guid ClsidShellWindows = new Guid("9BA05972-F6A8-11CF-A442-00A0C90A8F39");
         private static readonly Guid SID_STopLevelBrowser = new Guid("4C96BE40-915C-11CF-99D3-00AA004AE837");
         private static readonly Guid IID_IShellBrowser = new Guid("000214E2-0000-0000-C000-000000000046");
+        private static readonly Guid IID_IFolderView = new Guid("cde725b0-ccc9-4519-917e-325d72fab4ce");
+
+        private static void ReleaseCom(object? obj)
+        {
+            if (obj != null && Marshal.IsComObject(obj))
+            {
+                try { Marshal.ReleaseComObject(obj); } catch { }
+            }
+        }
 
         public static IntPtr GetTabHwndFromShellWindow(object? win)
         {
@@ -89,14 +121,17 @@ namespace AeroSpot.Core.Shell
                     int hr = sp.QueryService(ref sid, ref iid, out IntPtr pBrowser);
                     if (hr == 0 && pBrowser != IntPtr.Zero)
                     {
+                        object? browserObj = null;
                         try
                         {
-                            var browser = (IShellBrowser)Marshal.GetObjectForIUnknown(pBrowser);
+                            browserObj = Marshal.GetObjectForIUnknown(pBrowser);
+                            var browser = (IShellBrowser)browserObj;
                             browser.GetWindow(out IntPtr tabHwnd);
                             return tabHwnd;
                         }
                         finally
                         {
+                            if (!ReferenceEquals(browserObj, win)) ReleaseCom(browserObj);
                             Marshal.Release(pBrowser);
                         }
                     }
@@ -306,19 +341,21 @@ namespace AeroSpot.Core.Shell
 
         public static string? GetFocusedPathForDesktop()
         {
+            object? shellWindows = null;
+            object? dispatch = null;
+            object? doc = null;
             try
             {
                 Type? shellWindowsType = Type.GetTypeFromCLSID(ClsidShellWindows);
                 if (shellWindowsType == null) return null;
 
-                object? shellWindows = Activator.CreateInstance(shellWindowsType);
+                shellWindows = Activator.CreateInstance(shellWindowsType);
                 if (shellWindows == null) return null;
 
                 object pvarLoc = 0; // CSIDL_DESKTOP
                 object pvarLocRoot = 0;
                 int phwnd = 0;
 
-                object? dispatch = null;
                 try
                 {
                     var isw = (IShellWindows)shellWindows;
@@ -331,7 +368,7 @@ namespace AeroSpot.Core.Shell
 
                 if (dispatch != null)
                 {
-                    object? doc = GetComProperty(dispatch, "Document");
+                    doc = GetComProperty(dispatch, "Document");
                     return ExtractPathFromShellDocument(doc);
                 }
             }
@@ -339,21 +376,29 @@ namespace AeroSpot.Core.Shell
             {
                 AppLogger.Warn("Errore recupero elemento Desktop via COM.", ex);
             }
+            finally
+            {
+                if (!ReferenceEquals(doc, dispatch)) ReleaseCom(doc);
+                if (!ReferenceEquals(dispatch, shellWindows)) ReleaseCom(dispatch);
+                ReleaseCom(shellWindows);
+            }
 
             return null;
         }
 
         public static string? GetFocusedPathForExplorer(IntPtr foregroundHwnd)
         {
+            object? shell = null;
+            object? windows = null;
             try
             {
                 Type? shellType = Type.GetTypeFromProgID("Shell.Application");
                 if (shellType == null) return null;
 
-                object? shell = Activator.CreateInstance(shellType);
+                shell = Activator.CreateInstance(shellType);
                 if (shell == null) return null;
 
-                object? windows = InvokeComMethod(shell, "Windows");
+                windows = InvokeComMethod(shell, "Windows");
                 if (windows == null) return null;
 
                 object? countObj = GetComProperty(windows, "Count");
@@ -394,9 +439,12 @@ namespace AeroSpot.Core.Shell
 
                 for (int i = 0; i < count; i++)
                 {
+                    object? win = null;
+                    object? doc = null;
+                    object? folder = null;
                     try
                     {
-                        object? win = InvokeComMethod(windows, "Item", i);
+                        win = InvokeComMethod(windows, "Item", i);
                         if (win == null) continue;
 
                         object? hwndValObj = GetComProperty(win, "HWND");
@@ -417,12 +465,12 @@ namespace AeroSpot.Core.Shell
                         if (!isSameTopLevel) continue;
 
                         string? locName = GetComProperty(win, "LocationName")?.ToString();
-                        object? doc = GetComProperty(win, "Document");
+                        doc = GetComProperty(win, "Document");
 
                         string? folderTitle = null;
                         if (doc != null)
                         {
-                            object? folder = GetComProperty(doc, "Folder");
+                            folder = GetComProperty(doc, "Folder");
                             if (folder != null)
                             {
                                 folderTitle = GetComProperty(folder, "Title")?.ToString();
@@ -499,6 +547,12 @@ namespace AeroSpot.Core.Shell
                     {
                         AppLogger.Debug($"Errore ispezione finestra shell [{i}]: {exItem.Message}");
                     }
+                    finally
+                    {
+                        if (!ReferenceEquals(folder, doc) && !ReferenceEquals(folder, win)) ReleaseCom(folder);
+                        if (!ReferenceEquals(doc, win)) ReleaseCom(doc);
+                        ReleaseCom(win);
+                    }
                 }
 
                 if (!string.IsNullOrEmpty(hwndAndTitleCandidate))
@@ -532,6 +586,267 @@ namespace AeroSpot.Core.Shell
                 AppLogger.Warn("Errore enumerazione Shell.Windows.", ex);
                 return null;
             }
+            finally
+            {
+                if (!ReferenceEquals(windows, shell)) ReleaseCom(windows);
+                ReleaseCom(shell);
+            }
+        }
+
+        /// <summary>
+        /// Sposta la selezione nella finestra di Esplora Risorse o sul Desktop senza rubare il focus a QuickLook,
+        /// rispettando esattamente l'ordinamento corrente della vista (IFolderView).
+        /// </summary>
+        public static bool TryNavigateSelection(IntPtr explorerOrDesktopHwnd, int delta, out string? newPath, out bool atBoundary)
+        {
+            newPath = null;
+            atBoundary = false;
+
+            if (delta == 0 || explorerOrDesktopHwnd == IntPtr.Zero || !Win32.IsWindow(explorerOrDesktopHwnd))
+            {
+                return false;
+            }
+
+            if (!IsExplorerOrDesktop(explorerOrDesktopHwnd))
+            {
+                return false;
+            }
+
+            object? shellWindows = null;
+            object? dispatch = null;
+            object? shell = null;
+            object? windows = null;
+            object? exactTabWin = null;
+            object? sameTopLevelFallback = null;
+
+            try
+            {
+                if (IsDesktop(explorerOrDesktopHwnd))
+                {
+                    Type? shellWindowsType = Type.GetTypeFromCLSID(ClsidShellWindows);
+                    if (shellWindowsType == null) return false;
+
+                    shellWindows = Activator.CreateInstance(shellWindowsType);
+                    if (shellWindows == null) return false;
+
+                    object pvarLoc = 0;
+                    object pvarLocRoot = 0;
+                    int phwnd = 0;
+                    try
+                    {
+                        var isw = (IShellWindows)shellWindows;
+                        dispatch = isw.FindWindowSW(ref pvarLoc, ref pvarLocRoot, SWC_DESKTOP, out phwnd, SWFO_NEEDDISPATCH);
+                    }
+                    catch
+                    {
+                        dispatch = InvokeComMethod(shellWindows, "FindWindowSW", pvarLoc, pvarLocRoot, SWC_DESKTOP, phwnd, SWFO_NEEDDISPATCH);
+                    }
+
+                    return dispatch != null && TryStepFolderView(dispatch, delta, out newPath, out atBoundary);
+                }
+
+                Type? shellType = Type.GetTypeFromProgID("Shell.Application");
+                if (shellType == null) return false;
+
+                shell = Activator.CreateInstance(shellType);
+                if (shell == null) return false;
+
+                windows = InvokeComMethod(shell, "Windows");
+                if (windows == null) return false;
+
+                object? countObj = GetComProperty(windows, "Count");
+                if (countObj is not int count || count <= 0) return false;
+
+                IntPtr rootFg = Win32.GetAncestor(explorerOrDesktopHwnd, Win32.GA_ROOT);
+                if (rootFg == IntPtr.Zero) rootFg = explorerOrDesktopHwnd;
+
+                IntPtr hActiveTab = FindActiveVisibleTabHwnd(rootFg);
+                if (hActiveTab == IntPtr.Zero && explorerOrDesktopHwnd != rootFg)
+                {
+                    hActiveTab = FindActiveVisibleTabHwnd(explorerOrDesktopHwnd);
+                }
+
+                for (int i = 0; i < count; i++)
+                {
+                    object? win = null;
+                    bool keepWin = false;
+                    try
+                    {
+                        win = InvokeComMethod(windows, "Item", i);
+                        if (win == null) continue;
+
+                        object? hwndValObj = GetComProperty(win, "HWND");
+                        IntPtr winHwnd = hwndValObj != null ? new IntPtr(Convert.ToInt64(hwndValObj)) : IntPtr.Zero;
+                        if (winHwnd == IntPtr.Zero || !Win32.IsWindow(winHwnd)) continue;
+
+                        IntPtr rootWin = Win32.GetAncestor(winHwnd, Win32.GA_ROOT);
+                        if (rootWin == IntPtr.Zero) rootWin = winHwnd;
+
+                        bool isSameTopLevel = (rootWin == rootFg || winHwnd == explorerOrDesktopHwnd || winHwnd == rootFg);
+                        if (!isSameTopLevel) continue;
+
+                        if (hActiveTab != IntPtr.Zero)
+                        {
+                            IntPtr tabHwnd = GetTabHwndFromShellWindow(win);
+                            if (tabHwnd != IntPtr.Zero && tabHwnd == hActiveTab)
+                            {
+                                exactTabWin = win;
+                                keepWin = true;
+                                break;
+                            }
+                        }
+
+                        if (sameTopLevelFallback == null)
+                        {
+                            sameTopLevelFallback = win;
+                            keepWin = true;
+                        }
+                    }
+                    catch { }
+                    finally
+                    {
+                        if (!keepWin) ReleaseCom(win);
+                    }
+                }
+
+                object? targetWin = exactTabWin ?? sameTopLevelFallback;
+                return targetWin != null && TryStepFolderView(targetWin, delta, out newPath, out atBoundary);
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Debug($"TryNavigateSelection: errore navigazione Shell: {ex.Message}");
+                return false;
+            }
+            finally
+            {
+                if (!ReferenceEquals(exactTabWin, sameTopLevelFallback)) ReleaseCom(exactTabWin);
+                ReleaseCom(sameTopLevelFallback);
+                if (!ReferenceEquals(windows, shell)) ReleaseCom(windows);
+                ReleaseCom(shell);
+                if (!ReferenceEquals(dispatch, shellWindows)) ReleaseCom(dispatch);
+                ReleaseCom(shellWindows);
+            }
+        }
+
+        private static bool TryStepFolderView(object shellWindow, int delta, out string? newPath, out bool atBoundary)
+        {
+            newPath = null;
+            atBoundary = false;
+
+            if (shellWindow is not IServiceProvider sp) return false;
+
+            IntPtr pBrowser = IntPtr.Zero;
+            IntPtr pShellView = IntPtr.Zero;
+            IntPtr pFolderView = IntPtr.Zero;
+            object? browserObj = null;
+            object? folderViewObj = null;
+            object? doc = null;
+
+            try
+            {
+                var sid = SID_STopLevelBrowser;
+                var iidBrowser = IID_IShellBrowser;
+                if (sp.QueryService(ref sid, ref iidBrowser, out pBrowser) != 0 || pBrowser == IntPtr.Zero)
+                {
+                    return false;
+                }
+
+                browserObj = Marshal.GetObjectForIUnknown(pBrowser);
+                var browser = (IShellBrowser)browserObj;
+                browser.QueryActiveShellView(out pShellView);
+                if (pShellView == IntPtr.Zero) return false;
+
+                var iidFolderView = IID_IFolderView;
+                if (Marshal.QueryInterface(pShellView, in iidFolderView, out pFolderView) != 0 || pFolderView == IntPtr.Zero)
+                {
+                    return false;
+                }
+
+                folderViewObj = Marshal.GetObjectForIUnknown(pFolderView);
+                var folderView = (IFolderView)folderViewObj;
+                if (folderView.ItemCount(SVGIO_ALLVIEW, out int totalCount) != 0 || totalCount <= 0)
+                {
+                    return false;
+                }
+
+                int hrFocus = folderView.GetFocusedItem(out int currentIndex);
+                if (hrFocus != 0 || currentIndex < 0 || currentIndex >= totalCount)
+                {
+                    currentIndex = 0;
+                }
+
+                int targetIndex = Math.Clamp(currentIndex + delta, 0, totalCount - 1);
+                if (targetIndex == currentIndex)
+                {
+                    atBoundary = true;
+                    return false;
+                }
+
+                folderView.SelectItem(targetIndex, SVSI_SELECT_FOCUS_SINGLE);
+
+                doc = GetComProperty(shellWindow, "Document");
+                newPath = ExtractPathFromShellDocument(doc);
+                return !string.IsNullOrEmpty(newPath);
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Debug($"TryStepFolderView: errore IFolderView: {ex.Message}");
+                return false;
+            }
+            finally
+            {
+                if (!ReferenceEquals(doc, shellWindow)) ReleaseCom(doc);
+                if (!ReferenceEquals(folderViewObj, shellWindow)) ReleaseCom(folderViewObj);
+                if (!ReferenceEquals(browserObj, shellWindow)) ReleaseCom(browserObj);
+                if (pFolderView != IntPtr.Zero) Marshal.Release(pFolderView);
+                if (pShellView != IntPtr.Zero) Marshal.Release(pShellView);
+                if (pBrowser != IntPtr.Zero) Marshal.Release(pBrowser);
+            }
+        }
+
+        /// <summary>
+        /// Fallback per dialoghi #32770 o cartelle non gestite da IShellWindows:
+        /// naviga l'elemento adiacente nella stessa directory con ordinamento naturale Windows (StrCmpLogicalW).
+        /// </summary>
+        public static bool TryGetAdjacentItemInDirectory(string? currentPath, int delta, out string? nextPath)
+        {
+            nextPath = null;
+            if (string.IsNullOrWhiteSpace(currentPath) || delta == 0) return false;
+
+            try
+            {
+                string? dir = Path.GetDirectoryName(currentPath);
+                if (string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir)) return false;
+
+                var entries = new System.Collections.Generic.List<string>();
+                foreach (var entry in Directory.EnumerateFileSystemEntries(dir))
+                {
+                    try
+                    {
+                        var attrs = File.GetAttributes(entry);
+                        if ((attrs & (FileAttributes.Hidden | FileAttributes.System)) != 0) continue;
+                    }
+                    catch { continue; }
+                    entries.Add(entry);
+                }
+
+                if (entries.Count <= 1) return false;
+
+                entries.Sort((a, b) => Win32.StrCmpLogicalW(Path.GetFileName(a), Path.GetFileName(b)));
+
+                int idx = entries.FindIndex(p => string.Equals(p, currentPath, StringComparison.OrdinalIgnoreCase));
+                if (idx < 0) return false;
+
+                int targetIdx = Math.Clamp(idx + delta, 0, entries.Count - 1);
+                if (targetIdx == idx) return false;
+
+                nextPath = entries[targetIdx];
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private static IntPtr FindActiveVisibleTabHwnd(IntPtr parentHwnd)
@@ -559,9 +874,10 @@ namespace AeroSpot.Core.Shell
         private static bool HasSelectedItems(object? doc)
         {
             if (doc == null) return false;
+            object? selected = null;
             try
             {
-                object? selected = GetComPropertyOrMethod(doc, "SelectedItems");
+                selected = GetComPropertyOrMethod(doc, "SelectedItems");
                 if (selected != null)
                 {
                     object? countObj = GetComPropertyOrMethod(selected, "Count");
@@ -572,6 +888,10 @@ namespace AeroSpot.Core.Shell
                 }
             }
             catch { }
+            finally
+            {
+                if (!ReferenceEquals(selected, doc)) ReleaseCom(selected);
+            }
             return false;
         }
 
@@ -588,9 +908,10 @@ namespace AeroSpot.Core.Shell
             }
 
             // 1. Prova prima con FocusedItem (l'elemento con focus della tastiera o attivo)
+            object? focused = null;
             try
             {
-                object? focused = GetComPropertyOrMethod(doc, "FocusedItem");
+                focused = GetComPropertyOrMethod(doc, "FocusedItem");
                 if (focused != null)
                 {
                     object? pathObj = GetComPropertyOrMethod(focused, "Path");
@@ -606,17 +927,23 @@ namespace AeroSpot.Core.Shell
             {
                 AppLogger.Debug($"ExtractPathFromShellDocument: FocusedItem errore: {ex.Message}");
             }
+            finally
+            {
+                if (!ReferenceEquals(focused, doc)) ReleaseCom(focused);
+            }
 
             // 2. Fallback su SelectedItems (se FocusedItem non è disponibile o non valido)
+            object? selected = null;
+            object? first = null;
             try
             {
-                object? selected = GetComPropertyOrMethod(doc, "SelectedItems");
+                selected = GetComPropertyOrMethod(doc, "SelectedItems");
                 if (selected != null)
                 {
                     object? countObj = GetComPropertyOrMethod(selected, "Count");
                     if (countObj is int count && count > 0)
                     {
-                        object? first = GetComPropertyOrMethod(selected, "Item", 0);
+                        first = GetComPropertyOrMethod(selected, "Item", 0);
                         if (first != null)
                         {
                             object? pathObj = GetComPropertyOrMethod(first, "Path");
@@ -633,6 +960,11 @@ namespace AeroSpot.Core.Shell
             catch (Exception ex)
             {
                 AppLogger.Debug($"ExtractPathFromShellDocument: SelectedItems errore: {ex.Message}");
+            }
+            finally
+            {
+                if (!ReferenceEquals(first, selected) && !ReferenceEquals(first, doc)) ReleaseCom(first);
+                if (!ReferenceEquals(selected, doc)) ReleaseCom(selected);
             }
 
             return null;

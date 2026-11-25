@@ -4,6 +4,79 @@
              xmlns:local="clr-namespace:AeroSpot.Worker"
              ShutdownMode="OnExplicitShutdown">
     <Application.Resources>
+        <local:MinThumbViewportConverter x:Key="MinThumbViewportConverter" MinThumbLength="44" />
+
+        <!-- Barra di Scorrimento Sottile e Scura (macOS / Fluent dark gray) con Hit-Test confortevole -->
+        <Style x:Key="SlimDarkScrollBarThumb" TargetType="{x:Type Thumb}">
+            <Setter Property="OverridesDefaultStyle" Value="True"/>
+            <Setter Property="IsTabStop" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type Thumb}">
+                        <Border Background="Transparent">
+                            <Border x:Name="ThumbVisual" Background="#45454A" CornerRadius="3.5" Margin="3,1,3,1" SnapsToDevicePixels="True" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ThumbVisual" Property="Background" Value="#71717A"/>
+                            </Trigger>
+                            <Trigger Property="IsDragging" Value="True">
+                                <Setter TargetName="ThumbVisual" Property="Background" Value="#A1A1AA"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="SlimDarkScrollBar" TargetType="{x:Type ScrollBar}">
+            <Setter Property="OverridesDefaultStyle" Value="True"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type ScrollBar}">
+                        <Grid Background="Transparent" SnapsToDevicePixels="True">
+                            <Track x:Name="PART_Track" IsDirectionReversed="False">
+                                <Track.ViewportSize>
+                                    <MultiBinding Converter="{StaticResource MinThumbViewportConverter}">
+                                        <Binding Path="ViewportSize" RelativeSource="{RelativeSource TemplatedParent}" />
+                                        <Binding Path="Maximum" RelativeSource="{RelativeSource TemplatedParent}" />
+                                        <Binding Path="Minimum" RelativeSource="{RelativeSource TemplatedParent}" />
+                                        <Binding Path="ActualHeight" RelativeSource="{RelativeSource TemplatedParent}" />
+                                        <Binding Path="ActualWidth" RelativeSource="{RelativeSource TemplatedParent}" />
+                                        <Binding Path="Orientation" RelativeSource="{RelativeSource TemplatedParent}" />
+                                    </MultiBinding>
+                                </Track.ViewportSize>
+                                <Track.DecreaseRepeatButton>
+                                    <RepeatButton x:Name="PART_PageUpButton" Command="{x:Static ScrollBar.PageUpCommand}" Opacity="0" Focusable="False" />
+                                </Track.DecreaseRepeatButton>
+                                <Track.Thumb>
+                                    <Thumb x:Name="PART_Thumb" Style="{StaticResource SlimDarkScrollBarThumb}" />
+                                </Track.Thumb>
+                                <Track.IncreaseRepeatButton>
+                                    <RepeatButton x:Name="PART_PageDownButton" Command="{x:Static ScrollBar.PageDownCommand}" Opacity="0" Focusable="False" />
+                                </Track.IncreaseRepeatButton>
+                            </Track>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="Orientation" Value="Vertical">
+                                <Setter TargetName="PART_Track" Property="IsDirectionReversed" Value="True"/>
+                                <Setter Property="Width" Value="14"/>
+                                <Setter Property="MinWidth" Value="14"/>
+                            </Trigger>
+                            <Trigger Property="Orientation" Value="Horizontal">
+                                <Setter TargetName="PART_Track" Property="IsDirectionReversed" Value="False"/>
+                                <Setter TargetName="PART_PageUpButton" Property="Command" Value="{x:Static ScrollBar.PageLeftCommand}"/>
+                                <Setter TargetName="PART_PageDownButton" Property="Command" Value="{x:Static ScrollBar.PageRightCommand}"/>
+                                <Setter Property="Height" Value="14"/>
+                                <Setter Property="MinHeight" Value="14"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- Stile Globale Dark Fluent per tutti i Button dell'applicazione (evita il bordo bianco/ciano di default di Windows) -->
         <Style TargetType="{x:Type Button}">
             <Setter Property="OverridesDefaultStyle" Value="True"/>

@@ -6,6 +6,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Threading;
 using System.Threading.Tasks;
 using AeroSpot.Core.Logging;
 using AeroSpot.Core.Search;
@@ -28,6 +29,7 @@ namespace AeroSpot.Worker.ViewModels
         private System.Windows.Threading.DispatcherTimer? _searchDebounceTimer;
         private CancellationTokenSource? _searchCts;
         private List<SearchResultItem>? _cachedHomeItems;
+        private readonly SemaphoreSlim _reindexSemaphore = new SemaphoreSlim(1, 1);
 
         public bool EnableAsyncDebounce { get; set; }
 
@@ -61,7 +63,7 @@ namespace AeroSpot.Worker.ViewModels
             {
                 StopRealtimeWatcher();
             }
-            FilterResults();
+            FilterResults(preserveSelection: true);
         }
 
         public string SearchText
@@ -283,7 +285,7 @@ namespace AeroSpot.Worker.ViewModels
                 _realtimeWatcher = new RealtimeFolderWatcher(_db);
                 _realtimeWatcher.ItemsChanged += () =>
                 {
-                    System.Windows.Application.Current?.Dispatcher.InvokeAsync(FilterResults);
+                    System.Windows.Application.Current?.Dispatcher.InvokeAsync(() => FilterResults(preserveSelection: true));
                 };
             }
             catch (Exception ex)
@@ -334,26 +336,53 @@ namespace AeroSpot.Worker.ViewModels
             }
         }
 
+        public async Task TriggerFullReindexAsync(bool force = true)
+        {
+            if (force)
+            {
+                await _reindexSemaphore.WaitAsync().ConfigureAwait(false);
+            }
+            else if (!await _reindexSemaphore.WaitAsync(0).ConfigureAwait(false))
+            {
+                AppLogger.Info("LauncherViewModel: Scansione periodica saltata perché una scansione è già in corso.");
+                return;
+            }
+
+            try
+            {
+                await Task.Run(() =>
+                {
+                    try
+                    {
+                        AppLogger.Info($"LauncherViewModel: Avvio scansione completa indicizzazione (force={force})...");
+                        var crawler = new FileCrawler(_db);
+                        crawler.CrawlAll();
+                        System.Windows.Application.Current?.Dispatcher.InvokeAsync(() => FilterResults(preserveSelection: true));
+                        AppLogger.Info("LauncherViewModel: Scansione completa completata con successo.");
+                    }
+                    catch (Exception ex)
+                    {
+                        AppLogger.Warn($"LauncherViewModel: Scansione background indicizzazione: {ex.Message}");
+                    }
+                }).ConfigureAwait(false);
+            }
+            finally
+            {
+                _reindexSemaphore.Release();
+            }
+        }
+
         public void TriggerFullReindex(bool force = true)
         {
-            Task.Run(() =>
-            {
-                try
-                {
-                    AppLogger.Info($"LauncherViewModel: Avvio scansione completa indicizzazione (force={force})...");
-                    var crawler = new FileCrawler(_db);
-                    crawler.CrawlAll();
-                    System.Windows.Application.Current?.Dispatcher.InvokeAsync(FilterResults);
-                    AppLogger.Info("LauncherViewModel: Scansione completa completata con successo.");
-                }
-                catch (Exception ex)
-                {
-                    AppLogger.Warn($"LauncherViewModel: Scansione background indicizzazione: {ex.Message}");
-                }
-            });
+            _ = TriggerFullReindexAsync(force);
         }
 
         public void FilterResults()
+        {
+            FilterResults(preserveSelection: false);
+        }
+
+        public void FilterResults(bool preserveSelection)
         {
             _searchDebounceTimer?.Stop();
             _searchCts?.Cancel();
@@ -361,15 +390,15 @@ namespace AeroSpot.Worker.ViewModels
 
             if (!EnableAsyncDebounce)
             {
-                ExecuteSearchSync(_searchText, _selectedCategoryFilter);
+                ExecuteSearchSync(_searchText, _selectedCategoryFilter, preserveSelection);
             }
             else
             {
-                ExecuteSearchAsync(_searchText, _selectedCategoryFilter, _searchCts.Token);
+                ExecuteSearchAsync(_searchText, _selectedCategoryFilter, _searchCts.Token, preserveSelection);
             }
         }
 
-        private void ExecuteSearchSync(string query, string category)
+        private void ExecuteSearchSync(string query, string category, bool preserveSelection = false)
         {
             var items = new List<SearchResultItem>();
 
@@ -423,10 +452,10 @@ namespace AeroSpot.Worker.ViewModels
                 _cachedHomeItems = new List<SearchResultItem>(items);
             }
 
-            ApplyResultsToUI(items);
+            ApplyResultsToUI(items, preserveSelection);
         }
 
-        private async void ExecuteSearchAsync(string query, string category, CancellationToken token)
+        private async void ExecuteSearchAsync(string query, string category, CancellationToken token, bool preserveSelection = false)
         {
             try
             {
@@ -513,12 +542,12 @@ namespace AeroSpot.Worker.ViewModels
                     await dispatcher.InvokeAsync(() =>
                     {
                         if (token.IsCancellationRequested) return;
-                        ApplyResultsToUI(items);
+                        ApplyResultsToUI(items, preserveSelection);
                     });
                 }
                 else
                 {
-                    ApplyResultsToUI(items);
+                    ApplyResultsToUI(items, preserveSelection);
                 }
             }
             catch (OperationCanceledException) { }
@@ -538,8 +567,10 @@ namespace AeroSpot.Worker.ViewModels
                    a.IsActionItem == b.IsActionItem;
         }
 
-        private void ApplyResultsToUI(List<SearchResultItem> items)
+        private void ApplyResultsToUI(List<SearchResultItem> items, bool preserveSelection = false)
         {
+            var previousSelected = preserveSelection ? SelectedItem : null;
+
             // Se la lista è già identica a quella visualizzata (es. refresh asincrono Home o FileSystemWatcher),
             // non toccare FilteredResults per evitare qualsiasi ricreazione dei container e sfarfallio grafico.
             if (FilteredResults.Count == items.Count)
@@ -591,6 +622,27 @@ namespace AeroSpot.Worker.ViewModels
             }
 
             OnPropertyChanged(nameof(HasResults));
+
+            if (previousSelected != null)
+            {
+                int restoredIndex = -1;
+                for (int i = 0; i < FilteredResults.Count; i++)
+                {
+                    if (AreItemsEquivalent(FilteredResults[i], previousSelected))
+                    {
+                        restoredIndex = i;
+                        break;
+                    }
+                }
+
+                if (restoredIndex >= 0)
+                {
+                    SelectedIndex = restoredIndex;
+                    SelectedItem = FilteredResults[restoredIndex];
+                    return;
+                }
+            }
+
             SelectedIndex = -1;
             SelectedItem = null;
         }
@@ -884,6 +936,7 @@ namespace AeroSpot.Worker.ViewModels
 
                 _cachedHomeItems?.Remove(item);
                 FilteredResults.Remove(item);
+                OnPropertyChanged(nameof(HasResults));
                 if (FilteredResults.Count > 0)
                 {
                     SelectedIndex = Math.Clamp(SelectedIndex, 0, FilteredResults.Count - 1);
@@ -934,16 +987,7 @@ namespace AeroSpot.Worker.ViewModels
                 // Se l'elemento è stato rimosso (l'utente non ha annullato la finestra di conferma):
                 if (!File.Exists(path) && !Directory.Exists(path))
                 {
-                    _db.DeleteBatch(new[] { path });
-                    FilteredResults.Remove(item);
-                    if (FilteredResults.Count > 0)
-                    {
-                        SelectedIndex = Math.Clamp(SelectedIndex, 0, FilteredResults.Count - 1);
-                    }
-                    else
-                    {
-                        SelectedIndex = -1;
-                    }
+                    NotifyItemMovedOrDeleted(item);
                     return true;
                 }
             }

@@ -53,13 +53,13 @@ powershell -ExecutionPolicy Bypass -File scripts\build-release.ps1
 ### Parametri Supportati dallo Script:
 | Parametro | Predefinito | Descrizione |
 |---|---|---|
+| `-Version` | *(da `Directory.Build.props`)* | Stringa di versione della release (es. `1.6.1`). |
 | `-Configuration` | `Release` | Configurazione di compilazione (`Release` o `Debug`). |
 | `-Runtime` | `win-x64` | Runtime Identifier target per Windows 64-bit. |
-| `-ReadyToRun` | `$true` | Precompilazione AOT ReadyToRun per eliminare i picchi JIT al primo avvio. |
-| `-OutDir` | `bin\Release\publish` | Cartella di output dei binari finali. |
+| `-NoReadyToRun` | `$false` | Disabilita la precompilazione AOT ReadyToRun (attiva di default per eliminare i picchi JIT al primo avvio). |
+| `-OutDir` | `bin\<Configuration>\publish` | Cartella di output dei binari finali. |
 | `-SkipTests` | `$false` | Ignora l'esecuzione preventiva dei test unitari (sconsigliato). |
-| `-CreateZip` | `$true` | Comprime automaticamente l'output nello zip portable pronto per il rilascio. |
-| `-GenerateInstaller` | `$false` | Invoca Inno Setup `iscc.exe` per compilare l'installer `Setup.exe`. |
+| `-NoZip` | `$false` | Salta la generazione dell'archivio `.zip` portable e del file `SHA256SUMS.txt`. |
 
 ### Deploy e Collaudo Locale su SSD (C:\Programmi_miei\AeroSpot)
 Per aggiornare rapidamente l'installazione standalone su unità SSD preservando rigorosamente il database e le impostazioni utente (`Data\`):
@@ -83,7 +83,7 @@ Sono stati misurati rigorosamente i due approcci di pubblicazione self-contained
 | **Avvio a freddo (Max / 1° avvio)** | **4080 ms** | **1041 ms** | **-3039 ms (-74%)** |
 
 **Conclusioni e Scelta Operativa:**
-Senza ReadyToRun, il primo avvio da disco sconta un picco JIT di oltre 4 secondi. Con ReadyToRun, la latenza di avvio iniziale scende a 1.04 secondi con una deviazione standard quasi nulla. L'aumento della dimensione dell'archivio zip di appena ~8.6 MB ripaga ampiamente l'esperienza utente istantanea tipica di AeroSpot. Lo script di compilazione predefinisce pertanto `ReadyToRun = $true`.
+Senza ReadyToRun, il primo avvio da disco sconta un picco JIT di oltre 4 secondi. Con ReadyToRun, la latenza di avvio iniziale scende a 1.04 secondi con una deviazione standard quasi nulla. L'aumento della dimensione dell'archivio zip di appena ~8.6 MB ripaga ampiamente l'esperienza utente istantanea tipica di AeroSpot. Lo script di compilazione attiva ReadyToRun in modo predefinito (disattivabile con `-NoReadyToRun`).
 
 ---
 

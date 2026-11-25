@@ -16,6 +16,16 @@ namespace AeroSpot.Core.Shell
     public static class FileDialogResolver
     {
         private static readonly Regex DrivePathRegex = new Regex(@"[A-Za-z]:\\[^""<>|:*?]+", RegexOptions.Compiled);
+        private static readonly object CacheLock = new object();
+        private const long CacheTtlMs = 250;
+        private static IntPtr _lastRootHwnd;
+        private static IntPtr _lastFocusHwnd;
+        private static string _lastAddrText = string.Empty;
+        private static string _lastEditText = string.Empty;
+        private static string _lastFocusedName = string.Empty;
+        private static string? _lastFilePath;
+        private static bool _lastResult;
+        private static long _lastQueryTickMs;
 
         /// <summary>
         /// Determina se l'handle specificato (o un suo antenato radice) appartiene a un selettore di file (#32770).
@@ -79,16 +89,58 @@ namespace AeroSpot.Core.Shell
             IntPtr root = Win32.GetAncestor(dialogHwnd, Win32.GA_ROOT);
             if (root == IntPtr.Zero) root = dialogHwnd;
 
+            // Guardia / cache leggera per evitare ripetuti walk UIA Descendants se nulla è cambiato
+            IntPtr focusHwnd = IntPtr.Zero;
+            string addrText = string.Empty;
+            string editText = string.Empty;
+            string focusedName = string.Empty;
+
+            try
+            {
+                uint tid = Win32.GetWindowThreadProcessId(root, out _);
+                var gui = new Win32.GUITHREADINFO { cbSize = System.Runtime.InteropServices.Marshal.SizeOf<Win32.GUITHREADINFO>() };
+                if (tid != 0 && Win32.GetGUIThreadInfo(tid, ref gui))
+                {
+                    focusHwnd = gui.hwndFocus;
+                }
+
+                IntPtr h1001 = Win32.GetDlgItem(root, 1001);
+                if (h1001 != IntPtr.Zero) addrText = ExplorerFocusResolver.GetWindowTitle(h1001);
+
+                IntPtr h1148 = Win32.GetDlgItem(root, 1148);
+                if (h1148 != IntPtr.Zero) editText = ExplorerFocusResolver.GetWindowTitle(h1148);
+
+                var focusedEl = AutomationElement.FocusedElement;
+                if (focusedEl != null) focusedName = focusedEl.Current.Name ?? string.Empty;
+
+                lock (CacheLock)
+                {
+                    long nowMs = Environment.TickCount64;
+                    if (_lastRootHwnd == root &&
+                        nowMs - _lastQueryTickMs <= CacheTtlMs &&
+                        _lastFocusHwnd == focusHwnd &&
+                        string.Equals(_lastAddrText, addrText, StringComparison.Ordinal) &&
+                        string.Equals(_lastEditText, editText, StringComparison.Ordinal) &&
+                        string.Equals(_lastFocusedName, focusedName, StringComparison.Ordinal))
+                    {
+                        filePath = _lastFilePath;
+                        return _lastResult;
+                    }
+                }
+            }
+            catch { }
+
+            bool resolved = false;
             try
             {
                 var dlg = AutomationElement.FromHandle(root);
                 if (dlg == null) return false;
 
                 // 1. Risolvi il percorso della cartella corrente dalla barra degli indirizzi (Toolbar 1001)
-                string? folderPath = ResolveFolderPath(dlg);
+                string? folderPath = ResolveFolderPath(root, dlg);
 
                 // 2. Risolvi il nome dell'elemento selezionato nella vista file
-                string? fileName = ResolveSelectedFileName(dlg);
+                string? fileName = ResolveSelectedFileName(root, dlg);
 
                 if (string.IsNullOrWhiteSpace(fileName))
                 {
@@ -103,6 +155,7 @@ namespace AeroSpot.Core.Shell
                     if (File.Exists(direct) || Directory.Exists(direct))
                     {
                         filePath = direct;
+                        resolved = true;
                         AppLogger.Info($"FileDialogResolver: File selezionato risolto con successo: {filePath}");
                         return true;
                     }
@@ -114,6 +167,7 @@ namespace AeroSpot.Core.Shell
                         if (matches.Length > 0)
                         {
                             filePath = matches[0];
+                            resolved = true;
                             AppLogger.Info($"FileDialogResolver: File risolto tramite corrispondenza estensione nascosta: {filePath}");
                             return true;
                         }
@@ -125,6 +179,7 @@ namespace AeroSpot.Core.Shell
                             if (string.Equals(entryName, fileName, StringComparison.OrdinalIgnoreCase))
                             {
                                 filePath = entry;
+                                resolved = true;
                                 AppLogger.Info($"FileDialogResolver: File risolto tramite confronto NameWithoutExtension: {filePath}");
                                 return true;
                             }
@@ -140,6 +195,7 @@ namespace AeroSpot.Core.Shell
                 if (File.Exists(fileName) || Directory.Exists(fileName))
                 {
                     filePath = fileName;
+                    resolved = true;
                     AppLogger.Info($"FileDialogResolver: Percorso assoluto diretto risolto: {filePath}");
                     return true;
                 }
@@ -148,16 +204,36 @@ namespace AeroSpot.Core.Shell
             {
                 AppLogger.Warn($"FileDialogResolver: Eccezione durante l'ispezione UI Automation del dialogo 0x{dialogHwnd:X}: {ex.Message}");
             }
+            finally
+            {
+                lock (CacheLock)
+                {
+                    _lastRootHwnd = root;
+                    _lastFocusHwnd = focusHwnd;
+                    _lastAddrText = addrText;
+                    _lastEditText = editText;
+                    _lastFocusedName = focusedName;
+                    _lastFilePath = resolved ? filePath : null;
+                    _lastResult = resolved;
+                    _lastQueryTickMs = Environment.TickCount64;
+                }
+            }
 
             return false;
         }
 
-        private static string? ResolveFolderPath(AutomationElement dlg)
+        private static string? ResolveFolderPath(IntPtr root, AutomationElement dlg)
         {
             try
             {
-                // Cerca la barra strumenti dell'indirizzo con AutomationId 1001
-                var tb = dlg.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.AutomationIdProperty, "1001"));
+                // Accesso diretto tramite HWND del controllo 1001 per evitare TreeScope.Descendants quando possibile
+                AutomationElement? tb = null;
+                IntPtr hAddr = Win32.GetDlgItem(root, 1001);
+                if (hAddr != IntPtr.Zero)
+                {
+                    tb = AutomationElement.FromHandle(hAddr);
+                }
+                tb ??= dlg.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.AutomationIdProperty, "1001"));
                 if (tb != null)
                 {
                     string name = tb.Current.Name ?? string.Empty;
@@ -208,41 +284,11 @@ namespace AeroSpot.Core.Shell
             return null;
         }
 
-        private static string? ResolveSelectedFileName(AutomationElement dlg)
+        private static string? ResolveSelectedFileName(IntPtr root, AutomationElement dlg)
         {
             try
             {
-                // 1. Cerca elemento selezionato nel controllo List (vista elementi file)
-                var list = dlg.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.List));
-                if (list != null && list.TryGetCurrentPattern(SelectionPattern.Pattern, out object selPatternObj))
-                {
-                    var selItems = ((SelectionPattern)selPatternObj).Current.GetSelection();
-                    if (selItems != null && selItems.Length > 0)
-                    {
-                        string name = selItems[0].Current.Name;
-                        if (!string.IsNullOrWhiteSpace(name))
-                        {
-                            return name.Trim();
-                        }
-                    }
-                }
-
-                // 2. Cerca elemento selezionato in DataGrid (se visualizzazione dettagliata)
-                var grid = dlg.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.DataGrid));
-                if (grid != null && grid.TryGetCurrentPattern(SelectionPattern.Pattern, out object gridSelObj))
-                {
-                    var selItems = ((SelectionPattern)gridSelObj).Current.GetSelection();
-                    if (selItems != null && selItems.Length > 0)
-                    {
-                        string name = selItems[0].Current.Name;
-                        if (!string.IsNullOrWhiteSpace(name))
-                        {
-                            return name.Trim();
-                        }
-                    }
-                }
-
-                // 3. Fallback: elemento attualmente con focus UI se di tipo ListItem
+                // 1. Controllo rapido: elemento attualmente con focus UI se di tipo ListItem / DataItem (evita Descendants walk)
                 var focused = AutomationElement.FocusedElement;
                 if (focused != null)
                 {
@@ -257,8 +303,44 @@ namespace AeroSpot.Core.Shell
                     }
                 }
 
+                // 2. Cerca elemento selezionato nel controllo List (vista elementi file)
+                var list = dlg.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.List));
+                if (list != null && list.TryGetCurrentPattern(SelectionPattern.Pattern, out object selPatternObj))
+                {
+                    var selItems = ((SelectionPattern)selPatternObj).Current.GetSelection();
+                    if (selItems != null && selItems.Length > 0)
+                    {
+                        string name = selItems[0].Current.Name;
+                        if (!string.IsNullOrWhiteSpace(name))
+                        {
+                            return name.Trim();
+                        }
+                    }
+                }
+
+                // 3. Cerca elemento selezionato in DataGrid (se visualizzazione dettagliata)
+                var grid = dlg.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.DataGrid));
+                if (grid != null && grid.TryGetCurrentPattern(SelectionPattern.Pattern, out object gridSelObj))
+                {
+                    var selItems = ((SelectionPattern)gridSelObj).Current.GetSelection();
+                    if (selItems != null && selItems.Length > 0)
+                    {
+                        string name = selItems[0].Current.Name;
+                        if (!string.IsNullOrWhiteSpace(name))
+                        {
+                            return name.Trim();
+                        }
+                    }
+                }
+
                 // 4. Fallback: campo di testo 'Nome file:' (AutomationId 1148)
-                var edit = dlg.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.AutomationIdProperty, "1148"));
+                AutomationElement? edit = null;
+                IntPtr hEdit = Win32.GetDlgItem(root, 1148);
+                if (hEdit != IntPtr.Zero)
+                {
+                    edit = AutomationElement.FromHandle(hEdit);
+                }
+                edit ??= dlg.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.AutomationIdProperty, "1148"));
                 if (edit != null && edit.TryGetCurrentPattern(ValuePattern.Pattern, out object valPatternObj))
                 {
                     string val = ((ValuePattern)valPatternObj).Current.Value;

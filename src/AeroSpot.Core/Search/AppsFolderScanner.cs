@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
 using AeroSpot.Core.Logging;
+using AeroSpot.Core.Native;
 
 namespace AeroSpot.Core.Search
 {
@@ -52,13 +53,6 @@ namespace AeroSpot.Core.Search
             int Clone(out IEnumShellItems ppenum);
         }
 
-        [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-        private static extern int SHCreateItemFromParsingName(
-            [MarshalAs(UnmanagedType.LPWStr)] string pszPath,
-            IntPtr pbc,
-            [MarshalAs(UnmanagedType.LPStruct)] Guid riid,
-            [MarshalAs(UnmanagedType.Interface)] out IShellItem? ppv);
-
         public static List<IndexedItem> ScanApps()
         {
             var apps = new List<IndexedItem>();
@@ -68,26 +62,29 @@ namespace AeroSpot.Core.Search
             AddSystemUtilities(apps, seenTitles);
 
             // 2. Scansione COM shell:AppsFolder (copre sia UWP che app registrate)
+            object? appsFolderObj = null;
+            IShellItem? appsFolder = null;
+            IntPtr pEnum = IntPtr.Zero;
+            IEnumShellItems? enumerator = null;
             try
             {
-                int hr = SHCreateItemFromParsingName(@"shell:AppsFolder", IntPtr.Zero, IID_IShellItem, out IShellItem? appsFolder);
-                if (hr == 0 && appsFolder != null)
+                Win32.SHCreateItemFromParsingName(@"shell:AppsFolder", IntPtr.Zero, IID_IShellItem, out appsFolderObj);
+                appsFolder = appsFolderObj as IShellItem;
+                if (appsFolder != null)
                 {
-                    hr = appsFolder.BindToHandler(IntPtr.Zero, BHID_EnumItems, IID_IEnumShellItems, out IntPtr pEnum);
+                    int hr = appsFolder.BindToHandler(IntPtr.Zero, BHID_EnumItems, IID_IEnumShellItems, out pEnum);
                     if (hr == 0 && pEnum != IntPtr.Zero)
                     {
-                        var enumerator = (IEnumShellItems)Marshal.GetObjectForIUnknown(pEnum);
+                        enumerator = (IEnumShellItems)Marshal.GetObjectForIUnknown(pEnum);
                         while (enumerator.Next(1, out IShellItem? item, out uint fetched) == 0 && fetched == 1 && item != null)
                         {
                             try
                             {
-                                string name = string.Empty;
-                                string parsingName = string.Empty;
+                                int hrName = item.GetDisplayName(SIGDN.SIGDN_NORMALDISPLAY, out string name);
+                                if (hrName != 0 || string.IsNullOrWhiteSpace(name)) continue;
 
-                                item.GetDisplayName(SIGDN.SIGDN_NORMALDISPLAY, out name);
-                                item.GetDisplayName(SIGDN.SIGDN_PARENTRELATIVEPARSING, out parsingName);
-
-                                if (string.IsNullOrWhiteSpace(name)) continue;
+                                int hrParse = item.GetDisplayName(SIGDN.SIGDN_PARENTRELATIVEPARSING, out string parsingName);
+                                if (hrParse != 0) parsingName = string.Empty;
 
                                 // Escludi disinstallatori o helper poco pertinenti
                                 if (name.StartsWith("Uninstall", StringComparison.OrdinalIgnoreCase) ||
@@ -137,39 +134,48 @@ namespace AeroSpot.Core.Search
                             catch { }
                             finally
                             {
-                                Marshal.ReleaseComObject(item);
+                                if (Marshal.IsComObject(item)) Marshal.ReleaseComObject(item);
                             }
                         }
-                        Marshal.Release(pEnum);
                     }
-                    Marshal.ReleaseComObject(appsFolder);
                 }
             }
             catch (Exception ex)
             {
-                AppLogger.Warn($"Scansione COM shell:AppsFolder non riuscita, ricorso a Start Menu: {ex.Message}");
+                AppLogger.Warn($"Scansione COM shell:AppsFolder non riuscita: {ex.Message}");
             }
-
-            // 3. Scansione di fallback/arricchimento dai collegamenti .lnk del Menu Start
-            ScanStartMenuShortcuts(apps, seenTitles);
+            finally
+            {
+                if (enumerator != null && Marshal.IsComObject(enumerator)) Marshal.ReleaseComObject(enumerator);
+                if (pEnum != IntPtr.Zero) Marshal.Release(pEnum);
+                if (appsFolder != null && Marshal.IsComObject(appsFolder)) Marshal.ReleaseComObject(appsFolder);
+                else if (appsFolderObj != null && Marshal.IsComObject(appsFolderObj)) Marshal.ReleaseComObject(appsFolderObj);
+            }
 
             return apps;
         }
 
         private static void AddSystemUtilities(List<IndexedItem> apps, HashSet<string> seen)
         {
+            string sysDir = Environment.SystemDirectory;
+            string winDir = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+            if (string.IsNullOrWhiteSpace(winDir))
+            {
+                winDir = Directory.GetParent(sysDir)?.FullName ?? @"C:\Windows";
+            }
+
             var utilities = new (string Title, string Path)[]
             {
-                ("Blocco note", @"C:\Windows\System32\notepad.exe"),
+                ("Blocco note", Path.Combine(sysDir, "notepad.exe")),
                 ("Calcolatrice", "calc.exe"),
                 ("Terminale di Windows", "wt.exe"),
-                ("Prompt dei comandi", @"C:\Windows\System32\cmd.exe"),
-                ("PowerShell", @"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"),
-                ("Gestione attività", @"C:\Windows\System32\taskmgr.exe"),
-                ("Esplora file", @"C:\Windows\explorer.exe"),
-                ("Editor del Registro di sistema", @"C:\Windows\regedit.exe"),
-                ("Paint", @"C:\Windows\System32\mspaint.exe"),
-                ("Strumento di cattura", @"C:\Windows\System32\SnippingTool.exe")
+                ("Prompt dei comandi", Path.Combine(sysDir, "cmd.exe")),
+                ("PowerShell", Path.Combine(sysDir, "WindowsPowerShell", "v1.0", "powershell.exe")),
+                ("Gestione attività", Path.Combine(sysDir, "taskmgr.exe")),
+                ("Esplora file", Path.Combine(winDir, "explorer.exe")),
+                ("Editor del Registro di sistema", Path.Combine(winDir, "regedit.exe")),
+                ("Paint", Path.Combine(sysDir, "mspaint.exe")),
+                ("Strumento di cattura", Path.Combine(sysDir, "SnippingTool.exe"))
             };
 
             foreach (var u in utilities)
@@ -178,51 +184,6 @@ namespace AeroSpot.Core.Search
                 {
                     apps.Add(new IndexedItem(u.Title, u.Path, "Applicazione", u.Path, isApp: true, extension: ".exe"));
                 }
-            }
-        }
-
-        private static void ScanStartMenuShortcuts(List<IndexedItem> apps, HashSet<string> seen)
-        {
-            var startPaths = new[]
-            {
-                Environment.GetFolderPath(Environment.SpecialFolder.CommonStartMenu),
-                Environment.GetFolderPath(Environment.SpecialFolder.StartMenu)
-            };
-
-            foreach (var root in startPaths)
-            {
-                if (string.IsNullOrEmpty(root) || !Directory.Exists(root)) continue;
-
-                try
-                {
-                    var files = Directory.GetFiles(root, "*.lnk", SearchOption.AllDirectories);
-                    foreach (var file in files)
-                    {
-                        try
-                        {
-                            if (!PathFilter.IsPathAllowed(file))
-                            {
-                                continue;
-                            }
-
-                            string title = Path.GetFileNameWithoutExtension(file);
-                            if (string.IsNullOrWhiteSpace(title)) continue;
-
-                            if (title.StartsWith("Uninstall", StringComparison.OrdinalIgnoreCase) ||
-                                title.StartsWith("Disinstalla", StringComparison.OrdinalIgnoreCase))
-                            {
-                                continue;
-                            }
-
-                            if (seen.Add(title))
-                            {
-                                apps.Add(new IndexedItem(title, file, "Applicazione", file, isApp: true, extension: ".lnk"));
-                            }
-                        }
-                        catch { }
-                    }
-                }
-                catch { }
             }
         }
     }

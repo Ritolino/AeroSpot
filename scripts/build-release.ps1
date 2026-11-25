@@ -10,15 +10,15 @@
 .PARAMETER Runtime
     Target Runtime Identifier (predefinito: win-x64).
 .PARAMETER Version
-    Versione di release (predefinito: 1.0.0).
-.PARAMETER ReadyToRun
-    Se attivare la precompilazione AOT ReadyToRun per eliminare i lag di avvio JIT (predefinito: $true).
+    Versione di release (predefinito: letta da Directory.Build.props, fallback 1.6.1).
+.PARAMETER NoReadyToRun
+    Disabilita la precompilazione AOT ReadyToRun (predefinita attiva).
 .PARAMETER OutDir
     Cartella di destinazione dei binari pubblicati.
 .PARAMETER SkipTests
     Se saltare l'esecuzione preventiva dei test unitari (predefinito: $false).
-.PARAMETER CreateZip
-    Se generare l'archivio ZIP pronto alla distribuzione (predefinito: $true).
+.PARAMETER NoZip
+    Non genera l'archivio ZIP pronto alla distribuzione (predefinito attiva).
 #>
 param(
     [string]$Configuration = "Release",
@@ -47,7 +47,7 @@ if ([string]::IsNullOrWhiteSpace($Version)) {
         $Version = $propsXml.Project.PropertyGroup.Version
     }
     if ([string]::IsNullOrWhiteSpace($Version)) {
-        $Version = "1.5.3"
+        $Version = "1.6.1"
     }
 }
 $dotnet = "dotnet"
@@ -80,7 +80,7 @@ Write-Host "`n[1/5] Generazione documentazione HTML offline..." -ForegroundColor
 # 2. Esecuzione Test di Regressione
 if (-not $SkipTests) {
     Write-Host "`n[2/5] Esecuzione suite test completa..." -ForegroundColor Yellow
-    & $dotnet test "$repoRoot\AeroSpot.sln" -c $Configuration --no-restore
+    & $dotnet test "$repoRoot\AeroSpot.sln" -c $Configuration
     if ($LASTEXITCODE -ne 0) {
         Write-Error "Test falliti! La compilazione di rilascio è stata interrotta."
     }
@@ -169,7 +169,14 @@ if (-not (Test-Path $ffmpegCandidate)) {
     $ffmpegCandidate = Join-Path $repoRoot "src\AeroSpot.Worker\bin\$Configuration\net10.0-windows10.0.19041.0\ffmpeg"
 }
 if (-not (Test-Path $ffmpegCandidate)) {
-    $ffmpegCandidate = "C:\Users\gabry\.nuget\packages\ffmpeginstaller.windows.x64\0.1.10\contentFiles\any\netstandard2.1\ffmpeg"
+    $nugetRoot = if (-not [string]::IsNullOrWhiteSpace($env:NUGET_PACKAGES)) { $env:NUGET_PACKAGES } else { Join-Path $env:USERPROFILE ".nuget\packages" }
+    $ffmpegPkgRoot = Join-Path $nugetRoot "ffmpeginstaller.windows.x64"
+    if (Test-Path $ffmpegPkgRoot) {
+        $latestPkg = Get-ChildItem -Path $ffmpegPkgRoot -Directory | Sort-Object Name -Descending | Select-Object -First 1
+        if ($latestPkg) {
+            $ffmpegCandidate = Join-Path $latestPkg.FullName "contentFiles\any\netstandard2.1\ffmpeg"
+        }
+    }
 }
 if (Test-Path $ffmpegCandidate) {
     Write-Host "Inclusione binari FFmpeg da $ffmpegCandidate..." -ForegroundColor Cyan
@@ -182,11 +189,11 @@ if (Test-Path $ffmpegCandidate) {
 
 # Compilazione del Launcher nativo pulito AeroSpot.exe nella radice
 $launcherExe = Join-Path $OutDir "AeroSpot.exe"
-& "$repoRoot\scripts\compile-launcher.ps1" -OutFile $launcherExe
+& "$repoRoot\scripts\compile-launcher.ps1" -OutFile $launcherExe -Version $Version
 
 # Compilazione dell'Uninstaller nativo Uninstall.exe nella radice
 $uninstallerExe = Join-Path $OutDir "Uninstall.exe"
-& "$repoRoot\scripts\compile-uninstaller.ps1" -OutFile $uninstallerExe
+& "$repoRoot\scripts\compile-uninstaller.ps1" -OutFile $uninstallerExe -Version $Version
 
 $readmeContent = @"
 AeroSpot v$Version (Portable Standalone)
@@ -211,8 +218,6 @@ $outDiag = Join-Path $OutDir "scripts\diagnostics"
 if (-not (Test-Path $outDiag)) { New-Item -ItemType Directory -Path $outDiag -Force | Out-Null }
 $srcMonitor = Join-Path $repoRoot "scripts\diagnostics\monitor-performance.ps1"
 if (Test-Path $srcMonitor) { Copy-Item -Path $srcMonitor -Destination $outDiag -Force }
-$srcBat = Join-Path $repoRoot "Avvia_Monitor_Prestazioni.bat"
-if (Test-Path $srcBat) { Copy-Item -Path $srcBat -Destination $OutDir -Force }
 
 # Verifica file critici
 $hostExe = Join-Path $appDir "AeroSpot.Host.exe"
@@ -253,10 +258,11 @@ if ($CreateZip) {
     Write-Host "Archivio creato: $zipPath" -ForegroundColor Green
     Write-Host "Dimensione archivio ZIP: $zipSizeMb MB ($zipSize bytes)"
 
-    # Calcolo SHA-256
+    # Calcolo SHA-256 (UTF-8 senza BOM)
     $hash = (Get-FileHash -Path $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
     $shaEntry = "$hash  $zipName"
-    Set-Content -Path (Join-Path $distDir "SHA256SUMS.txt") -Value $shaEntry -Encoding utf8
+    $shaFile = Join-Path $distDir "SHA256SUMS.txt"
+    [System.IO.File]::WriteAllText($shaFile, ($shaEntry + [Environment]::NewLine), [System.Text.UTF8Encoding]::new($false))
     Write-Host "Checksum generato: $shaEntry" -ForegroundColor Green
 }
 

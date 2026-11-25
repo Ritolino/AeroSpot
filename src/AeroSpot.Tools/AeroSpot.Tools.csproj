@@ -11,12 +11,15 @@
     <Product>AeroSpot</Product>
     <AssemblyTitle>AeroSpot Tools</AssemblyTitle>
     <Description>AeroSpot Background AI Satellite Worker</Description>
+    <NoWarn>$(NoWarn);NU1510</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="FFMpegCore" Version="5.5.0" />
     <PackageReference Include="FFMpegInstaller.Windows.x64" Version="0.1.10" />
     <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.20.1" />
+    <PackageReference Include="PDFsharp" Version="6.2.4" />
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.15" />
   </ItemGroup>
 
   <ItemGroup>

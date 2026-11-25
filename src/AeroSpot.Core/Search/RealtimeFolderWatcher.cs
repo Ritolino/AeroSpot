@@ -234,12 +234,12 @@ namespace AeroSpot.Core.Search
 
                 bool anyChange = false;
 
-                // 1. Esegui eliminazioni
+                // 1. Esegui eliminazioni (include eventuali elementi figli in caso di cartella eliminata/rinominata)
                 if (deletes.Count > 0)
                 {
                     try
                     {
-                        int deleted = _db.DeleteBatch(deletes);
+                        int deleted = _db.DeleteByPathPrefixes(deletes);
                         if (deleted > 0)
                         {
                             anyChange = true;
@@ -248,7 +248,7 @@ namespace AeroSpot.Core.Search
                     }
                     catch (Exception ex)
                     {
-                        AppLogger.Warn($"RealtimeFolderWatcher DeleteBatch error: {ex.Message}");
+                        AppLogger.Warn($"RealtimeFolderWatcher DeleteByPathPrefixes error: {ex.Message}");
                     }
                 }
 
@@ -328,28 +328,31 @@ namespace AeroSpot.Core.Search
 
         public void Dispose()
         {
-            if (_isDisposed) return;
-            _isDisposed = true;
-
-            try
+            lock (_processLock)
             {
-                _debounceTimer.Stop();
-                _debounceTimer.Dispose();
-            }
-            catch { }
+                if (_isDisposed) return;
+                _isDisposed = true;
 
-            foreach (var fsw in _watchers)
-            {
                 try
                 {
-                    fsw.EnableRaisingEvents = false;
-                    fsw.Dispose();
+                    _debounceTimer.Stop();
+                    _debounceTimer.Dispose();
                 }
                 catch { }
+
+                foreach (var fsw in _watchers)
+                {
+                    try
+                    {
+                        fsw.EnableRaisingEvents = false;
+                        fsw.Dispose();
+                    }
+                    catch { }
+                }
+                _watchers.Clear();
+                _pendingUpserts.Clear();
+                _pendingDeletes.Clear();
             }
-            _watchers.Clear();
-            _pendingUpserts.Clear();
-            _pendingDeletes.Clear();
         }
     }
 }

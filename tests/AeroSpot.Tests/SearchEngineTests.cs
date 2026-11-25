@@ -18,9 +18,16 @@ namespace AeroSpot.Tests
             PathFilter.ResetToDefault();
         }
 
+        [TestCleanup]
+        public void Cleanup()
+        {
+            PathFilter.ResetToDefault();
+        }
+
         [TestMethod]
         public void PathFilter_StrictPerimeter_RejectsDisallowedDrives()
         {
+            PathFilter.Configure(new[] { "C", "E" });
             // SPEC CRITERION: Esclusione rigorosa di D:, F:, G:, Z: e percorsi di rete
             Assert.IsFalse(PathFilter.IsPathAllowed(@"D:\Games\test.exe"), "I file su D: devono essere categoricamente esclusi.");
             Assert.IsFalse(PathFilter.IsPathAllowed(@"F:\Media\video.mp4"), "I file su F: devono essere categoricamente esclusi.");
@@ -176,32 +183,44 @@ namespace AeroSpot.Tests
         [TestMethod]
         public void LiveDatabase_StrictVerification_ZeroResultsFromExcludedVolumesAndSteamLibrary()
         {
-            string dbPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AeroSpot", "index.db");
-            if (!File.Exists(dbPath)) return;
-
-            using var db = new SqliteIndexDatabase(dbPath);
-            db.Initialize();
-
-            var config = AppConfig.Load();
-
-            // Interroga per verificare che NESSUN risultato provenga da volumi esclusi (es. Z:, F:, G:) o cartelle escluse (SteamLibrary, Epic Games)
-            if (!config.IncludedDrives.Contains("D", StringComparer.OrdinalIgnoreCase))
+            string tempDb = Path.Combine(Path.GetTempPath(), $"AeroSpot_IsolatedVerify_{Guid.NewGuid():N}.db");
+            try
             {
-                var resultsD = db.Search("D:");
-                Assert.IsFalse(resultsD.Any(r => r.FullPath.StartsWith("D:\\", StringComparison.OrdinalIgnoreCase)), "Nessun risultato deve provenire dal disco D: se escluso.");
+                using var db = new SqliteIndexDatabase(tempDb);
+                db.Initialize();
+
+                PathFilter.Configure(new[] { "C", "E" }, AppConfig.GetDefaultExcludedDirectories());
+                var candidateItems = new List<IndexedItem>
+                {
+                    new IndexedItem("ValidDoc", @"C:\Docs\ValidDoc.pdf", "Documento", @"C:\Docs\ValidDoc.pdf", isApp: false),
+                    new IndexedItem("DGame", @"D:\Games\DGame.exe", "Applicazione", @"D:\Games\DGame.exe", isApp: true),
+                    new IndexedItem("ZFile", @"Z:\Shared\ZFile.txt", "Documento", @"Z:\Shared\ZFile.txt", isApp: false),
+                    new IndexedItem("FMedia", @"F:\Media\FMedia.mp4", "Video", @"F:\Media\FMedia.mp4", isApp: false),
+                    new IndexedItem("GBackup", @"G:\Backups\GBackup.zip", "Archivio", @"G:\Backups\GBackup.zip", isApp: false),
+                    new IndexedItem("SteamGame", @"E:\SteamLibrary\steamapps\SteamGame.exe", "Applicazione", @"E:\SteamLibrary\steamapps\SteamGame.exe", isApp: true),
+                    new IndexedItem("EpicGame", @"C:\Program Files\Epic Games\EpicGame.exe", "Applicazione", @"C:\Program Files\Epic Games\EpicGame.exe", isApp: true)
+                };
+
+                int inserted = db.UpsertBatch(candidateItems);
+                Assert.AreEqual(1, inserted, "Solo l'elemento valido nel perimetro deve essere inserito.");
+
+                Assert.IsFalse(db.Search("DGame").Any(r => r.FullPath.StartsWith("D:\\", StringComparison.OrdinalIgnoreCase)));
+                Assert.IsFalse(db.Search("ZFile").Any(r => r.FullPath.StartsWith("Z:\\", StringComparison.OrdinalIgnoreCase)));
+                Assert.IsFalse(db.Search("FMedia").Any(r => r.FullPath.StartsWith("F:\\", StringComparison.OrdinalIgnoreCase)));
+                Assert.IsFalse(db.Search("GBackup").Any(r => r.FullPath.StartsWith("G:\\", StringComparison.OrdinalIgnoreCase)));
+                Assert.IsFalse(db.Search("SteamGame").Any(r => r.FullPath.IndexOf(@"\SteamLibrary\", StringComparison.OrdinalIgnoreCase) >= 0));
+                Assert.IsFalse(db.Search("EpicGame").Any(r => r.FullPath.IndexOf(@"\Epic Games\", StringComparison.OrdinalIgnoreCase) >= 0));
             }
-
-            var resultsZ = db.Search("Z:");
-            var resultsF = db.Search("F:");
-            var resultsG = db.Search("G:");
-            var resultsSteam = db.Search("SteamLibrary");
-            var resultsEpic = db.Search("Epic Games");
-
-            Assert.IsFalse(resultsZ.Any(r => r.FullPath.StartsWith("Z:\\", StringComparison.OrdinalIgnoreCase)), "Nessun risultato deve provenire dal disco Z:.");
-            Assert.IsFalse(resultsF.Any(r => r.FullPath.StartsWith("F:\\", StringComparison.OrdinalIgnoreCase)), "Nessun risultato deve provenire dal disco F:.");
-            Assert.IsFalse(resultsG.Any(r => r.FullPath.StartsWith("G:\\", StringComparison.OrdinalIgnoreCase)), "Nessun risultato deve provenire dal disco G:.");
-            Assert.IsFalse(resultsSteam.Any(r => r.FullPath.IndexOf(@"\SteamLibrary\", StringComparison.OrdinalIgnoreCase) >= 0), "Nessun risultato deve trovarsi in SteamLibrary.");
-            Assert.IsFalse(resultsEpic.Any(r => r.FullPath.IndexOf(@"\Epic Games\", StringComparison.OrdinalIgnoreCase) >= 0), "Nessun risultato deve trovarsi in Epic Games.");
+            finally
+            {
+                try
+                {
+                    if (File.Exists(tempDb)) File.Delete(tempDb);
+                    if (File.Exists(tempDb + "-wal")) File.Delete(tempDb + "-wal");
+                    if (File.Exists(tempDb + "-shm")) File.Delete(tempDb + "-shm");
+                }
+                catch { }
+            }
         }
 
         [TestMethod]

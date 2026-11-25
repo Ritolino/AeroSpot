@@ -24,7 +24,7 @@ namespace AeroSpot.Core.Preview
             "background", "bkmkend", "bkmkstart", "datafield", "do", "dptxbxtext",
             "falt", "file", "filetbl", "fldinst", "fname", "fontemb", "fontfile",
             "ftncn", "ftnsep", "ftnsepc", "g", "gridtbl", "htmltag",
-            "keycode", "latentstyles", "leveltext", "levelnumbers", "listname",
+            "keycode", "leveltext", "levelnumbers", "listname",
             "nesttableprops", "nonesttables", "objdata", "objclass", "objname",
             "oldcprops", "oldpprops", "oldsprops", "oldtprops",
             "operator", "panose", "password", "passwordhash", "pgp", "pgptbl",
@@ -160,6 +160,25 @@ namespace AeroSpot.Core.Preview
                     mdSb.Append(text, text.Length - trailing, trailing);
                 }
 
+                void AppendRunChar(char ch)
+                {
+                    if (current.IgnoredDestination) return;
+
+                    if (runPlain.Length > 0 && (runBold != current.Bold || runItalic != current.Italic || runStrike != current.Strike))
+                    {
+                        FlushRun();
+                    }
+
+                    if (runPlain.Length == 0)
+                    {
+                        runBold = current.Bold;
+                        runItalic = current.Italic;
+                        runStrike = current.Strike;
+                    }
+
+                    runPlain.Append(ch);
+                }
+
                 void AppendRunText(string text)
                 {
                     if (string.IsNullOrEmpty(text) || current.IgnoredDestination) return;
@@ -291,13 +310,13 @@ namespace AeroSpot.Core.Preview
                                 case '\\':
                                 case '{':
                                 case '}':
-                                    AppendRunText(next.ToString());
+                                    AppendRunChar(next);
                                     break;
                                 case '~':
-                                    AppendRunText("\u00A0");
+                                    AppendRunChar('\u00A0');
                                     break;
                                 case '_':
-                                    AppendRunText("-");
+                                    AppendRunChar('-');
                                     break;
                                 case '\r':
                                 case '\n':
@@ -360,7 +379,14 @@ namespace AeroSpot.Core.Preview
                                 if (param.HasValue)
                                 {
                                     int codePoint = param.Value < 0 ? (ushort)param.Value : param.Value;
-                                    AppendRunText(char.ConvertFromUtf32(codePoint));
+                                    if (codePoint >= 0xD800 && codePoint <= 0xDFFF)
+                                    {
+                                        AppendRunChar((char)codePoint);
+                                    }
+                                    else if (codePoint >= 0 && codePoint <= 0x10FFFF)
+                                    {
+                                        AppendRunText(char.ConvertFromUtf32(codePoint));
+                                    }
                                     skipChars = current.UcSkipCount;
                                 }
                                 break;
@@ -369,25 +395,25 @@ namespace AeroSpot.Core.Preview
                                 AppendParagraphBreak();
                                 break;
                             case "tab":
-                                AppendRunText("\t");
+                                AppendRunChar('\t');
                                 break;
                             case "emdash":
-                                AppendRunText("—");
+                                AppendRunChar('—');
                                 break;
                             case "endash":
-                                AppendRunText("–");
+                                AppendRunChar('–');
                                 break;
                             case "lquote":
-                                AppendRunText("‘");
+                                AppendRunChar('‘');
                                 break;
                             case "rquote":
-                                AppendRunText("’");
+                                AppendRunChar('’');
                                 break;
                             case "ldblquote":
-                                AppendRunText("“");
+                                AppendRunChar('“');
                                 break;
                             case "rdblquote":
-                                AppendRunText("”");
+                                AppendRunChar('”');
                                 break;
                             case "bullet":
                                 AppendRunText(IsAtLineStart(plainSb, runPlain) ? "- " : "•");
@@ -414,7 +440,7 @@ namespace AeroSpot.Core.Preview
                     // Testo ordinario
                     FlushPendingBytes();
                     current.IsGroupStart = false;
-                    AppendRunText(c.ToString());
+                    AppendRunChar(c);
                     i++;
                 }
 

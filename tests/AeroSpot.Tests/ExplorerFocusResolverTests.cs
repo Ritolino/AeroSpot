@@ -145,6 +145,45 @@ namespace AeroSpot.Tests
         }
 
         [TestMethod]
+        public void TryGetAdjacentItemInDirectory_NavigatesWithNaturalWindowsSortOrderAndBoundaries()
+        {
+            string tempDir = Path.Combine(Path.GetTempPath(), $"aerospot_nav_{Guid.NewGuid():N}");
+            Directory.CreateDirectory(tempDir);
+            try
+            {
+                string f1 = Path.Combine(tempDir, "foto_1.png");
+                string f2 = Path.Combine(tempDir, "foto_2.png");
+                string f10 = Path.Combine(tempDir, "foto_10.png");
+                File.WriteAllBytes(f1, Array.Empty<byte>());
+                File.WriteAllBytes(f2, Array.Empty<byte>());
+                File.WriteAllBytes(f10, Array.Empty<byte>());
+
+                // Natural sort order: foto_1.png -> foto_2.png -> foto_10.png (NOT foto_10 before foto_2)
+                Assert.IsTrue(ExplorerFocusResolver.TryGetAdjacentItemInDirectory(f1, +1, out var next1));
+                Assert.AreEqual(f2, next1);
+
+                Assert.IsTrue(ExplorerFocusResolver.TryGetAdjacentItemInDirectory(f2, +1, out var next2));
+                Assert.AreEqual(f10, next2);
+
+                // Boundary at end
+                Assert.IsFalse(ExplorerFocusResolver.TryGetAdjacentItemInDirectory(f10, +1, out var pastEnd));
+                Assert.IsNull(pastEnd);
+
+                // Navigate backwards
+                Assert.IsTrue(ExplorerFocusResolver.TryGetAdjacentItemInDirectory(f10, -1, out var prev1));
+                Assert.AreEqual(f2, prev1);
+
+                // Boundary at start
+                Assert.IsFalse(ExplorerFocusResolver.TryGetAdjacentItemInDirectory(f1, -1, out var beforeStart));
+                Assert.IsNull(beforeStart);
+            }
+            finally
+            {
+                try { Directory.Delete(tempDir, true); } catch { }
+            }
+        }
+
+        [TestMethod]
         public void LiveShell_QueryNeverThrowsUnhandledException()
         {
             // Test query on IntPtr.Zero
@@ -168,15 +207,52 @@ namespace AeroSpot.Tests
         }
 
         [TestMethod]
-        public void PreviewWindow_ContextualTopmost_TransitionsOnActivationEvents()
+        public void TryNavigateSelection_GuardClauses_RejectInvalidInputsSafely()
         {
-            Exception? threadEx = null;
-            var t = new System.Threading.Thread(() =>
+            // delta == 0 -> false, newPath == null, atBoundary == false
+            Assert.IsFalse(ExplorerFocusResolver.TryNavigateSelection(new IntPtr(1), 0, out string? p0, out bool b0));
+            Assert.IsNull(p0);
+            Assert.IsFalse(b0);
+
+            // IntPtr.Zero -> false, newPath == null, atBoundary == false
+            Assert.IsFalse(ExplorerFocusResolver.TryNavigateSelection(IntPtr.Zero, 1, out string? pZero, out bool bZero));
+            Assert.IsNull(pZero);
+            Assert.IsFalse(bZero);
+
+            // Non-Explorer valid HWND -> false, newPath == null, atBoundary == false
+            StaTestRunner.Run(() =>
             {
+                var win = new System.Windows.Window
+                {
+                    Width = 100,
+                    Height = 100,
+                    ShowInTaskbar = false,
+                    WindowStyle = System.Windows.WindowStyle.None
+                };
                 try
                 {
-                    var window = new AeroSpot.Worker.PreviewWindow();
+                    IntPtr nonExplorerHwnd = new System.Windows.Interop.WindowInteropHelper(win).EnsureHandle();
+                    Assert.AreNotEqual(IntPtr.Zero, nonExplorerHwnd);
 
+                    Assert.IsFalse(ExplorerFocusResolver.TryNavigateSelection(nonExplorerHwnd, +1, out string? pNonExp, out bool bNonExp));
+                    Assert.IsNull(pNonExp);
+                    Assert.IsFalse(bNonExp);
+                }
+                finally
+                {
+                    win.Close();
+                }
+            });
+        }
+
+        [TestMethod]
+        public void PreviewWindow_ContextualTopmost_TransitionsOnActivationEvents()
+        {
+            StaTestRunner.Run(() =>
+            {
+                var window = new AeroSpot.Worker.PreviewWindow();
+                try
+                {
                     // Initial XAML Topmost is false (no permanent pin)
                     Assert.IsFalse(window.Topmost, "Window should not have static Topmost=True permanently.");
 
@@ -188,19 +264,11 @@ namespace AeroSpot.Tests
                     window.Topmost = false;
                     Assert.IsFalse(window.Topmost, "Topmost should be released on deactivation so other windows sit above.");
                 }
-                catch (Exception ex)
+                finally
                 {
-                    threadEx = ex;
+                    window.HidePreview();
                 }
             });
-            t.SetApartmentState(System.Threading.ApartmentState.STA);
-            t.Start();
-            t.Join(TimeSpan.FromSeconds(5));
-
-            if (threadEx != null)
-            {
-                throw new AssertFailedException("PreviewWindow contextual topmost test failed: " + threadEx.Message, threadEx);
-            }
         }
 
         public TestContext? TestContext { get; set; }

@@ -7,8 +7,10 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Threading;
 using System.Threading.Tasks;
 using AeroSpot.Core.Config;
+using AeroSpot.Core.Localization;
 using AeroSpot.Core.Native;
 using AeroSpot.Core.Search;
 using AeroSpot.Core.Logging;
@@ -120,11 +122,25 @@ namespace AeroSpot.Worker
         private string? _latestAssetFileName;
         private CancellationTokenSource? _updateCts;
         private System.Windows.Threading.DispatcherTimer? _saveCloseTimer;
+        private bool _isLoadingUi;
+
+        private static readonly SolidColorBrush HotkeyFocusedBorder = CreateFrozenBrush(Color.FromRgb(0x38, 0xBD, 0xF8));
+        private static readonly SolidColorBrush HotkeyNormalBorder = CreateFrozenBrush(Color.FromRgb(0x47, 0x55, 0x69));
+        private static readonly SolidColorBrush TabActiveBrush = CreateFrozenBrush(Color.FromRgb(0x02, 0x84, 0xC7));
+        private static readonly SolidColorBrush TabInactiveTextBrush = CreateFrozenBrush(Color.FromRgb(0x94, 0xA3, 0xB8));
+
+        private static SolidColorBrush CreateFrozenBrush(Color color)
+        {
+            var brush = new SolidColorBrush(color);
+            brush.Freeze();
+            return brush;
+        }
 
         public event Action<AppConfig>? ConfigSaved;
 
         public SettingsWindow()
         {
+            App.EnsureSharedScrollBarResources(this.Resources);
             InitializeComponent();
             _config = AppConfig.Load();
 
@@ -133,12 +149,6 @@ namespace AeroSpot.Worker
             HierarchyListBox.ItemsSource = _hierarchyItems;
 
             LoadSettingsIntoUi();
-
-            // Support drag to move
-            MouseDown += (s, e) =>
-            {
-                if (e.ChangedButton == MouseButton.Left) DragMove();
-            };
 
             HierarchyListBox.LostMouseCapture += (s, e) =>
             {
@@ -152,6 +162,14 @@ namespace AeroSpot.Worker
                     ResetStatusMessage();
                 }
             };
+        }
+
+        private void Header_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (e.ButtonState == MouseButtonState.Pressed)
+            {
+                DragMove();
+            }
         }
 
         public void ResetStatusMessage()
@@ -183,46 +201,49 @@ namespace AeroSpot.Worker
 
         private void LoadSettingsIntoUi()
         {
-            ResetStatusMessage();
-
-            // 0. Language
-            string lang = _config.Language?.ToLowerInvariant() ?? "auto";
-            switch (lang)
+            _isLoadingUi = true;
+            try
             {
-                case "en":
-                    CmbLanguage.SelectedItem = CmbItemEn;
-                    break;
-                case "it":
-                    CmbLanguage.SelectedItem = CmbItemIt;
-                    break;
-                default:
-                    CmbLanguage.SelectedItem = CmbItemAuto;
-                    break;
-            }
+                ResetStatusMessage();
 
-            // 1. Hotkey Spotlight
-            _spotlightKey = _config.HotkeyKey;
-            _spotlightModifiers = _config.HotkeyModifiers;
-            string defaultSpotlightText = AeroSpot.Core.Localization.LocalizationService.CurrentLanguage == "it" ? "Alt + Spazio" : "Alt + Space";
-            TxtSpotlightHotkey.Text = !string.IsNullOrWhiteSpace(_config.SpotlightHotkeyText)
-                ? _config.SpotlightHotkeyText
-                : defaultSpotlightText;
+                // 0. Language
+                string lang = _config.Language?.ToLowerInvariant() ?? "auto";
+                switch (lang)
+                {
+                    case "en":
+                        CmbLanguage.SelectedItem = CmbItemEn;
+                        break;
+                    case "it":
+                        CmbLanguage.SelectedItem = CmbItemIt;
+                        break;
+                    default:
+                        CmbLanguage.SelectedItem = CmbItemAuto;
+                        break;
+                }
 
-            // 2. Hotkey QuickLook
-            _quickLookKey = _config.QuickLookKey;
-            _quickLookModifiers = _config.QuickLookModifiers;
-            string defaultQuickLookText = AeroSpot.Core.Localization.LocalizationService.CurrentLanguage == "it" ? "Spazio" : "Space";
-            TxtQuickLookHotkey.Text = !string.IsNullOrWhiteSpace(_config.QuickLookHotkeyText)
-                ? _config.QuickLookHotkeyText
-                : defaultQuickLookText;
+                // 1. Hotkey Spotlight
+                _spotlightKey = _config.HotkeyKey;
+                _spotlightModifiers = _config.HotkeyModifiers;
+                string defaultSpotlightText = $"Alt + {LocalizationService.Get("Settings_Key_Space")}";
+                TxtSpotlightHotkey.Text = !string.IsNullOrWhiteSpace(_config.SpotlightHotkeyText)
+                    ? _config.SpotlightHotkeyText
+                    : defaultSpotlightText;
 
-            // 2b. Hotkey Delete (Cestino in Spotlight)
-            _deleteKey = _config.DeleteKey;
-            _deleteModifiers = _config.DeleteModifiers;
-            string defaultDeleteText = "Canc";
-            TxtDeleteHotkey.Text = !string.IsNullOrWhiteSpace(_config.DeleteHotkeyText)
-                ? _config.DeleteHotkeyText
-                : defaultDeleteText;
+                // 2. Hotkey QuickLook
+                _quickLookKey = _config.QuickLookKey;
+                _quickLookModifiers = _config.QuickLookModifiers;
+                string defaultQuickLookText = LocalizationService.Get("Settings_Key_Space");
+                TxtQuickLookHotkey.Text = !string.IsNullOrWhiteSpace(_config.QuickLookHotkeyText)
+                    ? _config.QuickLookHotkeyText
+                    : defaultQuickLookText;
+
+                // 2b. Hotkey Delete (Cestino in Spotlight)
+                _deleteKey = _config.DeleteKey;
+                _deleteModifiers = _config.DeleteModifiers;
+                string defaultDeleteText = LocalizationService.Get("Settings_Key_Delete");
+                TxtDeleteHotkey.Text = !string.IsNullOrWhiteSpace(_config.DeleteHotkeyText)
+                    ? _config.DeleteHotkeyText
+                    : defaultDeleteText;
 
             // 3. Drives (caricamento asincrono per non bloccare mai l'apertura della finestra)
             LoadDrivesAsync();
@@ -299,7 +320,7 @@ namespace AeroSpot.Worker
             // 8. Version Info
             var ver = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
             string verStr = ver != null ? $"{ver.Major}.{ver.Minor}.{ver.Build}" : "1.0.0";
-            TxtAppVersionInfo.Text = AeroSpot.Core.Localization.LocalizationService.Get("Instructions_Version", verStr, "20.11.2026");
+            TxtAppVersionInfo.Text = AeroSpot.Core.Localization.LocalizationService.Get("Instructions_Version", verStr, "25.11.2026");
 
             // 8b. Aggiornamenti dell'applicazione (GitHub Release Checker)
             TxtCurrentAppVersion.Text = "v" + AeroSpot.Core.Services.UpdateService.CurrentVersion;
@@ -370,6 +391,11 @@ namespace AeroSpot.Worker
             // 9. Spotlight Category Hierarchy
             PopulateHierarchyItems(_config.CategoryPriority);
             ChkPrioritizeExactMatches.IsChecked = _config.PrioritizeExactNameMatches;
+            }
+            finally
+            {
+                _isLoadingUi = false;
+            }
         }
 
         private async void BtnCheckUpdates_Click(object sender, RoutedEventArgs e)
@@ -551,7 +577,7 @@ namespace AeroSpot.Worker
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, $"Impossibile aprire le istruzioni: {ex.Message}", "AeroSpot", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show(this, LocalizationService.Get("Settings_Instructions_OpenError", ex.Message), "AeroSpot", MessageBoxButton.OK, MessageBoxImage.Information);
             }
         }
 
@@ -593,7 +619,7 @@ namespace AeroSpot.Worker
                             string letter = d.Name.TrimEnd('\\', ':').ToUpperInvariant();
                             string volumeLabel = string.Empty;
                             try { if (!string.IsNullOrWhiteSpace(d.VolumeLabel)) volumeLabel = d.VolumeLabel; } catch { }
-                            string sizeGb = "N/D";
+                            string sizeGb = LocalizationService.Get("Settings_NotAvailable");
                             try { sizeGb = $"{d.TotalSize / (1024.0 * 1024 * 1024):F1} GB"; } catch { }
                             bool isIncluded = included.Any(x => string.Equals(x.TrimEnd('\\', ':'), letter, StringComparison.OrdinalIgnoreCase));
 
@@ -662,9 +688,7 @@ namespace AeroSpot.Worker
                 });
 
                 string sizeFormatted = Services.PreviewLoader.FormatFileSize(totalBytes);
-                string label = AeroSpot.Core.Localization.LocalizationService.CurrentLanguage == "it"
-                    ? $"Spazio indice: {sizeFormatted}"
-                    : $"Index disk size: {sizeFormatted}";
+                string label = LocalizationService.Get("Settings_Index_DiskSize", sizeFormatted);
 
                 void ApplyLabel(string text)
                 {
@@ -712,26 +736,40 @@ namespace AeroSpot.Worker
 
         private void CmbLanguage_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
+            if (_isLoadingUi) return;
+
             if (CmbLanguage?.SelectedItem is ComboBoxItem item && item.Tag is string tag)
             {
-                AeroSpot.Core.Localization.LocalizationService.Initialize(tag);
+                LocalizationService.Initialize(tag);
                 if (TxtDataModeInfo != null)
                 {
                     TxtDataModeInfo.Text = AppDataPath.IsPortable
-                        ? AeroSpot.Core.Localization.LocalizationService.Get("Settings_DataDir_Mode_Portable")
-                        : AeroSpot.Core.Localization.LocalizationService.Get("Settings_DataDir_Mode_Standard");
+                        ? LocalizationService.Get("Settings_DataDir_Mode_Portable")
+                        : LocalizationService.Get("Settings_DataDir_Mode_Standard");
                 }
                 UpdateIndexDiskUsageAsync();
                 RefreshDriveItemDisplayNames();
 
+                // Ricostruisci le voci di gerarchia mantenendo l'ordine corrente
+                if (_hierarchyItems.Count > 0)
+                {
+                    PopulateHierarchyItems(_hierarchyItems.Select(x => x.Key).ToList());
+                }
+
                 // Aggiorna etichette hotkey predefinite se non personalizzate
+                string spaceLabel = LocalizationService.Get("Settings_Key_Space");
+                string delLabel = LocalizationService.Get("Settings_Key_Delete");
                 if (TxtSpotlightHotkey != null && (TxtSpotlightHotkey.Text == "Alt + Spazio" || TxtSpotlightHotkey.Text == "Alt + Space"))
                 {
-                    TxtSpotlightHotkey.Text = AeroSpot.Core.Localization.LocalizationService.CurrentLanguage == "it" ? "Alt + Spazio" : "Alt + Space";
+                    TxtSpotlightHotkey.Text = $"Alt + {spaceLabel}";
                 }
                 if (TxtQuickLookHotkey != null && (TxtQuickLookHotkey.Text == "Spazio" || TxtQuickLookHotkey.Text == "Space"))
                 {
-                    TxtQuickLookHotkey.Text = AeroSpot.Core.Localization.LocalizationService.CurrentLanguage == "it" ? "Spazio" : "Space";
+                    TxtQuickLookHotkey.Text = spaceLabel;
+                }
+                if (TxtDeleteHotkey != null && (TxtDeleteHotkey.Text == "Canc" || TxtDeleteHotkey.Text == "Del"))
+                {
+                    TxtDeleteHotkey.Text = delLabel;
                 }
             }
         }
@@ -775,10 +813,10 @@ namespace AeroSpot.Worker
 
             try
             {
-                await Task.Run(() =>
+                if (App.MainLauncherWindow != null)
                 {
-                    App.MainLauncherWindow?.ViewModel.TriggerFullReindex(force: true);
-                });
+                    await App.MainLauncherWindow.ViewModel.TriggerFullReindexAsync(force: true);
+                }
 
                 if (BtnReindexFromSettings != null)
                 {
@@ -822,6 +860,7 @@ namespace AeroSpot.Worker
             _saveCloseTimer?.Stop();
             _saveCloseTimer = null;
             if (TxtStatus != null) TxtStatus.Text = string.Empty;
+            LocalizationService.Initialize(_config.Language);
             Hide();
         }
 
@@ -830,6 +869,7 @@ namespace AeroSpot.Worker
             _saveCloseTimer?.Stop();
             _saveCloseTimer = null;
             if (TxtStatus != null) TxtStatus.Text = string.Empty;
+            LocalizationService.Initialize(_config.Language);
             Hide();
         }
 
@@ -848,20 +888,6 @@ namespace AeroSpot.Worker
         }
 
         private void BtnToggleSystemInfo_Click(object sender, RoutedEventArgs e)
-        {
-            BorderSystemInfo.Visibility = (BorderSystemInfo.Visibility == Visibility.Visible)
-                ? Visibility.Collapsed
-                : Visibility.Visible;
-        }
-
-        private void BtnToggleWorkerInfo_Click(object sender, RoutedEventArgs e)
-        {
-            BorderSystemInfo.Visibility = (BorderSystemInfo.Visibility == Visibility.Visible)
-                ? Visibility.Collapsed
-                : Visibility.Visible;
-        }
-
-        private void BtnToggleStartupInfo_Click(object sender, RoutedEventArgs e)
         {
             BorderSystemInfo.Visibility = (BorderSystemInfo.Visibility == Visibility.Visible)
                 ? Visibility.Collapsed
@@ -910,7 +936,7 @@ namespace AeroSpot.Worker
         {
             if (sender is TextBox tb && tb.Parent is Border b)
             {
-                b.BorderBrush = new SolidColorBrush(Color.FromRgb(0x38, 0xBD, 0xF8));
+                b.BorderBrush = HotkeyFocusedBorder;
             }
         }
 
@@ -918,7 +944,7 @@ namespace AeroSpot.Worker
         {
             if (sender is TextBox tb && tb.Parent is Border b)
             {
-                b.BorderBrush = new SolidColorBrush(Color.FromRgb(0x47, 0x55, 0x69));
+                b.BorderBrush = HotkeyNormalBorder;
             }
         }
 
@@ -1026,8 +1052,9 @@ namespace AeroSpot.Worker
 
             string keyName = key switch
             {
-                Key.Space => "Spazio",
-                Key.Return => "Invio",
+                Key.Space => LocalizationService.Get("Settings_Key_Space"),
+                Key.Return => LocalizationService.Get("Settings_Key_Enter"),
+                Key.Delete => LocalizationService.Get("Settings_Key_Delete"),
                 Key.Back => "Backspace",
                 Key.Tab => "Tab",
                 Key.OemPlus => "+",
@@ -1060,140 +1087,151 @@ namespace AeroSpot.Worker
             }
         }
 
-        private void BtnSave_Click(object sender, RoutedEventArgs e)
+        private async void BtnSave_Click(object sender, RoutedEventArgs e)
         {
-            // Salva lingua
-            if (CmbLanguage.SelectedItem is ComboBoxItem langItem && langItem.Tag is string langTag)
+            if (BtnSave != null) BtnSave.IsEnabled = false;
+            try
             {
-                _config.Language = langTag;
-            }
-
-            // Salva Hotkey personalizzate
-            _config.HotkeyKey = _spotlightKey;
-            _config.HotkeyModifiers = _spotlightModifiers;
-            _config.SpotlightHotkeyText = TxtSpotlightHotkey.Text;
-
-            _config.QuickLookKey = _quickLookKey;
-            _config.QuickLookModifiers = _quickLookModifiers;
-            _config.QuickLookHotkeyText = TxtQuickLookHotkey.Text;
-
-            _config.DeleteKey = _deleteKey;
-            _config.DeleteModifiers = _deleteModifiers;
-            _config.DeleteHotkeyText = TxtDeleteHotkey.Text;
-
-            // Salva Drives
-            var selectedDrives = _drives.Where(d => d.IsIncluded).Select(d => d.Letter).ToList();
-            if (selectedDrives.Count == 0)
-            {
-                selectedDrives.Add("C");
-            }
-            _config.IncludedDrives = selectedDrives;
-
-            // Salva Esclusioni
-            _config.ExcludedDirectoryNames = _exclusions.Where(x => x.IsExcluded).Select(x => x.Name).ToList();
-
-            // Aggiorna PathFilter e purga immediatamente dal database i file di dischi o percorsi esclusi
-            PathFilter.Configure(_config.IncludedDrives, _config.ExcludedDirectoryNames);
-            Task.Run(() =>
-            {
-                try
+                // Salva lingua
+                if (CmbLanguage.SelectedItem is ComboBoxItem langItem && langItem.Tag is string langTag)
                 {
-                    using var db = new SqliteIndexDatabase();
-                    db.PurgeDisallowedDrives(_config.IncludedDrives);
-                    db.PurgeExcludedSegments(_config.ExcludedDirectoryNames);
+                    _config.Language = langTag;
                 }
-                catch (Exception ex)
+
+                // Salva Hotkey personalizzate
+                _config.HotkeyKey = _spotlightKey;
+                _config.HotkeyModifiers = _spotlightModifiers;
+                _config.SpotlightHotkeyText = TxtSpotlightHotkey.Text;
+
+                _config.QuickLookKey = _quickLookKey;
+                _config.QuickLookModifiers = _quickLookModifiers;
+                _config.QuickLookHotkeyText = TxtQuickLookHotkey.Text;
+
+                _config.DeleteKey = _deleteKey;
+                _config.DeleteModifiers = _deleteModifiers;
+                _config.DeleteHotkeyText = TxtDeleteHotkey.Text;
+
+                // Salva Drives
+                var selectedDrives = _drives.Where(d => d.IsIncluded).Select(d => d.Letter).ToList();
+                if (selectedDrives.Count == 0)
                 {
-                    AppLogger.Warn($"Spurgo dischi da Impostazioni fallito: {ex.Message}");
+                    selectedDrives.Add("C");
                 }
-            });
+                _config.IncludedDrives = selectedDrives;
 
-            // Salva Prestazioni & Memoria
-            _config.KeepWorkerWarm = ChkKeepWorkerWarm.IsChecked == true;
-            if (int.TryParse(TxtTimeoutSeconds.Text.Trim(), out int timeout) && timeout >= 5)
-            {
-                _config.WorkerIdleTimeoutSeconds = timeout;
+                // Salva Esclusioni
+                _config.ExcludedDirectoryNames = _exclusions.Where(x => x.IsExcluded).Select(x => x.Name).ToList();
+
+                // Salva Prestazioni & Memoria (validazione timeout minimo 5s)
+                _config.KeepWorkerWarm = ChkKeepWorkerWarm.IsChecked == true;
+                if (int.TryParse(TxtTimeoutSeconds.Text.Trim(), out int timeout))
+                {
+                    _config.WorkerIdleTimeoutSeconds = Math.Clamp(timeout, 5, 86400);
+                }
+                TxtTimeoutSeconds.Text = _config.WorkerIdleTimeoutSeconds.ToString();
+
+                // Salva Avvio Automatico con Windows (M4.2)
+                bool enableStartup = ChkStartWithWindows.IsChecked == true;
+                _config.StartWithWindows = enableStartup;
+                StartupManager.SetStartupEnabled(enableStartup);
+
+                // Salva opzioni conversione e integrazione shell
+                _config.OpenFolderAfterConversion = ChkOpenFolderAfterConversion.IsChecked == true;
+                bool integrateMenu = ChkIntegrateWindowsContextMenu.IsChecked == true;
+                _config.IntegrateWindowsContextMenu = integrateMenu;
+                if (integrateMenu)
+                {
+                    AeroSpot.Core.Native.ShellContextMenuIntegration.Register(AppDomain.CurrentDomain.BaseDirectory, _config.Language);
+                }
+                else
+                {
+                    AeroSpot.Core.Native.ShellContextMenuIntegration.Unregister();
+                }
+
+                // Salva opzioni persistenza dimensioni QuickLook
+                _config.RememberSizeImages = ChkRememberImages.IsChecked == true;
+                _config.RememberSizeVideos = ChkRememberVideos.IsChecked == true;
+                _config.RememberSizeAudio = ChkRememberAudio.IsChecked == true;
+                _config.RememberSizePdf = ChkRememberPdf.IsChecked == true;
+                _config.RememberSizeDocuments = ChkRememberDocs.IsChecked == true;
+                _config.RememberSizeGeneric = ChkRememberGeneric.IsChecked == true;
+                _config.QuickLookAlwaysOnTop = ChkAlwaysOnTop.IsChecked == true;
+
+                // Salva gerarchia Spotlight
+                _config.CategoryPriority = _hierarchyItems.Select(x => x.Key).ToList();
+                _config.PrioritizeExactNameMatches = ChkPrioritizeExactMatches.IsChecked == true;
+
+                // Salva frequenza aggiornamenti automatici
+                if (CmbUpdateFrequency.SelectedItem is ComboBoxItem selectedFreqItem)
+                {
+                    _config.UpdateCheckFrequency = selectedFreqItem.Tag?.ToString() ?? "Startup";
+                }
+
+                // Salva modalità home Spotlight e cronologia
+                if (CmbHomeDisplayMode?.SelectedItem is ComboBoxItem selectedHomeItem)
+                {
+                    if (selectedHomeItem == CmbItemMostFrequentSearches) _config.HomeDisplayMode = SpotlightHomeMode.MostFrequentSearches;
+                    else if (selectedHomeItem == CmbItemMostFrequentItems) _config.HomeDisplayMode = SpotlightHomeMode.MostFrequentlyOpened;
+                    else if (selectedHomeItem == CmbItemRecentOpened) _config.HomeDisplayMode = SpotlightHomeMode.RecentOpened;
+                    else if (selectedHomeItem == CmbItemAlphabetical) _config.HomeDisplayMode = SpotlightHomeMode.Alphabetical;
+                    else if (selectedHomeItem == CmbItemNone) _config.HomeDisplayMode = SpotlightHomeMode.None;
+
+                    _config.EnableRecentHistory = _config.HomeDisplayMode != SpotlightHomeMode.None;
+                }
+
+                // Salva comportamento Drag & Drop da Spotlight
+                if (CmbDragDropMode?.SelectedItem is ComboBoxItem selectedDragDropItem &&
+                    int.TryParse(selectedDragDropItem.Tag?.ToString(), out int ddTag))
+                {
+                    _config.DragDropMode = (SpotlightDragDropMode)ddTag;
+                }
+
+                // Salva frequenza aggiornamento automatico indice
+                if (CmbIndexFrequency?.SelectedItem is ComboBoxItem selectedIndexFreqItem &&
+                    int.TryParse(selectedIndexFreqItem.Tag?.ToString(), out int freqTag))
+                {
+                    _config.IndexUpdateFrequency = (IndexUpdateFrequency)freqTag;
+                }
+
+                // Scrivi su disco
+                _config.Save();
+
+                // Aggiorna PathFilter e attendi lo spurgo DB prima di ricaricare i risultati in ViewModel
+                PathFilter.Configure(_config.IncludedDrives, _config.ExcludedDirectoryNames);
+                var drivesCopy = _config.IncludedDrives.ToList();
+                var exclusionsCopy = _config.ExcludedDirectoryNames.ToList();
+                await Task.Run(() =>
+                {
+                    try
+                    {
+                        using var db = new SqliteIndexDatabase();
+                        db.PurgeDisallowedDrives(drivesCopy);
+                        db.PurgeExcludedSegments(exclusionsCopy);
+                    }
+                    catch (Exception ex)
+                    {
+                        AppLogger.Warn($"Spurgo dischi da Impostazioni fallito: {ex.Message}");
+                    }
+                });
+
+                TxtStatus.Text = "✓ " + LocalizationService.Get("Settings_Status_Saved");
+                TxtStatus.Visibility = Visibility.Visible;
+                ConfigSaved?.Invoke(_config);
+
+                _saveCloseTimer?.Stop();
+                _saveCloseTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+                _saveCloseTimer.Tick += (s, ev) =>
+                {
+                    ResetStatusMessage();
+                    UpdateLayout();
+                    Hide();
+                };
+                _saveCloseTimer.Start();
             }
-
-            // Salva Avvio Automatico con Windows (M4.2)
-            bool enableStartup = ChkStartWithWindows.IsChecked == true;
-            _config.StartWithWindows = enableStartup;
-            StartupManager.SetStartupEnabled(enableStartup);
-
-            // Salva opzioni conversione e integrazione shell
-            _config.OpenFolderAfterConversion = ChkOpenFolderAfterConversion.IsChecked == true;
-            bool integrateMenu = ChkIntegrateWindowsContextMenu.IsChecked == true;
-            _config.IntegrateWindowsContextMenu = integrateMenu;
-            if (integrateMenu)
+            finally
             {
-                AeroSpot.Core.Native.ShellContextMenuIntegration.Register(AppDomain.CurrentDomain.BaseDirectory, _config.Language);
+                if (BtnSave != null) BtnSave.IsEnabled = true;
             }
-            else
-            {
-                AeroSpot.Core.Native.ShellContextMenuIntegration.Unregister();
-            }
-
-            // Salva opzioni persistenza dimensioni QuickLook
-            _config.RememberSizeImages = ChkRememberImages.IsChecked == true;
-            _config.RememberSizeVideos = ChkRememberVideos.IsChecked == true;
-            _config.RememberSizeAudio = ChkRememberAudio.IsChecked == true;
-            _config.RememberSizePdf = ChkRememberPdf.IsChecked == true;
-            _config.RememberSizeDocuments = ChkRememberDocs.IsChecked == true;
-            _config.RememberSizeGeneric = ChkRememberGeneric.IsChecked == true;
-            _config.QuickLookAlwaysOnTop = ChkAlwaysOnTop.IsChecked == true;
-
-            // Salva gerarchia Spotlight
-            _config.CategoryPriority = _hierarchyItems.Select(x => x.Key).ToList();
-            _config.PrioritizeExactNameMatches = ChkPrioritizeExactMatches.IsChecked == true;
-
-            // Salva frequenza aggiornamenti automatici
-            if (CmbUpdateFrequency.SelectedItem is ComboBoxItem selectedFreqItem)
-            {
-                _config.UpdateCheckFrequency = selectedFreqItem.Tag?.ToString() ?? "Startup";
-            }
-
-            // Salva modalità home Spotlight e cronologia
-            if (CmbHomeDisplayMode?.SelectedItem is ComboBoxItem selectedHomeItem)
-            {
-                if (selectedHomeItem == CmbItemMostFrequentSearches) _config.HomeDisplayMode = SpotlightHomeMode.MostFrequentSearches;
-                else if (selectedHomeItem == CmbItemMostFrequentItems) _config.HomeDisplayMode = SpotlightHomeMode.MostFrequentlyOpened;
-                else if (selectedHomeItem == CmbItemRecentOpened) _config.HomeDisplayMode = SpotlightHomeMode.RecentOpened;
-                else if (selectedHomeItem == CmbItemAlphabetical) _config.HomeDisplayMode = SpotlightHomeMode.Alphabetical;
-                else if (selectedHomeItem == CmbItemNone) _config.HomeDisplayMode = SpotlightHomeMode.None;
-
-                _config.EnableRecentHistory = _config.HomeDisplayMode != SpotlightHomeMode.None;
-            }
-
-            // Salva comportamento Drag & Drop da Spotlight
-            if (CmbDragDropMode?.SelectedItem is ComboBoxItem selectedDragDropItem &&
-                int.TryParse(selectedDragDropItem.Tag?.ToString(), out int ddTag))
-            {
-                _config.DragDropMode = (SpotlightDragDropMode)ddTag;
-            }
-
-            // Salva frequenza aggiornamento automatico indice
-            if (CmbIndexFrequency?.SelectedItem is ComboBoxItem selectedIndexFreqItem &&
-                int.TryParse(selectedIndexFreqItem.Tag?.ToString(), out int freqTag))
-            {
-                _config.IndexUpdateFrequency = (IndexUpdateFrequency)freqTag;
-            }
-
-            // Scrivi su disco
-            _config.Save();
-
-            TxtStatus.Text = "✓ " + AeroSpot.Core.Localization.LocalizationService.Get("Settings_Status_Saved");
-            TxtStatus.Visibility = Visibility.Visible;
-            ConfigSaved?.Invoke(_config);
-
-            _saveCloseTimer?.Stop();
-            _saveCloseTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-            _saveCloseTimer.Tick += (s, ev) =>
-            {
-                ResetStatusMessage();
-                UpdateLayout();
-                Hide();
-            };
-            _saveCloseTimer.Start();
         }
 
         #region Schede di Navigazione e Gerarchia Spotlight
@@ -1219,27 +1257,25 @@ namespace AeroSpot.Worker
             if (QuickLookSettingsPanel != null) QuickLookSettingsPanel.Visibility = tabIndex == 1 ? Visibility.Visible : Visibility.Collapsed;
             if (SpotSettingsPanel != null) SpotSettingsPanel.Visibility = tabIndex == 2 ? Visibility.Visible : Visibility.Collapsed;
 
-            var activeBrush = new SolidColorBrush(Color.FromRgb(0x02, 0x84, 0xC7));
             var inactiveBrush = Brushes.Transparent;
-            var activeText = new SolidColorBrush(Colors.White);
-            var inactiveText = new SolidColorBrush(Color.FromRgb(0x94, 0xA3, 0xB8));
+            var activeText = Brushes.White;
 
             if (TabBtnGeneral != null)
             {
-                TabBtnGeneral.Background = tabIndex == 0 ? activeBrush : inactiveBrush;
-                TabBtnGeneral.Foreground = tabIndex == 0 ? activeText : inactiveText;
+                TabBtnGeneral.Background = tabIndex == 0 ? TabActiveBrush : inactiveBrush;
+                TabBtnGeneral.Foreground = tabIndex == 0 ? activeText : TabInactiveTextBrush;
             }
 
             if (TabBtnQuickLook != null)
             {
-                TabBtnQuickLook.Background = tabIndex == 1 ? activeBrush : inactiveBrush;
-                TabBtnQuickLook.Foreground = tabIndex == 1 ? activeText : inactiveText;
+                TabBtnQuickLook.Background = tabIndex == 1 ? TabActiveBrush : inactiveBrush;
+                TabBtnQuickLook.Foreground = tabIndex == 1 ? activeText : TabInactiveTextBrush;
             }
 
             if (TabBtnSpot != null)
             {
-                TabBtnSpot.Background = tabIndex == 2 ? activeBrush : inactiveBrush;
-                TabBtnSpot.Foreground = tabIndex == 2 ? activeText : inactiveText;
+                TabBtnSpot.Background = tabIndex == 2 ? TabActiveBrush : inactiveBrush;
+                TabBtnSpot.Foreground = tabIndex == 2 ? activeText : TabInactiveTextBrush;
             }
         }
 
@@ -1290,17 +1326,15 @@ namespace AeroSpot.Worker
                 }
             }
 
-            bool isIt = (AeroSpot.Core.Localization.LocalizationService.CurrentLanguage?.ToLowerInvariant() ?? "it") != "en";
-
             int rank = 1;
             foreach (var key in orderedKeys)
             {
-                var item = CreateHierarchyItem(key, rank++, isIt);
+                var item = CreateHierarchyItem(key, rank++);
                 _hierarchyItems.Add(item);
             }
         }
 
-        private static CategoryHierarchyItem CreateHierarchyItem(string key, int rank, bool isIt)
+        private static CategoryHierarchyItem CreateHierarchyItem(string key, int rank)
         {
             return key.ToLowerInvariant() switch
             {
@@ -1309,79 +1343,78 @@ namespace AeroSpot.Worker
                     Key = "Impostazioni",
                     Rank = rank,
                     Icon = "⚙️",
-                    Title = isIt ? "Impostazioni di Windows e AeroSpot" : "Windows & AeroSpot Settings",
-                    Subtitle = isIt ? "Pagine di impostazione di sistema e dell'app" : "System and app settings pages"
+                    Title = LocalizationService.Get("Settings_Hierarchy_Title_Settings"),
+                    Subtitle = LocalizationService.Get("Settings_Hierarchy_Sub_Settings")
                 },
                 "applicazione" => new CategoryHierarchyItem
                 {
                     Key = "Applicazione",
                     Rank = rank,
                     Icon = "🚀",
-                    Title = isIt ? "Applicazioni ed Eseguibili" : "Applications & Executables",
-                    Subtitle = ".exe, .lnk, .bat, .cmd, .msi"
+                    Title = LocalizationService.Get("Settings_Hierarchy_Title_App"),
+                    Subtitle = LocalizationService.Get("Settings_Hierarchy_Sub_App")
                 },
                 "documento" => new CategoryHierarchyItem
                 {
                     Key = "Documento",
                     Rank = rank,
                     Icon = "📄",
-                    Title = isIt ? "Documenti e Fogli di Calcolo" : "Documents & Spreadsheets",
-                    Subtitle = ".pdf, .docx, .xlsx, .pptx, .txt, .csv, .md"
+                    Title = LocalizationService.Get("Settings_Hierarchy_Title_Document"),
+                    Subtitle = LocalizationService.Get("Settings_Hierarchy_Sub_Document")
                 },
                 "immagine" => new CategoryHierarchyItem
                 {
                     Key = "Immagine",
                     Rank = rank,
                     Icon = "🖼️",
-                    Title = isIt ? "Immagini e Foto" : "Images & Photos",
-                    Subtitle = ".png, .jpg, .jpeg, .gif, .webp, .svg, .bmp, .ico"
+                    Title = LocalizationService.Get("Settings_Hierarchy_Title_Image"),
+                    Subtitle = LocalizationService.Get("Settings_Hierarchy_Sub_Image")
                 },
                 "video" => new CategoryHierarchyItem
                 {
                     Key = "Video",
                     Rank = rank,
                     Icon = "🎬",
-                    Title = isIt ? "Video e Filmati" : "Videos & Movies",
-                    Subtitle = ".mp4, .mkv, .avi, .mov, .wmv, .webm"
+                    Title = LocalizationService.Get("Settings_Hierarchy_Title_Video"),
+                    Subtitle = LocalizationService.Get("Settings_Hierarchy_Sub_Video")
                 },
                 "audio" => new CategoryHierarchyItem
                 {
                     Key = "Audio",
                     Rank = rank,
                     Icon = "🎵",
-                    Title = isIt ? "File Audio e Musica" : "Audio & Music Files",
-                    Subtitle = ".mp3, .wav, .flac, .aac, .m4a, .ogg, .wma"
+                    Title = LocalizationService.Get("Settings_Hierarchy_Title_Audio"),
+                    Subtitle = LocalizationService.Get("Settings_Hierarchy_Sub_Audio")
                 },
                 "cartella" => new CategoryHierarchyItem
                 {
                     Key = "Cartella",
                     Rank = rank,
                     Icon = "📁",
-                    Title = isIt ? "Cartelle e Directory" : "Folders & Directories",
-                    Subtitle = isIt ? "Cartelle di sistema e dell'utente" : "User and system folders"
+                    Title = LocalizationService.Get("Settings_Hierarchy_Title_Folder"),
+                    Subtitle = LocalizationService.Get("Settings_Hierarchy_Sub_Folder")
                 },
                 "archivio" => new CategoryHierarchyItem
                 {
                     Key = "Archivio",
                     Rank = rank,
                     Icon = "📦",
-                    Title = isIt ? "Archivi compressi" : "Compressed Archives",
-                    Subtitle = ".zip, .rar, .7z, .tar, .gz, .iso"
+                    Title = LocalizationService.Get("Settings_Hierarchy_Title_Archive"),
+                    Subtitle = LocalizationService.Get("Settings_Hierarchy_Sub_Archive")
                 },
                 _ => new CategoryHierarchyItem
                 {
                     Key = "File",
                     Rank = rank,
                     Icon = "📎",
-                    Title = isIt ? "Altri File e Formati Generici" : "Other Files & Formats",
-                    Subtitle = isIt ? "Qualsiasi altra estensione non catalogata" : "Any other uncategorized extensions"
+                    Title = LocalizationService.Get("Settings_Hierarchy_Title_File"),
+                    Subtitle = LocalizationService.Get("Settings_Hierarchy_Sub_File")
                 }
             };
         }
 
         private bool _isDragging;
         private Point _dragOffset;
-        private ListBoxItem? _draggedContainer;
         private CategoryHierarchyItem? _currentDraggedItem;
         private CategoryHierarchyItem? _currentDropTarget;
 
@@ -1415,7 +1448,6 @@ namespace AeroSpot.Worker
             if (itemContainer != null && itemContainer.DataContext is CategoryHierarchyItem item)
             {
                 _dragStartPoint = e.GetPosition(HierarchyListBox);
-                _draggedContainer = itemContainer;
                 _currentDraggedItem = item;
                 _dragOffset = e.GetPosition(itemContainer);
             }
@@ -1560,7 +1592,6 @@ namespace AeroSpot.Worker
             else
             {
                 _currentDraggedItem = null;
-                _draggedContainer = null;
             }
         }
 
@@ -1576,7 +1607,6 @@ namespace AeroSpot.Worker
                 _currentDropTarget.IsDropTarget = false;
                 _currentDropTarget = null;
             }
-            _draggedContainer = null;
             GhostVisual.Visibility = Visibility.Collapsed;
             Mouse.OverrideCursor = null;
             HierarchyListBox.ReleaseMouseCapture();
@@ -1608,6 +1638,7 @@ namespace AeroSpot.Worker
         {
             ResetStatusMessage();
             UpdateLayout();
+            LocalizationService.Initialize(_config.Language);
 
             if (!App.IsShuttingDown)
             {

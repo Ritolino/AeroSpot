@@ -69,7 +69,7 @@
 
                 <TextBlock x:Name="TxtTitle"
                            Grid.Column="1"
-                           Text="Elaborazione..."
+                           Text=""
                            FontWeight="SemiBold"
                            FontSize="13"
                            Foreground="#F8FAFC"
@@ -109,7 +109,7 @@
                 </Grid.ColumnDefinitions>
 
                 <TextBlock x:Name="TxtDetail"
-                           Text="Inizializzazione in corso..."
+                           Text=""
                            FontSize="11"
                            Foreground="#94A3B8"
                            VerticalAlignment="Center"
@@ -117,7 +117,7 @@
 
                 <Button x:Name="BtnShowInFolder"
                         Grid.Column="1"
-                        Content="Mostra file"
+                        Content=""
                         Style="{StaticResource ToastBtnStyle}"
                         Visibility="Collapsed"
                         Click="BtnShowInFolder_Click"/>

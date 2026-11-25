@@ -3,18 +3,16 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Pipes;
 using System.Linq;
-using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using AeroSpot.Core.Logging;
+using AeroSpot.Core.Native;
 
 namespace AeroSpot.Tools
 {
     public static class FileBatchCollector
     {
-        [DllImport("shlwapi.dll", CharSet = CharSet.Unicode)]
-        public static extern int StrCmpLogicalW(string psz1, string psz2);
-
         /// <summary>
         /// Raccoglie i file selezionati sia se passati contemporaneamente da riga di comando
         /// sia se avviati in istanze multiple parallele da Windows Explorer (%1 Shell Verb).
@@ -36,24 +34,29 @@ namespace AeroSpot.Tools
             string singleFile = directFiles[0];
             string safeKey = actionKey.TrimStart('-').Replace("-", "_");
             string userSanitized = Environment.UserName.Replace("\\", "_");
-            string mutexName = $"Local\\AeroSpot_BatchLock_{safeKey}_{userSanitized}";
+            string lockPath = Path.Combine(Path.GetTempPath(), $"AeroSpot_BatchLock_{safeKey}_{userSanitized}.lock");
             string pipeName = $"AeroSpot_BatchPipe_{safeKey}_{userSanitized}";
 
             bool isLeader = false;
-            Mutex? mutex = null;
+            FileStream? lockStream = null;
 
             try
             {
-                mutex = new Mutex(false, mutexName);
-                isLeader = mutex.WaitOne(0);
-            }
-            catch (AbandonedMutexException)
-            {
+                // FileStream con FileShare.None non ha thread affinity ed è rilasciato automaticamente dal kernel OS alla chiusura/crash
+                lockStream = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
                 isLeader = true;
+            }
+            catch (IOException)
+            {
+                isLeader = false;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                isLeader = false;
             }
             catch (Exception ex)
             {
-                AppLogger.Warn($"FileBatchCollector: Impossibile acquisire mutex {mutexName}: {ex.Message}");
+                AppLogger.Warn($"FileBatchCollector: Impossibile acquisire lock {lockPath}: {ex.Message}");
                 return new List<string> { singleFile };
             }
 
@@ -62,9 +65,9 @@ namespace AeroSpot.Tools
                 // Istanza Follower: invia il proprio file al Leader tramite Named Pipe ed esce immediatamente
                 try
                 {
-                    using var client = new NamedPipeClientStream(".", pipeName, PipeDirection.Out);
+                    using var client = new NamedPipeClientStream(".", pipeName, PipeDirection.Out, PipeOptions.CurrentUserOnly);
                     await client.ConnectAsync(1200).ConfigureAwait(false);
-                    using var writer = new StreamWriter(client, leaveOpen: true) { AutoFlush = true };
+                    using var writer = new StreamWriter(client, Encoding.UTF8, bufferSize: 1024, leaveOpen: true) { AutoFlush = true };
                     await writer.WriteLineAsync(singleFile).ConfigureAwait(false);
                     AppLogger.Info($"FileBatchCollector: Follower ha consegnato '{singleFile}' al Leader.");
                     return null; // Istanza completata, esci
@@ -74,17 +77,20 @@ namespace AeroSpot.Tools
                     AppLogger.Warn($"FileBatchCollector: Follower non è riuscito a connettersi al Leader ({ex.Message}), procedo standalone.");
                     return new List<string> { singleFile };
                 }
-                finally
-                {
-                    mutex?.Dispose();
-                }
             }
 
-            // Istanza Leader: raccoglie il proprio file e attende i follower
+            // Istanza Leader: raccoglie il proprio file e attende i follower su un'unica NamedPipeServerStream persistente
             var collected = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { singleFile };
 
             try
             {
+                using var server = new NamedPipeServerStream(
+                    pipeName,
+                    PipeDirection.In,
+                    1,
+                    PipeTransmissionMode.Byte,
+                    PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+
                 var lastArrival = DateTime.UtcNow;
 
                 while (true)
@@ -94,22 +100,27 @@ namespace AeroSpot.Tools
 
                     try
                     {
-                        using var server = new NamedPipeServerStream(pipeName, PipeDirection.In, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
                         using var timeoutCts = new CancellationTokenSource(remaining);
-
                         await server.WaitForConnectionAsync(timeoutCts.Token).ConfigureAwait(false);
 
-                        using var reader = new StreamReader(server);
-                        string? line = await reader.ReadLineAsync().ConfigureAwait(false);
-                        if (!string.IsNullOrWhiteSpace(line))
+                        try
                         {
-                            string receivedPath = line.Trim();
-                            if (File.Exists(receivedPath))
+                            using var reader = new StreamReader(server, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, bufferSize: 1024, leaveOpen: true);
+                            string? line = await reader.ReadLineAsync().ConfigureAwait(false);
+                            if (!string.IsNullOrWhiteSpace(line))
                             {
-                                collected.Add(receivedPath);
-                                lastArrival = DateTime.UtcNow; // Reset debounce
-                                AppLogger.Info($"FileBatchCollector: Leader ha raccolto file batch: {receivedPath}");
+                                string receivedPath = line.Trim();
+                                if (File.Exists(receivedPath))
+                                {
+                                    collected.Add(receivedPath);
+                                    lastArrival = DateTime.UtcNow; // Reset debounce
+                                    AppLogger.Info($"FileBatchCollector: Leader ha raccolto file batch: {receivedPath}");
+                                }
                             }
+                        }
+                        finally
+                        {
+                            try { server.Disconnect(); } catch { }
                         }
                     }
                     catch (OperationCanceledException)
@@ -124,14 +135,13 @@ namespace AeroSpot.Tools
                     }
                 }
             }
+            catch (Exception ex)
+            {
+                AppLogger.Warn($"FileBatchCollector: Errore avvio server pipe {pipeName}: {ex.Message}");
+            }
             finally
             {
-                try
-                {
-                    mutex?.ReleaseMutex();
-                }
-                catch { }
-                mutex?.Dispose();
+                lockStream?.Dispose();
             }
 
             return SortFiles(collected);
@@ -140,7 +150,7 @@ namespace AeroSpot.Tools
         private static List<string> SortFiles(IEnumerable<string> files)
         {
             var list = files.Where(File.Exists).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-            list.Sort((a, b) => StrCmpLogicalW(a, b));
+            list.Sort((a, b) => Win32.StrCmpLogicalW(a, b));
             return list;
         }
     }

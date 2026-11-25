@@ -115,8 +115,23 @@ namespace AeroSpot.Worker
         private PreviewCategory _currentCategory = PreviewCategory.Generic;
         private readonly System.Collections.Generic.Dictionary<PreviewCategory, (double Width, double Height)> _sessionCustomSizes = new();
 
+        private static readonly SolidColorBrush ThumbActiveBorderBrush = CreateFrozenBrush(Color.FromRgb(0x38, 0xBD, 0xF8));
+        private static readonly SolidColorBrush ThumbActiveBgBrush = CreateFrozenBrush(Color.FromArgb(30, 0x38, 0xBD, 0xF8));
+        private static readonly SolidColorBrush ThumbHoverBgBrush = CreateFrozenBrush(Color.FromArgb(25, 255, 255, 255));
+        private static readonly SolidColorBrush ThumbActiveTextBrush = CreateFrozenBrush(Color.FromRgb(0x38, 0xBD, 0xF8));
+        private static readonly SolidColorBrush ThumbInactiveTextBrush = CreateFrozenBrush(Color.FromRgb(0x94, 0xA3, 0xB8));
+        private static readonly SolidColorBrush ThumbPaperBorderBrush = CreateFrozenBrush(Color.FromArgb(40, 0, 0, 0));
+
+        private static SolidColorBrush CreateFrozenBrush(Color color)
+        {
+            var brush = new SolidColorBrush(color);
+            brush.Freeze();
+            return brush;
+        }
+
         public PreviewWindow()
         {
+            App.EnsureSharedScrollBarResources(this.Resources);
             InitializeComponent();
             _config = AeroSpot.Core.Config.AppConfig.Load();
 
@@ -282,7 +297,10 @@ namespace AeroSpot.Worker
                     this.UpdateLayout();
                 }
 
-                if (this.IsVisible)
+                // Se QuickLook era già visibile e aggiornato dinamicamente da Explorer (non da Spotlight),
+                // non rubare il focus a Esplora Risorse se l'utente sta scorrendo direttamente lì.
+                bool shouldActivate = !wasVisible || isFromSpotlight || (_hwnd != IntPtr.Zero && Win32.GetForegroundWindow() == _hwnd);
+                if (this.IsVisible && shouldActivate)
                 {
                     try
                     {
@@ -337,7 +355,11 @@ namespace AeroSpot.Worker
         private void ApplyModelToUI(PreviewModel model)
         {
             _currentModel = model;
-            // Pulisci viste e timer precedenti
+            // Pulisci viste, remux e timer precedenti
+            _remuxCts?.Cancel();
+            _remuxCts?.Dispose();
+            _remuxCts = null;
+
             _folderSizeCts?.Cancel();
             _folderSizeCts?.Dispose();
             _folderSizeCts = null;
@@ -479,7 +501,7 @@ namespace AeroSpot.Worker
 
                 case PreviewType.Error:
                     ErrorView.Visibility = Visibility.Visible;
-                    ErrorMessageText.Text = model.ErrorMessage ?? "Errore sconosciuto";
+                    ErrorMessageText.Text = model.ErrorMessage ?? LocalizationService.Get("Preview_Error_Unknown");
                     break;
             }
 
@@ -508,7 +530,7 @@ namespace AeroSpot.Worker
         {
             if (model.PreviewHandlerClsid == Guid.Empty)
             {
-                FallbackToGenericView(model, "Impossibile attivare l'anteprima");
+                FallbackToGenericView(model, LocalizationService.Get("Preview_Handler_Unavailable"));
                 return;
             }
 
@@ -547,7 +569,7 @@ namespace AeroSpot.Worker
                 };
                 hostControl.PreviewFailed += (s, ex) =>
                 {
-                    Dispatcher.BeginInvoke(new Action(() => FallbackToGenericView(model, "Visualizzatore di anteprima non riuscito")));
+                    Dispatcher.BeginInvoke(new Action(() => FallbackToGenericView(model, LocalizationService.Get("Preview_Handler_Failed"))));
                 };
 
                 HandlerHostBorder.Child = hostControl;
@@ -556,7 +578,7 @@ namespace AeroSpot.Worker
             catch (Exception ex)
             {
                 AppLogger.Warn($"Attivazione PreviewHandler fallita per {model.FilePath}: {ex.Message}");
-                FallbackToGenericView(model, "Impossibile attivare l'anteprima");
+                FallbackToGenericView(model, LocalizationService.Get("Preview_Handler_Unavailable"));
             }
         }
 
@@ -710,8 +732,8 @@ namespace AeroSpot.Worker
                             CornerRadius = new CornerRadius(6),
                             Padding = new Thickness(6, 6, 6, 4),
                             Margin = new Thickness(0, 0, 0, 8),
-                            Background = i == 0 ? new SolidColorBrush(Color.FromArgb(30, 0x38, 0xBD, 0xF8)) : Brushes.Transparent,
-                            BorderBrush = i == 0 ? new SolidColorBrush(Color.FromRgb(0x38, 0xBD, 0xF8)) : Brushes.Transparent,
+                            Background = i == 0 ? ThumbActiveBgBrush : Brushes.Transparent,
+                            BorderBrush = i == 0 ? ThumbActiveBorderBrush : Brushes.Transparent,
                             BorderThickness = new Thickness(1.5),
                             Cursor = Cursors.Hand,
                             Tag = pageIndex
@@ -728,19 +750,10 @@ namespace AeroSpot.Worker
                             Width = thumbW,
                             Height = thumbH,
                             Background = Brushes.White,
-                            BorderBrush = new SolidColorBrush(Color.FromArgb(40, 0, 0, 0)),
+                            BorderBrush = ThumbPaperBorderBrush,
                             BorderThickness = new Thickness(1),
                             CornerRadius = new CornerRadius(2),
                             SnapsToDevicePixels = true
-                        };
-
-                        thumbPaper.Effect = new DropShadowEffect
-                        {
-                            BlurRadius = 6,
-                            Direction = 270,
-                            ShadowDepth = 1.5,
-                            Color = Colors.Black,
-                            Opacity = 0.3
                         };
 
                         var thumbImg = new Image
@@ -757,7 +770,7 @@ namespace AeroSpot.Worker
                         var pageLabel = new TextBlock
                         {
                             Text = (i + 1).ToString(),
-                            Foreground = i == 0 ? new SolidColorBrush(Color.FromRgb(0x38, 0xBD, 0xF8)) : new SolidColorBrush(Color.FromRgb(0x94, 0xA3, 0xB8)),
+                            Foreground = i == 0 ? ThumbActiveTextBrush : ThumbInactiveTextBrush,
                             FontSize = 10.5,
                             FontWeight = i == 0 ? FontWeights.Bold : FontWeights.SemiBold,
                             HorizontalAlignment = HorizontalAlignment.Center,
@@ -782,7 +795,7 @@ namespace AeroSpot.Worker
                         {
                             if (s is Border b && b.Tag is int idx && idx != _currentPdfPageIndex)
                             {
-                                b.Background = new SolidColorBrush(Color.FromArgb(25, 255, 255, 255));
+                                b.Background = ThumbHoverBgBrush;
                             }
                         };
                         itemCard.MouseLeave += (s, e) =>
@@ -881,12 +894,12 @@ namespace AeroSpot.Worker
                 if (PdfThumbnailsStack.Children[i] is Border card && card.Child is StackPanel sp)
                 {
                     bool isActive = (i == activeIndex);
-                    card.BorderBrush = isActive ? new SolidColorBrush(Color.FromRgb(0x38, 0xBD, 0xF8)) : Brushes.Transparent;
-                    card.Background = isActive ? new SolidColorBrush(Color.FromArgb(30, 0x38, 0xBD, 0xF8)) : Brushes.Transparent;
+                    card.BorderBrush = isActive ? ThumbActiveBorderBrush : Brushes.Transparent;
+                    card.Background = isActive ? ThumbActiveBgBrush : Brushes.Transparent;
 
                     if (sp.Children.Count > 1 && sp.Children[1] is TextBlock lbl)
                     {
-                        lbl.Foreground = isActive ? new SolidColorBrush(Color.FromRgb(0x38, 0xBD, 0xF8)) : new SolidColorBrush(Color.FromRgb(0x94, 0xA3, 0xB8));
+                        lbl.Foreground = isActive ? ThumbActiveTextBrush : ThumbInactiveTextBrush;
                         lbl.FontWeight = isActive ? FontWeights.Bold : FontWeights.SemiBold;
                     }
 
@@ -1204,6 +1217,15 @@ namespace AeroSpot.Worker
             }
         }
 
+        private void PdfScrollViewer_LostMouseCapture(object sender, MouseEventArgs e)
+        {
+            _isPanningPdf = false;
+            if (PdfScrollViewer != null)
+            {
+                PdfScrollViewer.Cursor = Cursors.Arrow;
+            }
+        }
+
         private void CleanupPdfView()
         {
             _currentPdfSession?.Dispose();
@@ -1285,13 +1307,9 @@ namespace AeroSpot.Worker
                 TextView.Visibility = Visibility.Visible;
                 PreviewTextBox.Text = model.TextContent;
 
-                string fallbackNotice = LocalizationService.CurrentLanguage == "it"
-                    ? "Anteprima solo testo (Fallback)"
-                    : "Plain Text Preview (Fallback)";
+                string fallbackNotice = LocalizationService.Get("Preview_Fallback_TextOnly");
                 HeaderSubtitle.Text = $"Word Document • {fallbackNotice} • {_currentFileSizeText}";
-                FooterDetails.Text = LocalizationService.CurrentLanguage == "it"
-                    ? "Visualizzatore avanzato non disponibile. Mostrato testo estratto dal documento."
-                    : "Advanced previewer unavailable. Showing text extracted from document.";
+                FooterDetails.Text = LocalizationService.Get("Preview_Fallback_WordDesc");
 
                 return;
             }
@@ -1309,8 +1327,36 @@ namespace AeroSpot.Worker
 
         private void GetActiveMonitorWorkArea(out double workLeft, out double workTop, out double monitorWidth, out double monitorHeight)
         {
-            Win32.GetCursorPos(out Win32.POINT cursorPt);
-            IntPtr hMonitor = Win32.MonitorFromPoint(cursorPt, Win32.MONITOR_DEFAULTTONEAREST);
+            IntPtr hMonitor = IntPtr.Zero;
+
+            if (IsLaunchedFromSpotlight)
+            {
+                Window? mainWin = App.MainLauncherWindow;
+                if (mainWin == null && Application.Current != null && Application.Current.Dispatcher.CheckAccess())
+                {
+                    mainWin = Application.Current.MainWindow;
+                }
+
+                if (mainWin != null)
+                {
+                    IntPtr mainHwnd = new WindowInteropHelper(mainWin).Handle;
+                    if (mainHwnd != IntPtr.Zero && Win32.GetWindowRect(mainHwnd, out Win32.RECT mainRect))
+                    {
+                        var centerPt = new Win32.POINT
+                        {
+                            X = (mainRect.Left + mainRect.Right) / 2,
+                            Y = (mainRect.Top + mainRect.Bottom) / 2
+                        };
+                        hMonitor = Win32.MonitorFromPoint(centerPt, Win32.MONITOR_DEFAULTTONEAREST);
+                    }
+                }
+            }
+
+            if (hMonitor == IntPtr.Zero)
+            {
+                Win32.GetCursorPos(out Win32.POINT cursorPt);
+                hMonitor = Win32.MonitorFromPoint(cursorPt, Win32.MONITOR_DEFAULTTONEAREST);
+            }
 
             var mi = new Win32.MONITORINFO();
             mi.cbSize = (uint)Marshal.SizeOf<Win32.MONITORINFO>();
@@ -1702,6 +1748,13 @@ namespace AeroSpot.Worker
                     Win32.SetWindowCloak(_hwnd, true);
                 }
                 this.Hide();
+                this.WindowState = WindowState.Normal;
+                if (BtnFullscreen != null) BtnFullscreen.Content = "⛶";
+                if (BtnVideoFullscreen != null) BtnVideoFullscreen.Content = "⛶";
+
+                _remuxCts?.Cancel();
+                _remuxCts?.Dispose();
+                _remuxCts = null;
 
                 _folderSizeCts?.Cancel();
                 _folderSizeCts?.Dispose();
@@ -1771,10 +1824,12 @@ namespace AeroSpot.Worker
                     {
                         if (token.IsCancellationRequested || !string.Equals(_currentFilePath, folderPath, StringComparison.OrdinalIgnoreCase)) return;
                         FolderSizeLoadingPanel.Visibility = Visibility.Collapsed;
-                        string filesLabel = AeroSpot.Core.Localization.LocalizationService.CurrentLanguage == "it" ? "file" : "files";
-                        string foldersLabel = AeroSpot.Core.Localization.LocalizationService.CurrentLanguage == "it" ? "cartelle" : "folders";
                         string folderCategory = AeroSpot.Core.Localization.LocalizationService.Get("Spotlight_Category_Folder");
-                        string formatted = $"{PreviewLoader.FormatFileSize(res.Value.TotalBytes)} ({res.Value.FileCount:N0} {filesLabel}, {res.Value.DirCount:N0} {foldersLabel})";
+                        string formatted = AeroSpot.Core.Localization.LocalizationService.Get(
+                            "Preview_Folder_Summary",
+                            PreviewLoader.FormatFileSize(res.Value.TotalBytes),
+                            res.Value.FileCount,
+                            res.Value.DirCount);
                         FolderSizeCalculatedText.Text = formatted;
                         FolderSizeCalculatedText.Visibility = Visibility.Visible;
                         HeaderSubtitle.Text = $"{folderCategory} • {PreviewLoader.FormatFileSize(res.Value.TotalBytes)}";
@@ -1812,6 +1867,12 @@ namespace AeroSpot.Worker
                 UpdatePlayPauseIcon(true);
 
                 ApplyVideoRotation();
+
+                if (_videoTimer == null)
+                {
+                    _videoTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
+                    _videoTimer.Tick += VideoTimer_Tick;
+                }
 
                 // Annulla eventuali remux pendenti per un video precedente
                 _remuxCts?.Cancel();
@@ -1854,7 +1915,7 @@ namespace AeroSpot.Worker
                             if (VideoConversionSubtext != null)
                             {
                                 string codecName = _currentModel?.VideoAudioCodec?.ToUpperInvariant() ?? "AC-3";
-                                VideoConversionSubtext.Text = $"Conversione audio {codecName} in formato stereo compatibile...";
+                                VideoConversionSubtext.Text = LocalizationService.Get("Preview_Audio_Optimizing_Codec", codecName);
                             }
                         }
 
@@ -1863,6 +1924,8 @@ namespace AeroSpot.Worker
 
                         string originalPath = path;
                         var modelAtStart = _currentModel;
+                        _remuxCts = new CancellationTokenSource();
+                        var remuxToken = _remuxCts.Token;
 
                         _ = Task.Run(async () =>
                         {
@@ -1870,9 +1933,10 @@ namespace AeroSpot.Worker
                             {
                                 var progress = new Progress<double>(pct =>
                                 {
+                                    if (remuxToken.IsCancellationRequested) return;
                                     _ = Dispatcher.InvokeAsync(new Action(() =>
                                     {
-                                        if (_currentModel == modelAtStart && VideoConversionProgress != null)
+                                        if (!remuxToken.IsCancellationRequested && _currentModel == modelAtStart && VideoConversionProgress != null)
                                         {
                                             VideoConversionProgress.Value = pct;
                                             HeaderSubtitle.Text = $"{LocalizationService.Get("Spotlight_Category_Video")} • {LocalizationService.Get("Preview_Audio_CompatiblePreparing")} ({pct:0}%) • {_currentFileSizeText}";
@@ -1886,7 +1950,9 @@ namespace AeroSpot.Worker
                                     modelAtStart?.VideoAudioChannels ?? 2, 
                                     TimeSpan.Zero, 
                                     progress, 
-                                    CancellationToken.None);
+                                    remuxToken);
+
+                                if (remuxToken.IsCancellationRequested) return;
 
                                 await Dispatcher.InvokeAsync(() =>
                                 {
@@ -1895,7 +1961,7 @@ namespace AeroSpot.Worker
                                         VideoConversionOverlay.Visibility = Visibility.Collapsed;
                                     }
 
-                                    if (_currentModel == modelAtStart && File.Exists(compatibleVideo))
+                                    if (!remuxToken.IsCancellationRequested && _currentModel == modelAtStart && File.Exists(compatibleVideo))
                                     {
                                         VideoPlayer.Source = new Uri(compatibleVideo, UriKind.Absolute);
                                         _isMuted = false;
@@ -1915,8 +1981,13 @@ namespace AeroSpot.Worker
                                     }
                                 });
                             }
+                            catch (OperationCanceledException)
+                            {
+                                AppLogger.Debug($"LoadAndPlayVideo: Remux annullato per {originalPath}.");
+                            }
                             catch (Exception ex)
                             {
+                                if (remuxToken.IsCancellationRequested) return;
                                 AppLogger.Warn($"LoadAndPlayVideo: Remux compatibile fallito per {originalPath}: {ex.Message}");
                                 _ = Dispatcher.InvokeAsync(new Action(() =>
                                 {
@@ -1924,9 +1995,9 @@ namespace AeroSpot.Worker
                                     {
                                         VideoConversionOverlay.Visibility = Visibility.Collapsed;
                                     }
-                                    if (_currentModel == modelAtStart)
+                                    if (!remuxToken.IsCancellationRequested && _currentModel == modelAtStart)
                                     {
-                                        HeaderSubtitle.Text = $"{LocalizationService.Get("Spotlight_Category_Video")} • 🔇 Audio non compatibile • {_currentFileSizeText}";
+                                        HeaderSubtitle.Text = $"{LocalizationService.Get("Spotlight_Category_Video")} • 🔇 {LocalizationService.Get("Preview_Audio_Incompatible")} • {_currentFileSizeText}";
                                         if (VolumeButton != null)
                                         {
                                             VolumeButton.ToolTip = LocalizationService.Get("Preview_Audio_MutedBitstream");
@@ -1934,7 +2005,9 @@ namespace AeroSpot.Worker
                                     }
                                 }));
                             }
-                        });
+                        }, remuxToken);
+
+                        return;
                     }
                 }
                 else
@@ -1972,12 +2045,6 @@ namespace AeroSpot.Worker
                 if (AudioVisualizerPanel != null && AudioVisualizerPanel.Visibility == Visibility.Visible)
                 {
                     StartTurntableAnimation();
-                }
-
-                if (_videoTimer == null)
-                {
-                    _videoTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
-                    _videoTimer.Tick += VideoTimer_Tick;
                 }
             }
             catch (Exception ex)
@@ -2090,6 +2157,11 @@ namespace AeroSpot.Worker
             }
 
             e.Handled = true;
+        }
+
+        private void TimelineBar_LostMouseCapture(object sender, MouseEventArgs e)
+        {
+            _isScrubbing = false;
         }
 
         private void ApplySeekFromX(double x, bool isFinal)
@@ -2417,9 +2489,8 @@ namespace AeroSpot.Worker
                     string codec = _currentModel.VideoAudioCodec ?? "AC-3";
                     int channels = _currentModel.VideoAudioChannels;
                     string chStr = channels > 2 ? (channels == 6 ? "5.1" : $"{channels}ch") : "";
-                    audioNotice = LocalizationService.CurrentLanguage == "it"
-                        ? $" • 🔇 Audio {codec} {chStr} (Silenziato)".Trim()
-                        : $" • 🔇 {codec} {chStr} Audio (Muted)".Trim();
+                    string chPart = string.IsNullOrEmpty(chStr) ? string.Empty : $" {chStr}";
+                    audioNotice = $" • 🔇 {codec}{chPart} ({LocalizationService.Get("Preview_Audio_Muted")})";
                 }
 
                 HeaderSubtitle.Text = $"{(int)effW} × {(int)effH} • {_currentFileSizeText}{audioNotice}";
@@ -2452,8 +2523,8 @@ namespace AeroSpot.Worker
             _videoTimer?.Stop();
             StopTurntableAnimation();
             string errorMsg = _currentCategory == PreviewCategory.Audio
-                ? (LocalizationService.CurrentLanguage == "it" ? "Formato audio non supportato o file danneggiato" : "Audio format not supported or corrupt file")
-                : (LocalizationService.CurrentLanguage == "it" ? "Codec video non disponibile" : "Video codec not available");
+                ? LocalizationService.Get("Preview_Audio_Unsupported")
+                : LocalizationService.Get("Preview_Video_CodecUnavailable");
             FallbackToGenericView(new PreviewModel { FilePath = _currentFilePath ?? string.Empty, Title = HeaderTitle.Text }, errorMsg);
         }
 
@@ -2540,6 +2611,11 @@ namespace AeroSpot.Worker
                 ImageView.ReleaseMouseCapture();
                 e.Handled = true;
             }
+        }
+
+        private void ImageView_LostMouseCapture(object sender, MouseEventArgs e)
+        {
+            _isPanningImage = false;
         }
 
         /// <summary>Rotazione manuale della sola vista (0/90/180/270), sopra l'orientamento automatico. Non tocca il file.</summary>
@@ -2670,6 +2746,8 @@ namespace AeroSpot.Worker
                 BtnFullscreen.Content = "🗗";
                 if (BtnVideoFullscreen != null) BtnVideoFullscreen.Content = "🗗";
             }
+
+            ResetZoom();
         }
 
         private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
@@ -2714,14 +2792,62 @@ namespace AeroSpot.Worker
                     }
                     break;
 
+                case Key.Left:
+                case Key.Right:
                 case Key.Up:
-                    NavigateSelectionRequested?.Invoke(-1);
-                    e.Handled = true;
-                    break;
-
                 case Key.Down:
-                    NavigateSelectionRequested?.Invoke(1);
-                    e.Handled = true;
+                    if (Keyboard.Modifiers == ModifierKeys.None)
+                    {
+                        int delta = (e.Key == Key.Left || e.Key == Key.Up) ? -1 : 1;
+
+                        if (IsLaunchedFromSpotlight)
+                        {
+                            if (e.Key == Key.Up || e.Key == Key.Down)
+                            {
+                                NavigateSelectionRequested?.Invoke(delta);
+                                e.Handled = true;
+                            }
+                        }
+                        else
+                        {
+                            FlowDocumentScrollViewer? activeFlowViewer = null;
+                            if (MarkdownView != null && MarkdownView.Visibility == Visibility.Visible)
+                            {
+                                activeFlowViewer = MarkdownView;
+                            }
+                            else if (HtmlView != null && HtmlView.Visibility == Visibility.Visible &&
+                                     HtmlDocumentViewer != null && HtmlDocumentViewer.Visibility == Visibility.Visible)
+                            {
+                                activeFlowViewer = HtmlDocumentViewer;
+                            }
+
+                            bool isFlowDocVerticalScroll = (e.Key == Key.Up || e.Key == Key.Down) && activeFlowViewer != null;
+
+                            if (isFlowDocVerticalScroll && activeFlowViewer != null)
+                            {
+                                if (!activeFlowViewer.IsKeyboardFocusWithin)
+                                {
+                                    var sv = FindVisualChild<ScrollViewer>(activeFlowViewer);
+                                    if (sv != null)
+                                    {
+                                        if (e.Key == Key.Down) sv.LineDown();
+                                        else sv.LineUp();
+                                    }
+                                    activeFlowViewer.Focus();
+                                    e.Handled = true;
+                                }
+                                break;
+                            }
+
+                            if (Keyboard.FocusedElement is not System.Windows.Controls.Primitives.TextBoxBase &&
+                                (SpreadsheetView == null || SpreadsheetView.Visibility != Visibility.Visible) &&
+                                !(PdfView != null && PdfView.Visibility == Visibility.Visible && _pdfScale > 1.01))
+                            {
+                                NavigateExplorerSelection(delta);
+                                e.Handled = true;
+                            }
+                        }
+                    }
                     break;
 
                 case Key.PageUp:
@@ -2758,10 +2884,26 @@ namespace AeroSpot.Worker
             }
         }
 
-        private void Window_KeyDown(object sender, KeyEventArgs e)
+        private void NavigateExplorerSelection(int delta)
         {
-            if (e.Handled) return;
-            Window_PreviewKeyDown(sender, e);
+            string? nextPath = null;
+            bool atBoundary = false;
+
+            if (_previousForegroundHwnd != IntPtr.Zero)
+            {
+                AeroSpot.Core.Shell.ExplorerFocusResolver.TryNavigateSelection(_previousForegroundHwnd, delta, out nextPath, out atBoundary);
+            }
+
+            if (string.IsNullOrEmpty(nextPath) && !atBoundary && !string.IsNullOrEmpty(_currentFilePath))
+            {
+                AeroSpot.Core.Shell.ExplorerFocusResolver.TryGetAdjacentItemInDirectory(_currentFilePath, delta, out nextPath);
+            }
+
+            if (!string.IsNullOrEmpty(nextPath) &&
+                !string.Equals(nextPath, _currentFilePath, StringComparison.OrdinalIgnoreCase))
+            {
+                _ = ShowPreviewForFileAsync(nextPath, isFromSpotlight: false);
+            }
         }
 
         private void Header_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -2845,23 +2987,26 @@ namespace AeroSpot.Worker
         {
             if (string.IsNullOrEmpty(_currentFilePath) || (!File.Exists(_currentFilePath) && !Directory.Exists(_currentFilePath)))
             {
+                PreviewContextMenu.IsOpen = false;
                 e.Handled = true;
                 return;
             }
 
-            string ext = Path.GetExtension(_currentFilePath).ToLowerInvariant();
-            bool isJpg = ext is ".jpg" or ".jpeg";
-            bool isPng = ext is ".png";
-            bool isPdf = ext is ".pdf";
-            bool isImage = isJpg || isPng || ext is ".webp" or ".bmp" or ".gif" or ".tiff" or ".ico";
-            bool isVideo = ext is ".mp4" or ".mkv" or ".mov" or ".avi" or ".wmv" or ".flv" or ".m4v" or ".webm" or ".ts";
-            bool isMp3 = ext is ".mp3";
-            bool isWav = ext is ".wav";
-            bool isAudio = isMp3 || isWav || ext is ".m4a" or ".flac" or ".aac" or ".wma" or ".ogg" or ".aiff" or ".opus";
+            bool isFile = File.Exists(_currentFilePath);
+            string ext = isFile ? Path.GetExtension(_currentFilePath).ToLowerInvariant() : string.Empty;
+            bool isJpg = isFile && ext is ".jpg" or ".jpeg";
+            bool isPng = isFile && ext is ".png";
+            bool isPdf = isFile && ext is ".pdf";
+            bool isDoc = isFile && ext is ".md" or ".txt" or ".docx" or ".rtf" or ".odt";
+            bool isImage = isFile && (isJpg || isPng || ext is ".webp" or ".bmp" or ".gif" or ".tiff" or ".ico");
+            bool isVideo = isFile && ext is ".mp4" or ".mkv" or ".mov" or ".avi" or ".wmv" or ".flv" or ".m4v" or ".webm" or ".ts";
+            bool isMp3 = isFile && ext is ".mp3";
+            bool isWav = isFile && ext is ".wav";
+            bool isAudio = isFile && (isMp3 || isWav || ext is ".m4a" or ".flac" or ".aac" or ".wma" or ".ogg" or ".aiff" or ".opus");
 
             bool canConvertJpg = isImage && !isJpg;
             bool canConvertPng = isImage && !isPng;
-            bool canConvertPdf = isImage && !isPdf;
+            bool canConvertPdf = (isImage || isDoc) && !isPdf;
             bool canRemoveBg = isImage;
             bool canConvertMp3 = (isVideo || isAudio) && !isMp3;
             bool canConvertWav = (isVideo || isAudio) && !isWav;
@@ -2877,6 +3022,7 @@ namespace AeroSpot.Worker
             PreviewMenuConvertWav.Visibility = canConvertWav ? Visibility.Visible : Visibility.Collapsed;
             PreviewMenuConvertMp4.Visibility = canConvertMp4 ? Visibility.Visible : Visibility.Collapsed;
             PreviewMenuRemoveBg.Visibility = canRemoveBg ? Visibility.Visible : Visibility.Collapsed;
+            PreviewMenuRememberSize.Visibility = _currentCategory != PreviewCategory.Folder ? Visibility.Visible : Visibility.Collapsed;
             PreviewMenuFullscreen.Visibility = (isImage || isVideo) ? Visibility.Visible : Visibility.Collapsed;
         }
 
@@ -2984,8 +3130,9 @@ namespace AeroSpot.Worker
         {
             if (this.WindowState == WindowState.Maximized || _currentCategory == PreviewCategory.Folder) return;
 
+            GetActiveMonitorWorkArea(out _, out _, out double monitorWidth, out _);
             double minW = 380;
-            double maxW = SystemParameters.PrimaryScreenWidth * 0.95;
+            double maxW = monitorWidth * 0.95;
             double newWidth = this.Width - e.HorizontalChange;
 
             if (newWidth >= minW && newWidth <= maxW)
@@ -3000,8 +3147,9 @@ namespace AeroSpot.Worker
         {
             if (this.WindowState == WindowState.Maximized || _currentCategory == PreviewCategory.Folder) return;
 
+            GetActiveMonitorWorkArea(out _, out _, out double monitorWidth, out _);
             double minW = 380;
-            double maxW = SystemParameters.PrimaryScreenWidth * 0.95;
+            double maxW = monitorWidth * 0.95;
             double newWidth = this.Width + e.HorizontalChange;
 
             if (newWidth >= minW && newWidth <= maxW)
@@ -3015,8 +3163,9 @@ namespace AeroSpot.Worker
         {
             if (this.WindowState == WindowState.Maximized || _currentCategory == PreviewCategory.Folder) return;
 
+            GetActiveMonitorWorkArea(out _, out _, out _, out double monitorHeight);
             double minH = 260;
-            double maxH = SystemParameters.PrimaryScreenHeight * 0.95;
+            double maxH = monitorHeight * 0.95;
             double newHeight = this.Height - e.VerticalChange;
 
             if (newHeight >= minH && newHeight <= maxH)
@@ -3031,8 +3180,9 @@ namespace AeroSpot.Worker
         {
             if (this.WindowState == WindowState.Maximized || _currentCategory == PreviewCategory.Folder) return;
 
+            GetActiveMonitorWorkArea(out _, out _, out _, out double monitorHeight);
             double minH = 260;
-            double maxH = SystemParameters.PrimaryScreenHeight * 0.95;
+            double maxH = monitorHeight * 0.95;
             double newHeight = this.Height + e.VerticalChange;
 
             if (newHeight >= minH && newHeight <= maxH)
@@ -3407,6 +3557,11 @@ namespace AeroSpot.Worker
             }
         }
 
+        private void StlViewport_LostMouseCapture(object sender, MouseEventArgs e)
+        {
+            _stlIsDragging = false;
+        }
+
         private void StlViewport_MouseWheel(object sender, MouseWheelEventArgs e)
         {
             double factor = e.Delta > 0 ? 0.88 : 1.13;
@@ -3537,6 +3692,10 @@ namespace AeroSpot.Worker
             {
                 try { Topmost = true; } catch { }
             }
+            else if (!IsActive)
+            {
+                try { Topmost = false; } catch { }
+            }
         }
 
         protected override void OnDeactivated(EventArgs e)
@@ -3565,53 +3724,5 @@ namespace AeroSpot.Worker
             }
             catch { }
         }
-    }
-
-    /// <summary>
-    /// Converte ViewportSize per WPF Track in modo da garantire una dimensione minima reale del Thumb
-    /// (WPF Track ignora Thumb.MinHeight/MinWidth e usa solo ~8px di sistema, tagliando il Thumb con LayoutClip).
-    /// </summary>
-    public sealed class MinThumbViewportConverter : System.Windows.Data.IMultiValueConverter
-    {
-        public double MinThumbLength { get; set; } = 44.0;
-
-        public object Convert(object[] values, Type targetType, object parameter, System.Globalization.CultureInfo culture)
-        {
-            if (values == null || values.Length < 6)
-            {
-                return double.NaN;
-            }
-
-            if (values[0] is not double viewportSize ||
-                values[1] is not double maximum ||
-                values[2] is not double minimum ||
-                values[3] is not double actualHeight ||
-                values[4] is not double actualWidth ||
-                values[5] is not Orientation orientation)
-            {
-                return double.NaN;
-            }
-
-            if (double.IsNaN(viewportSize) || double.IsInfinity(viewportSize) || viewportSize <= 0)
-            {
-                return viewportSize;
-            }
-
-            double range = maximum - minimum;
-            double trackLength = orientation == Orientation.Vertical ? actualHeight : actualWidth;
-            double minLen = MinThumbLength;
-
-            if (range <= 0 || trackLength <= minLen)
-            {
-                return viewportSize;
-            }
-
-            // Formula esatta inversa di WPF Track: thumbLength = trackLength * V / (range + V)
-            double minViewport = (minLen * range) / (trackLength - minLen);
-            return Math.Max(viewportSize, minViewport);
-        }
-
-        public object[] ConvertBack(object value, Type[] targetTypes, object parameter, System.Globalization.CultureInfo culture)
-            => throw new NotSupportedException();
     }
 }

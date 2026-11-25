@@ -1,7 +1,3 @@
-using System;
-using System.Threading;
-using System.Windows;
-using System.Windows.Controls;
 using AeroSpot.Worker;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -13,13 +9,11 @@ namespace AeroSpot.Tests
         [TestMethod]
         public void MainWindow_ResetResultsScroll_ResetsSelectionAndScroll()
         {
-            Exception? threadEx = null;
-            var t = new Thread(() =>
+            StaTestRunner.Run(() =>
             {
+                var window = new MainWindow();
                 try
                 {
-                    var window = new MainWindow();
-
                     // Assicurati che ci siano elementi
                     Assert.IsNotEmpty(window.ViewModel.FilteredResults, "Dovrebbero esserci risultati nella lista.");
 
@@ -40,20 +34,12 @@ namespace AeroSpot.Tests
                     Assert.IsNull(window.ViewModel.SelectedItem, "Alla riapertura SelectedItem deve essere null.");
                     Assert.AreEqual(-1, window.ResultsList.SelectedIndex, "ResultsList.SelectedIndex deve essere -1.");
                 }
-                catch (Exception ex)
+                finally
                 {
-                    threadEx = ex;
+                    window.ViewModel.Dispose();
+                    window.Hide();
                 }
             });
-
-            t.SetApartmentState(ApartmentState.STA);
-            t.Start();
-            t.Join(TimeSpan.FromSeconds(5));
-
-            if (threadEx != null)
-            {
-                throw new AssertFailedException($"MainWindow scroll reset test failed: {threadEx.Message}\nStack: {threadEx.StackTrace}", threadEx);
-            }
         }
     }
 }

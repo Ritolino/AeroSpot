@@ -11,7 +11,6 @@
         Focusable="True"
         UseLayoutRounding="True" SnapsToDevicePixels="True"
         PreviewKeyDown="Window_PreviewKeyDown"
-        KeyDown="Window_KeyDown"
         PreviewMouseWheel="Window_PreviewMouseWheel">
 
     <Window.Resources>
@@ -132,78 +131,6 @@
             </Setter>
         </Style>
 
-        <!-- Barra di Scorrimento Sottile e Scura (macOS / Fluent dark gray) con Hit-Test confortevole -->
-        <Style x:Key="SlimDarkScrollBarThumb" TargetType="{x:Type Thumb}">
-            <Setter Property="OverridesDefaultStyle" Value="True"/>
-            <Setter Property="IsTabStop" Value="False"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="{x:Type Thumb}">
-                        <Border Background="Transparent">
-                            <Border x:Name="ThumbVisual" Background="#45454A" CornerRadius="3.5" Margin="3,1,3,1" SnapsToDevicePixels="True" />
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="ThumbVisual" Property="Background" Value="#71717A"/>
-                            </Trigger>
-                            <Trigger Property="IsDragging" Value="True">
-                                <Setter TargetName="ThumbVisual" Property="Background" Value="#A1A1AA"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-
-        <local:MinThumbViewportConverter x:Key="MinThumbViewportConverter" MinThumbLength="44" />
-
-        <Style x:Key="SlimDarkScrollBar" TargetType="{x:Type ScrollBar}">
-            <Setter Property="OverridesDefaultStyle" Value="True"/>
-            <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="{x:Type ScrollBar}">
-                        <Grid Background="Transparent" SnapsToDevicePixels="True">
-                            <Track x:Name="PART_Track" IsDirectionReversed="False">
-                                <Track.ViewportSize>
-                                    <MultiBinding Converter="{StaticResource MinThumbViewportConverter}">
-                                        <Binding Path="ViewportSize" RelativeSource="{RelativeSource TemplatedParent}" />
-                                        <Binding Path="Maximum" RelativeSource="{RelativeSource TemplatedParent}" />
-                                        <Binding Path="Minimum" RelativeSource="{RelativeSource TemplatedParent}" />
-                                        <Binding Path="ActualHeight" RelativeSource="{RelativeSource TemplatedParent}" />
-                                        <Binding Path="ActualWidth" RelativeSource="{RelativeSource TemplatedParent}" />
-                                        <Binding Path="Orientation" RelativeSource="{RelativeSource TemplatedParent}" />
-                                    </MultiBinding>
-                                </Track.ViewportSize>
-                                <Track.DecreaseRepeatButton>
-                                    <RepeatButton x:Name="PART_PageUpButton" Command="{x:Static ScrollBar.PageUpCommand}" Opacity="0" Focusable="False" />
-                                </Track.DecreaseRepeatButton>
-                                <Track.Thumb>
-                                    <Thumb x:Name="PART_Thumb" Style="{StaticResource SlimDarkScrollBarThumb}" />
-                                </Track.Thumb>
-                                <Track.IncreaseRepeatButton>
-                                    <RepeatButton x:Name="PART_PageDownButton" Command="{x:Static ScrollBar.PageDownCommand}" Opacity="0" Focusable="False" />
-                                </Track.IncreaseRepeatButton>
-                            </Track>
-                        </Grid>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="Orientation" Value="Vertical">
-                                <Setter TargetName="PART_Track" Property="IsDirectionReversed" Value="True"/>
-                                <Setter Property="Width" Value="14"/>
-                                <Setter Property="MinWidth" Value="14"/>
-                            </Trigger>
-                            <Trigger Property="Orientation" Value="Horizontal">
-                                <Setter TargetName="PART_Track" Property="IsDirectionReversed" Value="False"/>
-                                <Setter TargetName="PART_PageUpButton" Property="Command" Value="{x:Static ScrollBar.PageLeftCommand}"/>
-                                <Setter TargetName="PART_PageDownButton" Property="Command" Value="{x:Static ScrollBar.PageRightCommand}"/>
-                                <Setter Property="Height" Value="14"/>
-                                <Setter Property="MinHeight" Value="14"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
         <!-- Stile Thumb di ridimensionamento bordi/angoli (invisibile ma sensibile al mouse su tutta la superficie) -->
         <Style x:Key="ResizeThumbStyle" TargetType="{x:Type Thumb}">
             <Setter Property="OverridesDefaultStyle" Value="True"/>
@@ -378,16 +305,19 @@
                             PreviewMouseWheel="ImageView_PreviewMouseWheel"
                             MouseLeftButtonDown="ImageView_MouseLeftButtonDown"
                             MouseMove="ImageView_MouseMove"
-                            MouseLeftButtonUp="ImageView_MouseLeftButtonUp">
-                        <Image x:Name="PreviewImage" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center"
-                               RenderOptions.BitmapScalingMode="HighQuality">
-                            <Image.RenderTransform>
+                            MouseLeftButtonUp="ImageView_MouseLeftButtonUp"
+                            LostMouseCapture="ImageView_LostMouseCapture">
+                        <Grid x:Name="ImageZoomContainer" Background="Transparent"
+                              HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+                            <Grid.RenderTransform>
                                 <TransformGroup>
                                     <ScaleTransform x:Name="ImageScaleTransform" ScaleX="1" ScaleY="1" />
                                     <TranslateTransform x:Name="ImageTranslateTransform" X="0" Y="0" />
                                 </TransformGroup>
-                            </Image.RenderTransform>
-                        </Image>
+                            </Grid.RenderTransform>
+                            <Image x:Name="PreviewImage" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                   RenderOptions.BitmapScalingMode="HighQuality" />
+                        </Grid>
                     </Border>
 
                     <!-- Vista Video con Fullscreen e Controlli Stile Apple (Capsula Flottante) -->
@@ -525,7 +455,8 @@
                                           Background="Transparent" Cursor="Hand"
                                           MouseLeftButtonDown="TimelineBar_MouseLeftButtonDown"
                                           MouseMove="TimelineBar_MouseMove"
-                                          MouseLeftButtonUp="TimelineBar_MouseLeftButtonUp">
+                                          MouseLeftButtonUp="TimelineBar_MouseLeftButtonUp"
+                                          LostMouseCapture="TimelineBar_LostMouseCapture">
                                         <!-- Track di Sfondo -->
                                         <Border Height="4" CornerRadius="2" Background="#33FFFFFF" VerticalAlignment="Center"/>
                                         <!-- Barra di Avanzamento Attiva -->
@@ -566,8 +497,8 @@
                                     <Border Width="44" Height="44" CornerRadius="22" Background="#2638BDF8" BorderBrush="#38BDF8" BorderThickness="1.5" HorizontalAlignment="Center" Margin="0,0,0,14">
                                         <TextBlock Text="⚡" FontSize="20" Foreground="#38BDF8" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                     </Border>
-                                    <TextBlock Text="Ottimizzazione audio per QuickLook..." FontSize="13.5" FontWeight="SemiBold" Foreground="#F8FAFC" HorizontalAlignment="Center" Margin="0,0,0,5"/>
-                                    <TextBlock x:Name="VideoConversionSubtext" Text="Conversione traccia multicanale in formato stereo ad alta fedeltà..." FontSize="11" Foreground="#94A3B8" HorizontalAlignment="Center" Margin="0,0,0,14"/>
+                                    <TextBlock Text="{loc:Loc Preview_Audio_Optimizing_Title}" FontSize="13.5" FontWeight="SemiBold" Foreground="#F8FAFC" HorizontalAlignment="Center" Margin="0,0,0,5"/>
+                                    <TextBlock x:Name="VideoConversionSubtext" Text="{loc:Loc Preview_Audio_Optimizing_Default}" FontSize="11" Foreground="#94A3B8" HorizontalAlignment="Center" Margin="0,0,0,14"/>
                                     <ProgressBar x:Name="VideoConversionProgress" Width="220" Height="4" Minimum="0" Maximum="100" Value="0"
                                                  Foreground="#38BDF8" Background="#33FFFFFF" BorderThickness="0"/>
                                 </StackPanel>
@@ -609,6 +540,7 @@
                           MouseLeftButtonDown="StlViewport_MouseLeftButtonDown"
                           MouseMove="StlViewport_MouseMove"
                           MouseLeftButtonUp="StlViewport_MouseLeftButtonUp"
+                          LostMouseCapture="StlViewport_LostMouseCapture"
                           MouseWheel="StlViewport_MouseWheel">
                         <Viewport3D x:Name="StlViewport"
                                     ClipToBounds="True"/>
@@ -724,7 +656,7 @@
 
                                 <!-- Toggle Mode: [ 🌐 Anteprima ] [ 📝 Codice ] -->
                                 <StackPanel Grid.Column="0" Orientation="Horizontal">
-                                    <Button x:Name="BtnHtmlModePreview" Content="🌐 Anteprima" Height="26" Padding="10,0"
+                                    <Button x:Name="BtnHtmlModePreview" Content="{loc:Loc Preview_Html_Mode_Preview}" Height="26" Padding="10,0"
                                             Background="#0284C7" Foreground="#FFFFFF" FontWeight="SemiBold" FontSize="11.5"
                                             Cursor="Hand" Click="BtnHtmlModePreview_Click">
                                         <Button.Style>
@@ -741,7 +673,7 @@
                                             </Style>
                                         </Button.Style>
                                     </Button>
-                                    <Button x:Name="BtnHtmlModeCode" Content="📝 Codice" Height="26" Padding="10,0"
+                                    <Button x:Name="BtnHtmlModeCode" Content="{loc:Loc Preview_Html_Mode_Code}" Height="26" Padding="10,0"
                                             Background="#1E293B" Foreground="#94A3B8" FontWeight="SemiBold" FontSize="11.5"
                                             Cursor="Hand" Click="BtnHtmlModeCode_Click">
                                         <Button.Style>
@@ -761,7 +693,7 @@
                                 </StackPanel>
 
                                 <!-- Action: [ ↗ Apri nel browser predefinito ] -->
-                                <Button Grid.Column="2" x:Name="BtnHtmlOpenBrowser" Content="↗ Apri nel Browser" Height="26" Padding="10,0"
+                                <Button Grid.Column="2" x:Name="BtnHtmlOpenBrowser" Content="{loc:Loc Preview_Html_Btn_OpenBrowser}" Height="26" Padding="10,0"
                                         Background="#1E293B" Foreground="#38BDF8" BorderBrush="#0284C7" BorderThickness="1"
                                         FontSize="11.5" FontWeight="SemiBold" Cursor="Hand" Click="BtnHtmlOpenBrowser_Click">
                                     <Button.Style>
@@ -855,7 +787,7 @@
                                     <!-- Pagina Precedente / Freccia Su ▲ -->
                                     <Button x:Name="BtnPdfPrevPage" Width="26" Height="26" Focusable="False"
                                             Style="{StaticResource AppleCircularButtonStyle}"
-                                            Click="BtnPdfPrevPage_Click" ToolTip="Pagina Precedente (Page Up / Freccia Su)">
+                                            Click="BtnPdfPrevPage_Click" ToolTip="{loc:Loc Preview_Pdf_PrevPage_Tooltip}">
                                         <Path Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
                                               Stretch="Uniform" Width="9" Height="9"
                                               Data="M 0,7 L 6,1 L 12,7 L 10.5,8.5 L 6,4 L 1.5,8.5 Z" />
@@ -869,7 +801,7 @@
                                     <!-- Pagina Successiva / Freccia Giu ▼ -->
                                     <Button x:Name="BtnPdfNextPage" Width="26" Height="26" Focusable="False"
                                             Style="{StaticResource AppleCircularButtonStyle}"
-                                            Click="BtnPdfNextPage_Click" ToolTip="Pagina Successiva (Page Down / Freccia Giù)">
+                                            Click="BtnPdfNextPage_Click" ToolTip="{loc:Loc Preview_Pdf_NextPage_Tooltip}">
                                         <Path Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
                                               Stretch="Uniform" Width="9" Height="9"
                                               Data="M 0,2.5 L 6,8.5 L 12,2.5 L 10.5,1 L 6,5.5 L 1.5,1 Z" />
@@ -888,7 +820,8 @@
                                       PreviewMouseWheel="PdfScrollViewer_PreviewMouseWheel"
                                       PreviewMouseDown="PdfScrollViewer_PreviewMouseDown"
                                       PreviewMouseMove="PdfScrollViewer_PreviewMouseMove"
-                                      PreviewMouseUp="PdfScrollViewer_PreviewMouseUp">
+                                      PreviewMouseUp="PdfScrollViewer_PreviewMouseUp"
+                                      LostMouseCapture="PdfScrollViewer_LostMouseCapture">
                             <ScrollViewer.Resources>
                                 <Style TargetType="{x:Type ScrollBar}" BasedOn="{StaticResource SlimDarkScrollBar}" />
                             </ScrollViewer.Resources>

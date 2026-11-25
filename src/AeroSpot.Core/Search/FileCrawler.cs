@@ -8,6 +8,12 @@ namespace AeroSpot.Core.Search
 {
     public sealed class FileCrawler
     {
+        private static readonly EnumerationOptions SafeEnumerationOptions = new()
+        {
+            IgnoreInaccessible = true,
+            ReturnSpecialDirectories = false
+        };
+
         private readonly SqliteIndexDatabase _db;
         private readonly int _batchSize;
 
@@ -121,7 +127,7 @@ namespace AeroSpot.Core.Search
                 // 2. Indicizza i file della cartella corrente
                 try
                 {
-                    var files = dirInfo.EnumerateFiles();
+                    var files = dirInfo.EnumerateFiles("*", SafeEnumerationOptions);
                     foreach (var file in files)
                     {
                         if (ct.IsCancellationRequested) break;
@@ -153,7 +159,7 @@ namespace AeroSpot.Core.Search
                 // 3. Accoda le sottodirectory permesse
                 try
                 {
-                    var subDirs = dirInfo.EnumerateDirectories();
+                    var subDirs = dirInfo.EnumerateDirectories("*", SafeEnumerationOptions);
                     foreach (var sub in subDirs)
                     {
                         if (ct.IsCancellationRequested) break;
@@ -199,6 +205,9 @@ namespace AeroSpot.Core.Search
                 case ".gif":
                 case ".ico":
                 case ".svg":
+                case ".heic":
+                case ".tiff":
+                case ".avif":
                 case ".arw":
                 case ".dng":
                 case ".cr2":
@@ -218,7 +227,6 @@ namespace AeroSpot.Core.Search
                 case ".webm":
                 case ".m4v":
                 case ".flv":
-                case ".ts":
                     return "Video";
 
                 case ".mp3":
@@ -246,12 +254,22 @@ namespace AeroSpot.Core.Search
                 case ".ini":
                 case ".pdf":
                 case ".docx":
+                case ".doc":
+                case ".odt":
+                case ".rtf":
                 case ".xlsx":
+                case ".xls":
                 case ".pptx":
+                case ".ppt":
                 case ".cs":
+                case ".ts": // TypeScript / Code
                 case ".html":
                 case ".xml":
                     return "Documento";
+
+                case ".stl":
+                case ".3mf":
+                    return "File";
 
                 default:
                     return "File";

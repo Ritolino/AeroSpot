@@ -41,10 +41,10 @@ namespace AeroSpot.Worker.Models
                         return AeroSpot.Core.Localization.LocalizationService.Get("Spotlight_Category_Settings");
                     case "calcolatrice":
                     case "calculator":
-                        return AeroSpot.Core.Localization.LocalizationService.CurrentLanguage == "it" ? "Calcolatrice" : "Calculator";
+                        return AeroSpot.Core.Localization.LocalizationService.Get("Spotlight_Category_Calculator");
                     case "conversione":
                     case "conversion":
-                        return AeroSpot.Core.Localization.LocalizationService.CurrentLanguage == "it" ? "Conversione" : "Conversion";
+                        return AeroSpot.Core.Localization.LocalizationService.Get("Spotlight_Category_Conversion");
                     case "invio per copiare":
                     case "enter to copy":
                         return Category;

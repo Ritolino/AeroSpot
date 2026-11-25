@@ -44,7 +44,7 @@ namespace AeroSpot.Worker.Services
 
             if (string.IsNullOrWhiteSpace(htmlContent))
             {
-                var emptyPara = new Paragraph(new Run("Nessun contenuto visualizzabile"))
+                var emptyPara = new Paragraph(new Run(AeroSpot.Core.Localization.LocalizationService.Get("Preview_Html_Empty")))
                 {
                     Foreground = MutedBrush,
                     FontStyle = FontStyles.Italic

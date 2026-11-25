@@ -6,7 +6,8 @@
     dotato di icona AeroSpot ufficiale e metadati assembly.
 #>
 param(
-    [string]$OutFile = ""
+    [string]$OutFile = "",
+    [string]$Version = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -22,7 +23,7 @@ if (-not (Test-Path $csc)) {
 }
 
 $sourceFile = Join-Path $repoRoot "src\AeroSpot.Uninstaller\Program.cs"
-$iconFile = Join-Path $repoRoot "design\app.ico"
+$iconFile = Join-Path $repoRoot "assets\app.ico"
 
 if ([string]::IsNullOrWhiteSpace($OutFile)) {
     $OutFile = Join-Path $repoRoot "bin\Release\publish\Uninstall.exe"
@@ -33,11 +34,34 @@ if (-not (Test-Path $outDir)) {
     New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 }
 
-Write-Host "Compilazione uninstaller nativo Uninstall.exe..." -ForegroundColor Cyan
-& $csc /target:winexe /win32icon:$iconFile /r:System.Windows.Forms.dll /out:$OutFile $sourceFile
+$compileSource = $sourceFile
+$tempSource = $null
+if (-not [string]::IsNullOrWhiteSpace($Version)) {
+    $cleanVer = ($Version -split '[-+]')[0].Trim()
+    $parts = @($cleanVer.Split('.') | Where-Object { $_ -match '^\d+$' })
+    if ($parts.Count -ge 1) {
+        while ($parts.Count -lt 4) { $parts += '0' }
+        $assemblyVer = ($parts[0..3]) -join '.'
+        $tempSource = Join-Path ([System.IO.Path]::GetTempPath()) ("AeroSpot_Uninstaller_" + [Guid]::NewGuid().ToString("N") + ".cs")
+        $content = Get-Content -Path $sourceFile -Raw -Encoding UTF8
+        $content = [Regex]::Replace($content, '\[assembly:\s*AssemblyVersion\("[^"]*"\)\]', "[assembly: AssemblyVersion(`"$assemblyVer`")]")
+        $content = [Regex]::Replace($content, '\[assembly:\s*AssemblyFileVersion\("[^"]*"\)\]', "[assembly: AssemblyFileVersion(`"$assemblyVer`")]")
+        [System.IO.File]::WriteAllText($tempSource, $content, [System.Text.UTF8Encoding]::new($false))
+        $compileSource = $tempSource
+    }
+}
 
-if ($LASTEXITCODE -ne 0) {
-    Write-Error "Compilazione dell'uninstaller Uninstall.exe fallita!"
+Write-Host "Compilazione uninstaller nativo Uninstall.exe..." -ForegroundColor Cyan
+try {
+    & $csc /target:winexe /win32icon:$iconFile /r:System.Windows.Forms.dll /out:$OutFile $compileSource
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "Compilazione dell'uninstaller Uninstall.exe fallita!"
+    }
+}
+finally {
+    if ($tempSource -and (Test-Path $tempSource)) {
+        Remove-Item -Force $tempSource -ErrorAction SilentlyContinue
+    }
 }
 
 Write-Host "Uninstaller generato con successo: $OutFile ($( [Math]::Round((Get-Item $OutFile).Length / 1KB, 1) ) KB)" -ForegroundColor Green

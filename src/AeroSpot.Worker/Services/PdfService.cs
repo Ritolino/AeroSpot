@@ -1,10 +1,12 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using AeroSpot.Core.Logging;
 using Docnet.Core;
 using Docnet.Core.Models;
+using Docnet.Core.Readers;
 
 namespace AeroSpot.Worker.Services
 {
@@ -42,6 +44,7 @@ namespace AeroSpot.Worker.Services
     {
         private static readonly object _pdfiumGlobalLock = new();
         private readonly object _lock = new();
+        private readonly Dictionary<int, IDocReader> _readers = new();
         private bool _disposed;
 
         public string FilePath { get; }
@@ -51,7 +54,7 @@ namespace AeroSpot.Worker.Services
         public double RenderScale { get; set; }
         public int CurrentPageIndex { get; private set; }
 
-        private PdfSession(string filePath, int pageCount, double originalWidth, double originalHeight, double renderScale)
+        private PdfSession(string filePath, int pageCount, double originalWidth, double originalHeight, double renderScale, IDocReader initialReader)
         {
             FilePath = filePath;
             PageCount = pageCount;
@@ -59,33 +62,57 @@ namespace AeroSpot.Worker.Services
             OriginalHeight = originalHeight;
             RenderScale = renderScale;
             CurrentPageIndex = 0;
+            _readers[1000] = initialReader;
         }
 
         internal static PdfSession? Create(string filePath, double renderScale)
         {
             lock (_pdfiumGlobalLock)
             {
-                // Apriamo una prima istanza a scala 1.0 per estrarre le proporzioni vettoriali originali (punti tipografici / pt)
-                using var initReader = DocLib.Instance.GetDocReader(filePath, new PageDimensions(1.0));
-                int pageCount = initReader.GetPageCount();
-                if (pageCount <= 0) return null;
-
-                double origW = 595;
-                double origH = 842;
-
+                // Apriamo una prima istanza a scala 1.0 per estrarre le proporzioni vettoriali originali e la teniamo in cache
+                var initReader = DocLib.Instance.GetDocReader(filePath, new PageDimensions(1.0));
                 try
                 {
-                    using var firstPage = initReader.GetPageReader(0);
-                    origW = firstPage.GetPageWidth();
-                    origH = firstPage.GetPageHeight();
+                    int pageCount = initReader.GetPageCount();
+                    if (pageCount <= 0)
+                    {
+                        initReader.Dispose();
+                        return null;
+                    }
+
+                    double origW = 595;
+                    double origH = 842;
+
+                    try
+                    {
+                        using var firstPage = initReader.GetPageReader(0);
+                        origW = firstPage.GetPageWidth();
+                        origH = firstPage.GetPageHeight();
+                    }
+                    catch
+                    {
+                        // Fallback a proporzione standard A4 se il lettore non legge i bounds
+                    }
+
+                    return new PdfSession(filePath, pageCount, origW, origH, renderScale, initReader);
                 }
                 catch
                 {
-                    // Fallback a proporzione standard A4 se il lettore non legge i bounds
+                    initReader.Dispose();
+                    throw;
                 }
-
-                return new PdfSession(filePath, pageCount, origW, origH, renderScale);
             }
+        }
+
+        private IDocReader GetOrCreateReader(double scale)
+        {
+            int key = (int)Math.Round(scale * 1000.0);
+            if (!_readers.TryGetValue(key, out var reader))
+            {
+                reader = DocLib.Instance.GetDocReader(FilePath, new PageDimensions(scale));
+                _readers[key] = reader;
+            }
+            return reader;
         }
 
         /// <summary>
@@ -108,12 +135,12 @@ namespace AeroSpot.Worker.Services
                     CurrentPageIndex = pageIndex;
 
                     double scale = customScale ?? RenderScale;
-                    if (scale < 0.5) scale = 0.5;
+                    if (scale < 0.25) scale = 0.25;
                     if (scale > 4.0) scale = 4.0;
 
                     try
                     {
-                        using var docReader = DocLib.Instance.GetDocReader(FilePath, new PageDimensions(scale));
+                        var docReader = GetOrCreateReader(scale);
                         using var pageReader = docReader.GetPageReader(pageIndex);
 
                         int width = pageReader.GetPageWidth();
@@ -168,7 +195,7 @@ namespace AeroSpot.Worker.Services
                     if (_disposed || string.IsNullOrEmpty(FilePath)) return null;
                     try
                     {
-                        using var docReader = DocLib.Instance.GetDocReader(FilePath, new PageDimensions(1.0));
+                        var docReader = GetOrCreateReader(1.0);
                         using var pageReader = docReader.GetPageReader(pageIndex);
                         return pageReader.GetText();
                     }
@@ -182,10 +209,18 @@ namespace AeroSpot.Worker.Services
 
         public void Dispose()
         {
-            lock (_lock)
+            lock (_pdfiumGlobalLock)
             {
-                if (_disposed) return;
-                _disposed = true;
+                lock (_lock)
+                {
+                    if (_disposed) return;
+                    _disposed = true;
+                    foreach (var reader in _readers.Values)
+                    {
+                        try { reader.Dispose(); } catch { }
+                    }
+                    _readers.Clear();
+                }
             }
         }
     }

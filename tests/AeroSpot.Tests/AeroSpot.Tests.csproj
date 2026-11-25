@@ -11,8 +11,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="FFMpegCore" Version="5.5.0" />
-    <PackageReference Include="Docnet.Core" Version="2.6.0" />
     <PackageReference Include="MSTest" Version="4.0.2" />
   </ItemGroup>
 
@@ -24,6 +22,10 @@
     <ProjectReference Include="..\..\src\AeroSpot.Core\AeroSpot.Core.csproj" />
     <ProjectReference Include="..\..\src\AeroSpot.Host\AeroSpot.Host.csproj" />
     <ProjectReference Include="..\..\src\AeroSpot.Worker\AeroSpot.Worker.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\src\AeroSpot.Tools\FileBatchCollector.cs" Link="Tools\FileBatchCollector.cs" />
   </ItemGroup>
 
 </Project>

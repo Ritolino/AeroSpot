@@ -1,6 +1,9 @@
 using System;
 using System.Runtime.InteropServices;
+using System.Threading;
+using System.Threading.Tasks;
 using AeroSpot.Core.Config;
+using AeroSpot.Core.Localization;
 using AeroSpot.Core.Logging;
 using AeroSpot.Core.Native;
 using AeroSpot.Host.Services;
@@ -14,18 +17,21 @@ namespace AeroSpot.Host.Native
         private const int HOTKEY_ID_FALLBACK = 9002;
         private static readonly uint WM_TASKBARCREATED = Win32.RegisterWindowMessage("TaskbarCreated");
 
+        private readonly object _configLock = new object();
+        private readonly object _trackingLock = new object();
         private AppConfig _config;
         private readonly WorkerManager _workerManager;
         private readonly Win32.WndProc _wndProcDelegate;
 
         private IntPtr _hWnd;
+        private uint _uiThreadId;
         private TrayManager? _trayManager;
         private KeyboardHookManager? _hookManager;
         private int _registeredHotkeyId;
-        private System.Threading.CancellationTokenSource? _dynamicTrackingCts;
-        private string? _lastActivePreviewPath;
+        private string? _activeFallbackHotkeyLabel;
+        private CancellationTokenSource? _dynamicTrackingCts;
         private volatile bool _isPreviewActive;
-        private bool _isDisposed;
+        private volatile bool _isDisposed;
 
         public HostWindow(AppConfig config, WorkerManager workerManager)
         {
@@ -70,15 +76,22 @@ namespace AeroSpot.Host.Native
                 return false;
             }
 
+            _uiThreadId = Win32.GetCurrentThreadId();
             AppLogger.Info($"Finestra Win32 Host creata: HWND=0x{_hWnd:X}");
 
             // Inizializza Tray
-            _trayManager = new TrayManager(_hWnd);
+            AppConfig initialConfig;
+            lock (_configLock)
+            {
+                initialConfig = _config;
+            }
+            _trayManager = new TrayManager(_hWnd, config: initialConfig);
             _trayManager.GetWorkerStatusFunc = () => _workerManager.GetStatusString();
+            _trayManager.GetHotkeyLabelFunc = GetActiveHotkeyLabel;
             _trayManager.ShowLauncherRequested += OnShowLauncherRequested;
             _trayManager.SettingsRequested += OnSettingsRequested;
             _trayManager.ExitRequested += OnExitRequested;
-            _trayManager.AddTrayIcon(AeroSpot.Core.Localization.LocalizationService.Get("Tray_Tooltip"));
+            _trayManager.AddTrayIcon(LocalizationService.Get("Tray_Tooltip"));
 
             _workerManager.ConfigReloadRequested += OnConfigReloadRequested;
             _workerManager.ShutdownHostRequested += OnShutdownHostRequested;
@@ -98,12 +111,13 @@ namespace AeroSpot.Host.Native
 
             // Inizializza hook globale per QuickLook (intercettazione Spazio/hotkey in Explorer e Desktop)
             _hookManager = new KeyboardHookManager(
-                _config.QuickLookKey, 
-                _config.QuickLookModifiers, 
-                OnQuickLookPreviewRequested, 
-                OnQuickLookCloseRequested, 
+                initialConfig.QuickLookKey,
+                initialConfig.QuickLookModifiers,
+                OnQuickLookPreviewRequested,
+                OnQuickLookCloseRequested,
                 () => _isPreviewActive,
-                OnCloseAllRequested);
+                OnCloseAllRequested,
+                () => _workerManager.WorkerProcessId);
             if (!_hookManager.Install())
             {
                 AppLogger.Warn("Installazione dell'hook per QuickLook non riuscita. L'anteprima da Explorer potrebbe non funzionare.");
@@ -113,6 +127,23 @@ namespace AeroSpot.Host.Native
             ScheduleAutomaticUpdateCheck();
 
             return true;
+        }
+
+        private string GetActiveHotkeyLabel()
+        {
+            if (!string.IsNullOrWhiteSpace(_activeFallbackHotkeyLabel))
+            {
+                return _activeFallbackHotkeyLabel;
+            }
+
+            string? configured;
+            lock (_configLock)
+            {
+                configured = _config.SpotlightHotkeyText;
+            }
+            return !string.IsNullOrWhiteSpace(configured)
+                ? configured
+                : $"Alt + {LocalizationService.Get("Settings_Key_Space")}";
         }
 
         private void OnQuickLookPreviewRequested(string filePath)
@@ -155,26 +186,37 @@ namespace AeroSpot.Host.Native
 
         private void StartDynamicTracking(string initialPath)
         {
-            StopDynamicTracking();
+            CancellationToken token;
+            lock (_trackingLock)
+            {
+                if (_isDisposed) return;
 
-            _lastActivePreviewPath = initialPath;
+                if (_dynamicTrackingCts != null)
+                {
+                    try { _dynamicTrackingCts.Cancel(); } catch { }
+                    try { _dynamicTrackingCts.Dispose(); } catch { }
+                    _dynamicTrackingCts = null;
+                }
+
+                _dynamicTrackingCts = new CancellationTokenSource();
+                token = _dynamicTrackingCts.Token;
+            }
+
             string trackedPath = initialPath;
-            _dynamicTrackingCts = new System.Threading.CancellationTokenSource();
-            var token = _dynamicTrackingCts.Token;
 
-            var thread = new System.Threading.Thread(() =>
+            var thread = new Thread(() =>
             {
                 AppLogger.Info($"Avvio monitoraggio dinamico selezione Explorer/Desktop per QuickLook. File iniziale: {initialPath}");
                 while (!token.IsCancellationRequested)
                 {
                     try
                     {
-                        System.Threading.Thread.Sleep(120);
+                        Thread.Sleep(120);
                         if (token.IsCancellationRequested || !_isPreviewActive) break;
 
                         IntPtr fg = Win32.GetForegroundWindow();
-                        if ((AeroSpot.Core.Shell.ExplorerFocusResolver.IsExplorerOrDesktop(fg) || 
-                             AeroSpot.Core.Shell.ExplorerFocusResolver.IsFileDialog(fg)) && 
+                        if ((AeroSpot.Core.Shell.ExplorerFocusResolver.IsExplorerOrDesktop(fg) ||
+                             AeroSpot.Core.Shell.ExplorerFocusResolver.IsFileDialog(fg)) &&
                             !AeroSpot.Core.Shell.ExplorerFocusResolver.IsUserTypingOrRenaming(fg))
                         {
                             if (AeroSpot.Core.Shell.ExplorerFocusResolver.TryGetFocusedPath(fg, out string? newPath) && !string.IsNullOrEmpty(newPath))
@@ -184,7 +226,6 @@ namespace AeroSpot.Host.Native
                                 if (!string.Equals(newPath, trackedPath, StringComparison.OrdinalIgnoreCase))
                                 {
                                     trackedPath = newPath;
-                                    _lastActivePreviewPath = newPath;
                                     AppLogger.Info($"Selezione dinamica cambiata in Explorer: {newPath}");
                                     Win32.AllowSetForegroundWindow(Win32.ASFW_ANY);
                                     _ = _workerManager.ShowPreviewAsync(newPath);
@@ -203,22 +244,20 @@ namespace AeroSpot.Host.Native
                 IsBackground = true,
                 Name = "DynamicExplorerSelectionTracker"
             };
-            thread.SetApartmentState(System.Threading.ApartmentState.STA);
+            thread.SetApartmentState(ApartmentState.STA);
             thread.Start();
         }
 
         private void StopDynamicTracking()
         {
-            if (_dynamicTrackingCts != null)
+            lock (_trackingLock)
             {
-                try
+                if (_dynamicTrackingCts != null)
                 {
-                    _dynamicTrackingCts.Cancel();
-                    _dynamicTrackingCts.Dispose();
+                    try { _dynamicTrackingCts.Cancel(); } catch { }
+                    try { _dynamicTrackingCts.Dispose(); } catch { }
+                    _dynamicTrackingCts = null;
                 }
-                catch { }
-                _dynamicTrackingCts = null;
-                _lastActivePreviewPath = null;
             }
         }
 
@@ -230,11 +269,26 @@ namespace AeroSpot.Host.Native
                 _registeredHotkeyId = 0;
             }
 
+            uint hotkeyModifiers;
+            uint hotkeyKey;
+            uint fallbackModifiers;
+            uint fallbackKey;
+            uint emergencyKey;
+            lock (_configLock)
+            {
+                hotkeyModifiers = _config.HotkeyModifiers;
+                hotkeyKey = _config.HotkeyKey;
+                fallbackModifiers = _config.FallbackHotkeyModifiers;
+                fallbackKey = _config.FallbackHotkeyKey;
+                emergencyKey = _config.EmergencyHotkeyKey;
+            }
+
             // 1. Prova combinazione primaria (es. Alt + Spazio o Win + Spazio)
-            bool ok = Win32.RegisterHotKey(_hWnd, HOTKEY_ID_PRIMARY, _config.HotkeyModifiers, _config.HotkeyKey);
+            bool ok = Win32.RegisterHotKey(_hWnd, HOTKEY_ID_PRIMARY, hotkeyModifiers, hotkeyKey);
             if (ok)
             {
                 _registeredHotkeyId = HOTKEY_ID_PRIMARY;
+                _activeFallbackHotkeyLabel = null;
                 AppLogger.Info("Hotkey primaria registrata con successo.");
                 return;
             }
@@ -243,31 +297,34 @@ namespace AeroSpot.Host.Native
             AppLogger.Warn($"Scorciatoia primaria non disponibile (LastError: {err}). Tentativo con fallback (Ctrl + Spazio)...");
 
             // 2. Prova combinazione secondaria (Ctrl + Spazio)
-            bool fallbackOk = Win32.RegisterHotKey(_hWnd, HOTKEY_ID_FALLBACK, _config.FallbackHotkeyModifiers, _config.FallbackHotkeyKey);
+            bool fallbackOk = Win32.RegisterHotKey(_hWnd, HOTKEY_ID_FALLBACK, fallbackModifiers, fallbackKey);
             if (fallbackOk)
             {
                 _registeredHotkeyId = HOTKEY_ID_FALLBACK;
+                _activeFallbackHotkeyLabel = $"Ctrl + {LocalizationService.Get("Settings_Key_Space")}";
                 AppLogger.Info("Hotkey di fallback (Ctrl + Spazio) registrata con successo.");
                 _trayManager?.ShowBalloonNotification(
-                    AeroSpot.Core.Localization.LocalizationService.Get("Tray_HotkeyActive"),
-                    "Alt/Win+Spazio è occupata dal sistema o da Listary. Scorciatoia attiva: Ctrl + Spazio.",
+                    LocalizationService.Get("Tray_HotkeyActive"),
+                    LocalizationService.Get("Host_Hotkey_Fallback_CtrlSpace"),
                     Win32.NIIF_INFO);
                 return;
             }
 
             // 3. Prova combinazione di emergenza (Alt + F12)
-            bool emergencyOk = Win32.RegisterHotKey(_hWnd, HOTKEY_ID_FALLBACK, Win32.MOD_ALT | Win32.MOD_NOREPEAT, _config.EmergencyHotkeyKey);
+            bool emergencyOk = Win32.RegisterHotKey(_hWnd, HOTKEY_ID_FALLBACK, Win32.MOD_ALT | Win32.MOD_NOREPEAT, emergencyKey);
             if (emergencyOk)
             {
                 _registeredHotkeyId = HOTKEY_ID_FALLBACK;
+                _activeFallbackHotkeyLabel = "Alt + F12";
                 AppLogger.Info("Hotkey di emergenza (Alt + F12) registrata con successo.");
                 _trayManager?.ShowBalloonNotification(
-                    AeroSpot.Core.Localization.LocalizationService.Get("Tray_EmergencyHotkey"),
-                    "Scorciatoia attiva: Alt + F12.",
+                    LocalizationService.Get("Tray_EmergencyHotkey"),
+                    LocalizationService.Get("Host_Hotkey_Fallback_AltF12"),
                     Win32.NIIF_WARNING);
             }
             else
             {
+                _activeFallbackHotkeyLabel = null;
                 AppLogger.Error($"Nessuna hotkey è stata registrata con successo (LastError: {Marshal.GetLastWin32Error()}).");
             }
         }
@@ -319,23 +376,34 @@ namespace AeroSpot.Host.Native
                 try
                 {
                     string currentVer = AeroSpot.Core.Services.UpdateService.CurrentVersion;
-                    if (string.IsNullOrWhiteSpace(_config.LastKnownVersion))
-                    {
-                        _config.LastKnownVersion = currentVer;
-                        _config.Save();
-                    }
-                    else if (AeroSpot.Core.Services.UpdateService.IsNewerVersion(currentVer, _config.LastKnownVersion))
-                    {
-                        string previousVer = _config.LastKnownVersion;
-                        _config.LastKnownVersion = currentVer;
-                        _config.Save();
+                    string? upgradedFrom = null;
+                    bool shouldCheck;
 
-                        AppLogger.Info($"Rilevato aggiornamento completato: v{previousVer} -> v{currentVer}. Invio pillola di conferma...");
+                    lock (_configLock)
+                    {
+                        if (string.IsNullOrWhiteSpace(_config.LastKnownVersion))
+                        {
+                            _config.LastKnownVersion = currentVer;
+                            _config.Save();
+                        }
+                        else if (AeroSpot.Core.Services.UpdateService.IsNewerVersion(currentVer, _config.LastKnownVersion))
+                        {
+                            upgradedFrom = _config.LastKnownVersion;
+                            _config.LastKnownVersion = currentVer;
+                            _config.Save();
+                        }
+
+                        shouldCheck = AeroSpot.Core.Services.UpdateService.ShouldCheckForUpdates(_config);
+                    }
+
+                    if (upgradedFrom != null)
+                    {
+                        AppLogger.Info($"Rilevato aggiornamento completato: v{upgradedFrom} -> v{currentVer}. Invio pillola di conferma...");
                         await Task.Delay(3000).ConfigureAwait(false);
                         await _workerManager.SendUpdateNotificationAsync($"UPDATED|{currentVer}").ConfigureAwait(false);
                     }
 
-                    if (!AeroSpot.Core.Services.UpdateService.ShouldCheckForUpdates(_config))
+                    if (!shouldCheck)
                     {
                         return;
                     }
@@ -350,15 +418,18 @@ namespace AeroSpot.Host.Native
                         var result = await AeroSpot.Core.Services.UpdateService.CheckForUpdatesAsync(ct: CancellationToken.None).ConfigureAwait(false);
                         if (result.IsSuccess)
                         {
-                            _config.LastUpdateCheckUtc = DateTime.UtcNow;
-                            _config.Save();
+                            lock (_configLock)
+                            {
+                                _config.LastUpdateCheckUtc = DateTime.UtcNow;
+                                _config.Save();
+                            }
 
                             if (result.HasUpdate)
                             {
                                 AppLogger.Info($"UpdateService: Trovato aggiornamento automatico v{result.LatestVersion}!");
                                 _trayManager?.ShowBalloonNotification(
-                                    AeroSpot.Core.Localization.LocalizationService.Get("Update_Notification_Title"),
-                                    AeroSpot.Core.Localization.LocalizationService.Get("Update_Notification_Available", result.LatestVersion),
+                                    LocalizationService.Get("Update_Notification_Title"),
+                                    LocalizationService.Get("Update_Notification_Available", result.LatestVersion),
                                     Win32.NIIF_INFO);
 
                                 string payload = string.Join("|",
@@ -396,23 +467,29 @@ namespace AeroSpot.Host.Native
         private void ExecuteConfigReload()
         {
             AppLogger.Info("Ricarica impostazioni Host eseguita sul thread Win32...");
-            _config = AppConfig.Load();
-            _workerManager.UpdateConfig(_config);
-            AeroSpot.Core.Localization.LocalizationService.Initialize(_config.Language);
+            var reloaded = AppConfig.Load();
+            lock (_configLock)
+            {
+                _config = reloaded;
+            }
+            _workerManager.UpdateConfig(reloaded);
+            _trayManager?.UpdateConfig(reloaded);
+            LocalizationService.Initialize(reloaded.Language);
             RegisterHotkeys();
 
             // Riconfigura hook se il tasto o i modificatori di QuickLook sono cambiati
             _hookManager?.Dispose();
             _hookManager = new KeyboardHookManager(
-                _config.QuickLookKey,
-                _config.QuickLookModifiers,
+                reloaded.QuickLookKey,
+                reloaded.QuickLookModifiers,
                 OnQuickLookPreviewRequested,
                 OnQuickLookCloseRequested,
                 () => _isPreviewActive,
-                OnCloseAllRequested);
+                OnCloseAllRequested,
+                () => _workerManager.WorkerProcessId);
             _hookManager.Install();
 
-            if (_config.KeepWorkerWarm)
+            if (reloaded.KeepWorkerWarm)
             {
                 _ = Task.Run(() => _workerManager.EnsureWorkerStartedAsync());
             }
@@ -440,7 +517,7 @@ namespace AeroSpot.Host.Native
             if (msg == WM_TASKBARCREATED && WM_TASKBARCREATED != 0)
             {
                 AppLogger.Info("Messaggio TaskbarCreated ricevuto: ripristino icona nella System Tray...");
-                _trayManager?.AddTrayIcon(AeroSpot.Core.Localization.LocalizationService.Get("Tray_Tooltip"));
+                _trayManager?.AddTrayIcon(LocalizationService.Get("Tray_Tooltip"), forceReadd: true);
                 return IntPtr.Zero;
             }
 
@@ -499,6 +576,8 @@ namespace AeroSpot.Host.Native
                     _hookManager?.Dispose();
                     _hookManager = null;
                     _trayManager?.Dispose();
+                    _trayManager = null;
+                    _hWnd = IntPtr.Zero;
                     Win32.PostQuitMessage(0);
                     return IntPtr.Zero;
             }
@@ -513,9 +592,19 @@ namespace AeroSpot.Host.Native
             StopDynamicTracking();
             _hookManager?.Dispose();
             _hookManager = null;
+            _trayManager?.Dispose();
+            _trayManager = null;
             if (_hWnd != IntPtr.Zero)
             {
-                Win32.DestroyWindow(_hWnd);
+                if (Win32.GetCurrentThreadId() == _uiThreadId)
+                {
+                    if (_registeredHotkeyId != 0)
+                    {
+                        Win32.UnregisterHotKey(_hWnd, _registeredHotkeyId);
+                        _registeredHotkeyId = 0;
+                    }
+                    Win32.DestroyWindow(_hWnd);
+                }
                 _hWnd = IntPtr.Zero;
             }
         }

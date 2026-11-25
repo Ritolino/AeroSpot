@@ -8,6 +8,11 @@ namespace AeroSpot.Core.Search
     {
         public static int CalculateScore(IndexedItem item, string query, List<string>? categoryPriority = null, bool prioritizeExactMatches = false)
         {
+            return CalculateScore(item, query, categoryPriority, prioritizeExactMatches, DateTime.UtcNow.Ticks);
+        }
+
+        private static int CalculateScore(IndexedItem item, string query, List<string>? categoryPriority, bool prioritizeExactMatches, long nowTicks)
+        {
             if (string.IsNullOrWhiteSpace(query))
             {
                 return item.IsApp ? 100 : 10;
@@ -73,22 +78,18 @@ namespace AeroSpot.Core.Search
             int lengthPenalty = Math.Min(lengthDiff, 50);
 
             int recencyBonus = 0;
-            if (item.LastModifiedUtcTicks > 0)
+            if (item.LastModifiedUtcTicks > 0 && item.LastModifiedUtcTicks <= nowTicks)
             {
-                long nowTicks = DateTime.UtcNow.Ticks;
-                if (item.LastModifiedUtcTicks <= nowTicks)
+                double daysAgo = (nowTicks - item.LastModifiedUtcTicks) / (double)TimeSpan.TicksPerDay;
+                recencyBonus = daysAgo switch
                 {
-                    double daysAgo = (nowTicks - item.LastModifiedUtcTicks) / (double)TimeSpan.TicksPerDay;
-                    recencyBonus = daysAgo switch
-                    {
-                        <= 1.0 => 40,
-                        <= 7.0 => 30,
-                        <= 30.0 => 20,
-                        <= 180.0 => 10,
-                        <= 365.0 => 5,
-                        _ => 0
-                    };
-                }
+                    <= 1.0 => 40,
+                    <= 7.0 => 30,
+                    <= 30.0 => 20,
+                    <= 180.0 => 10,
+                    <= 365.0 => 5,
+                    _ => 0
+                };
             }
 
             if (isTitleMatch)
@@ -209,10 +210,11 @@ namespace AeroSpot.Core.Search
 
         public static List<IndexedItem> Rank(IEnumerable<IndexedItem> candidates, string query, int maxResults = 10, List<string>? categoryPriority = null, bool prioritizeExactMatches = false)
         {
+            long nowTicks = DateTime.UtcNow.Ticks;
             var scored = new List<IndexedItem>();
             foreach (var item in candidates)
             {
-                item.SearchScore = CalculateScore(item, query, categoryPriority, prioritizeExactMatches);
+                item.SearchScore = CalculateScore(item, query, categoryPriority, prioritizeExactMatches, nowTicks);
                 if (item.SearchScore > 0 || string.IsNullOrWhiteSpace(query))
                 {
                     scored.Add(item);

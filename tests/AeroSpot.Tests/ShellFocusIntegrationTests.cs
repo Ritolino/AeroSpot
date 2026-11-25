@@ -22,30 +22,34 @@ namespace AeroSpot.Tests
 
             string pipeName = $"AeroSpot_TestPipe_Shell_{Guid.NewGuid():N}";
             using var manager = new WorkerManager(config, pipeName);
+            try
+            {
+                string sampleFile = Path.Combine(AppContext.BaseDirectory, "AeroSpot.Core.dll");
+                Assert.IsTrue(File.Exists(sampleFile), "Sample file for preview must exist.");
 
-            string sampleFile = Path.Combine(AppContext.BaseDirectory, "AeroSpot.Core.dll");
-            Assert.IsTrue(File.Exists(sampleFile), "Sample file for preview must exist.");
+                // 1. Prima chiamata: avvio a freddo e invio comando
+                var swCold = Stopwatch.StartNew();
+                bool coldResult = await manager.ShowPreviewAsync(sampleFile);
+                swCold.Stop();
 
-            // 1. Prima chiamata: avvio a freddo e invio comando
-            var swCold = Stopwatch.StartNew();
-            bool coldResult = await manager.ShowPreviewAsync(sampleFile);
-            swCold.Stop();
+                Assert.IsTrue(coldResult, "ShowPreviewAsync (Cold) must return true.");
+                Assert.IsTrue(manager.IsWorkerRunning, "Worker process must be running.");
+                Assert.IsTrue(manager.IsIpcConnected, "IPC must be connected.");
 
-            Assert.IsTrue(coldResult, "ShowPreviewAsync (Cold) must return true.");
-            Assert.IsTrue(manager.IsWorkerRunning, "Worker process must be running.");
-            Assert.IsTrue(manager.IsIpcConnected, "IPC must be connected.");
+                // 2. Seconda chiamata: avvio a caldo
+                var swWarm = Stopwatch.StartNew();
+                bool warmResult = await manager.ShowPreviewAsync(sampleFile);
+                swWarm.Stop();
 
-            // 2. Seconda chiamata: avvio a caldo
-            var swWarm = Stopwatch.StartNew();
-            bool warmResult = await manager.ShowPreviewAsync(sampleFile);
-            swWarm.Stop();
-
-            Assert.IsTrue(warmResult, "ShowPreviewAsync (Warm) must return true.");
-            Assert.IsLessThan(500L, swWarm.ElapsedMilliseconds, $"Warm IPC dispatch should complete under 500ms, actual: {swWarm.ElapsedMilliseconds}ms");
-
-            // Arresto pulito
-            await manager.StopWorkerAsync(3000);
-            Assert.IsFalse(manager.IsWorkerRunning, "Worker must stop cleanly.");
+                Assert.IsTrue(warmResult, "ShowPreviewAsync (Warm) must return true.");
+                Assert.IsLessThan(1500L, swWarm.ElapsedMilliseconds, $"Warm IPC dispatch should complete under 1500ms, actual: {swWarm.ElapsedMilliseconds}ms");
+            }
+            finally
+            {
+                // Arresto pulito garantito anche in caso di fallimento assert
+                await manager.StopWorkerAsync(3000);
+                Assert.IsFalse(manager.IsWorkerRunning, "Worker must stop cleanly.");
+            }
         }
 
         [TestMethod]

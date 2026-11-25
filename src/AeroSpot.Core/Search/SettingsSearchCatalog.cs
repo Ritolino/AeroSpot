@@ -296,17 +296,18 @@ namespace AeroSpot.Core.Search
         {
             if (string.IsNullOrWhiteSpace(query)) return new List<SettingsEntry>();
 
-            string cleanQuery = query.Trim().ToLowerInvariant();
+            string cleanQuery = query.Trim();
             string[] queryTerms = cleanQuery.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
             if (queryTerms.Length == 0) return new List<SettingsEntry>();
 
             var scored = new List<(SettingsEntry Entry, int Score)>();
+            string otherLang = string.Equals(currentLang, "it", StringComparison.OrdinalIgnoreCase) ? "en" : "it";
 
             foreach (var entry in _catalog)
             {
-                string title = entry.GetTitle(currentLang).ToLowerInvariant();
-                string otherTitle = entry.GetTitle(currentLang == "it" ? "en" : "it").ToLowerInvariant();
-                string desc = entry.GetDescription(currentLang).ToLowerInvariant();
+                string title = entry.GetTitle(currentLang);
+                string otherTitle = entry.GetTitle(otherLang);
+                string desc = entry.GetDescription(currentLang);
 
                 // Verifica che tutti i termini corrispondano da qualche parte
                 bool allTermsMatch = queryTerms.All(term =>

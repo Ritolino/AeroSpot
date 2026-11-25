@@ -15,11 +15,17 @@ namespace AeroSpot.Worker
         private string? _targetFilePath;
         private Action? _customAction;
         private readonly IntPtr _targetMonitor;
+        private volatile bool _isClosed;
 
         public FloatingNotificationWindow()
         {
             InitializeComponent();
+            TxtTitle.Text = AeroSpot.Core.Localization.LocalizationService.Get("Notification_Processing");
+            TxtDetail.Text = AeroSpot.Core.Localization.LocalizationService.Get("Notification_Initializing");
             BtnShowInFolder.Content = AeroSpot.Core.Localization.LocalizationService.Get("Notification_OpenFolder");
+
+            _autoCloseTimer = new DispatcherTimer();
+            _autoCloseTimer.Tick += AutoCloseTimer_Tick;
 
             // Individua e blocca il monitor su cui si trova attualmente il puntatore
             Win32.GetCursorPos(out Win32.POINT cursorPt);
@@ -27,6 +33,22 @@ namespace AeroSpot.Worker
 
             Loaded += OnLoaded;
             SizeChanged += (_, _) => PositionInBottomRight();
+        }
+
+        private void AutoCloseTimer_Tick(object? sender, EventArgs e)
+        {
+            _autoCloseTimer?.Stop();
+            if (!_isClosed)
+            {
+                Close();
+            }
+        }
+
+        protected override void OnClosed(EventArgs e)
+        {
+            _isClosed = true;
+            _autoCloseTimer?.Stop();
+            base.OnClosed(e);
         }
 
         private void OnLoaded(object sender, RoutedEventArgs e)
@@ -109,9 +131,26 @@ namespace AeroSpot.Worker
             Top = Math.Max(workArea.Top + 16, workArea.Bottom - fh - 16);
         }
 
+        private void RunOnUi(Action action)
+        {
+            if (_isClosed) return;
+
+            if (Dispatcher.CheckAccess())
+            {
+                if (!_isClosed) action();
+                return;
+            }
+
+            _ = Dispatcher.InvokeAsync(() =>
+            {
+                if (_isClosed) return;
+                action();
+            });
+        }
+
         public void UpdateProgress(double percentage, string detailText, string? title = null, string? icon = null)
         {
-            Dispatcher.Invoke(() =>
+            RunOnUi(() =>
             {
                 _autoCloseTimer?.Stop();
                 if (title != null) TxtTitle.Text = title;
@@ -133,7 +172,7 @@ namespace AeroSpot.Worker
 
         public void SetAction(string title, string detailText, string actionButtonText, Action onActionClicked, string icon = "★", int autoCloseMs = 15000)
         {
-            Dispatcher.Invoke(() =>
+            RunOnUi(() =>
             {
                 _targetFilePath = null;
                 _customAction = onActionClicked;
@@ -155,7 +194,7 @@ namespace AeroSpot.Worker
 
         public void SetSuccess(string title, string detailText, string? resultFilePath = null, int autoCloseMs = 4000)
         {
-            Dispatcher.Invoke(() =>
+            RunOnUi(() =>
             {
                 _customAction = null;
                 TxtIcon.Text = "✓";
@@ -185,7 +224,7 @@ namespace AeroSpot.Worker
 
         public void SetError(string title, string errorMessage)
         {
-            Dispatcher.Invoke(() =>
+            RunOnUi(() =>
             {
                 _customAction = null;
                 TxtIcon.Text = "⚠️";
@@ -205,13 +244,9 @@ namespace AeroSpot.Worker
 
         private void ScheduleAutoClose(int milliseconds)
         {
-            _autoCloseTimer?.Stop();
-            _autoCloseTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(milliseconds) };
-            _autoCloseTimer.Tick += (s, ev) =>
-            {
-                _autoCloseTimer.Stop();
-                Close();
-            };
+            if (_isClosed || _autoCloseTimer == null) return;
+            _autoCloseTimer.Stop();
+            _autoCloseTimer.Interval = TimeSpan.FromMilliseconds(milliseconds);
             _autoCloseTimer.Start();
         }
 

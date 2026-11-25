@@ -33,10 +33,19 @@ namespace AeroSpot.Core.Services
 
     public static class UpdateService
     {
+        private static readonly HttpClient SharedHttpClient = CreateDefaultHttpClient();
+
+        private static HttpClient CreateDefaultHttpClient()
+        {
+            var client = new HttpClient();
+            client.DefaultRequestHeaders.UserAgent.ParseAdd($"AeroSpot-App/{CurrentVersion}");
+            return client;
+        }
+
         public static string CurrentVersion =>
             typeof(UpdateService).Assembly.GetName().Version is Version v
                 ? $"{v.Major}.{v.Minor}.{v.Build}"
-                : "1.6.0";
+                : "1.6.1";
 
         public const string GitHubRepo = "Ritolino/AeroSpot";
 
@@ -119,12 +128,11 @@ namespace AeroSpot.Core.Services
                 CurrentVersion = currentVersion
             };
 
-            bool ownClient = httpClient == null;
-            var client = httpClient ?? new HttpClient();
+            var client = httpClient ?? SharedHttpClient;
 
             try
             {
-                if (client.DefaultRequestHeaders.UserAgent.Count == 0)
+                if (httpClient != null && client.DefaultRequestHeaders.UserAgent.Count == 0)
                 {
                     client.DefaultRequestHeaders.UserAgent.ParseAdd($"AeroSpot-App/{currentVersion}");
                 }
@@ -239,10 +247,6 @@ namespace AeroSpot.Core.Services
                 AppLogger.Error("UpdateService: Errore durante la verifica aggiornamenti", ex);
                 return result;
             }
-            finally
-            {
-                if (ownClient) client.Dispose();
-            }
         }
 
         /// <summary>
@@ -258,61 +262,57 @@ namespace AeroSpot.Core.Services
             if (string.IsNullOrWhiteSpace(downloadUrl))
                 throw new ArgumentNullException(nameof(downloadUrl));
 
+            string safeFileName = Path.GetFileName(fileName);
+            if (string.IsNullOrWhiteSpace(safeFileName))
+                throw new ArgumentException("Nome file di aggiornamento non valido.", nameof(fileName));
+
             string tempDir = Path.Combine(Path.GetTempPath(), "AeroSpot_Updates");
             if (!Directory.Exists(tempDir))
             {
                 Directory.CreateDirectory(tempDir);
             }
 
-            string targetFilePath = Path.Combine(tempDir, fileName);
+            string targetFilePath = Path.Combine(tempDir, safeFileName);
             if (File.Exists(targetFilePath))
             {
                 try { File.Delete(targetFilePath); } catch { }
             }
 
-            bool ownClient = httpClient == null;
-            var client = httpClient ?? new HttpClient();
+            var client = httpClient ?? SharedHttpClient;
 
-            try
+            if (httpClient != null && client.DefaultRequestHeaders.UserAgent.Count == 0)
             {
-                if (client.DefaultRequestHeaders.UserAgent.Count == 0)
-                {
-                    client.DefaultRequestHeaders.UserAgent.ParseAdd($"AeroSpot-Updater/{CurrentVersion}");
-                }
-
-                AppLogger.Info($"UpdateService: Inizio download da {downloadUrl} in {targetFilePath}...");
-                using var response = await client.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
-                response.EnsureSuccessStatusCode();
-
-                long? totalBytes = response.Content.Headers.ContentLength;
-
-                using var contentStream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
-                using var fileStream = new FileStream(targetFilePath, FileMode.Create, FileAccess.Write, FileShare.None, 81920, true);
-
-                byte[] buffer = new byte[81920];
-                long totalRead = 0;
-                int bytesRead;
-
-                while ((bytesRead = await contentStream.ReadAsync(buffer, 0, buffer.Length, ct).ConfigureAwait(false)) > 0)
-                {
-                    await fileStream.WriteAsync(buffer, 0, bytesRead, ct).ConfigureAwait(false);
-                    totalRead += bytesRead;
-
-                    if (totalBytes.HasValue && totalBytes.Value > 0)
-                    {
-                        double pct = (double)totalRead / totalBytes.Value * 100.0;
-                        progress?.Report(pct);
-                    }
-                }
-
-                progress?.Report(100.0);
-                AppLogger.Info($"UpdateService: Download completato con successo ({totalRead} bytes).");
-                return targetFilePath;
+                client.DefaultRequestHeaders.UserAgent.ParseAdd($"AeroSpot-Updater/{CurrentVersion}");
             }
-            finally
+
+            AppLogger.Info($"UpdateService: Inizio download da {downloadUrl} in {targetFilePath}...");
+            using var response = await client.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+            response.EnsureSuccessStatusCode();
+
+            long? totalBytes = response.Content.Headers.ContentLength;
+
+            using var contentStream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+            using var fileStream = new FileStream(targetFilePath, FileMode.Create, FileAccess.Write, FileShare.None, 81920, true);
+
+            byte[] buffer = new byte[81920];
+            long totalRead = 0;
+            int bytesRead;
+
+            while ((bytesRead = await contentStream.ReadAsync(buffer, 0, buffer.Length, ct).ConfigureAwait(false)) > 0)
             {
-                if (ownClient) client.Dispose();
+                await fileStream.WriteAsync(buffer, 0, bytesRead, ct).ConfigureAwait(false);
+                totalRead += bytesRead;
+
+                if (totalBytes.HasValue && totalBytes.Value > 0)
+                {
+                    double pct = (double)totalRead / totalBytes.Value * 100.0;
+                    progress?.Report(pct);
+                }
             }
+
+            progress?.Report(100.0);
+            AppLogger.Info($"UpdateService: Download completato con successo ({totalRead} bytes).");
+            return targetFilePath;
         }
 
         /// <summary>
@@ -373,35 +373,26 @@ namespace AeroSpot.Core.Services
                 return;
             }
 
-            bool ownClient = httpClient == null;
-            var client = httpClient ?? new HttpClient();
-            try
+            var client = httpClient ?? SharedHttpClient;
+            if (httpClient != null && client.DefaultRequestHeaders.UserAgent.Count == 0)
             {
-                if (client.DefaultRequestHeaders.UserAgent.Count == 0)
-                {
-                    client.DefaultRequestHeaders.UserAgent.ParseAdd($"AeroSpot-Updater/{CurrentVersion}");
-                }
-
-                string content = await client.GetStringAsync(sha256SumsUrl, ct).ConfigureAwait(false);
-                string? expected = ParseExpectedSha256(content, assetFileName);
-                if (string.IsNullOrEmpty(expected))
-                {
-                    AppLogger.Warn($"UpdateService: File '{assetFileName}' non trovato in SHA256SUMS.txt.");
-                    return;
-                }
-
-                string actual = ComputeFileSha256(filePath);
-                if (!string.Equals(expected, actual, StringComparison.OrdinalIgnoreCase))
-                {
-                    throw new InvalidDataException($"Verifica integrità SHA-256 fallita per '{assetFileName}'. Atteso: {expected}, Calcolato: {actual}");
-                }
-
-                AppLogger.Info($"UpdateService: Integrità SHA-256 verificata con successo per '{assetFileName}'.");
+                client.DefaultRequestHeaders.UserAgent.ParseAdd($"AeroSpot-Updater/{CurrentVersion}");
             }
-            finally
+
+            string content = await client.GetStringAsync(sha256SumsUrl, ct).ConfigureAwait(false);
+            string? expected = ParseExpectedSha256(content, assetFileName);
+            if (string.IsNullOrEmpty(expected))
             {
-                if (ownClient) client.Dispose();
+                throw new InvalidDataException($"Voce SHA-256 mancante per '{assetFileName}' in SHA256SUMS.txt.");
             }
+
+            string actual = ComputeFileSha256(filePath);
+            if (!string.Equals(expected, actual, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidDataException($"Verifica integrità SHA-256 fallita per '{assetFileName}'. Atteso: {expected}, Calcolato: {actual}");
+            }
+
+            AppLogger.Info($"UpdateService: Integrità SHA-256 verificata con successo per '{assetFileName}'.");
         }
 
         /// <summary>
@@ -574,18 +565,31 @@ $stagingSource = '{Esc(stagingSourceDir)}'
 $stagingRoot = '{Esc(stagingRootToClean)}'
 $zipFile = '{Esc(zipPath)}'
 $installRoot = '{Esc(installRoot)}'
+$normalizedRoot = $installRoot.TrimEnd('\', '/') + '\'
 $wasPortable = ${(wasPortable ? "true" : "false")}
 $processNames = @('AeroSpot.Tools', 'AeroSpot.Worker', 'AeroSpot.Host', 'AeroSpot')
 
+function Get-TargetProcesses {{
+    Get-Process -Name $processNames -ErrorAction SilentlyContinue | Where-Object {{
+        try {{
+            $procPath = $_.Path
+            if ([string]::IsNullOrWhiteSpace($procPath)) {{ return $true }}
+            return $procPath.StartsWith($normalizedRoot, [System.StringComparison]::OrdinalIgnoreCase)
+        }} catch {{
+            return $true
+        }}
+    }}
+}}
+
 # 1. Attendi chiusura ordinata fino a 15 secondi (30 x 500ms)
 for ($i = 0; $i -lt 30; $i++) {{
-    $alive = Get-Process -Name $processNames -ErrorAction SilentlyContinue
+    $alive = Get-TargetProcesses
     if (-not $alive) {{ break }}
     Start-Sleep -Milliseconds 500
 }}
 
 # Fallback forzato se qualche processo e rimasto appeso
-$remaining = Get-Process -Name $processNames -ErrorAction SilentlyContinue
+$remaining = Get-TargetProcesses
 if ($remaining) {{
     $remaining | Stop-Process -Force -ErrorAction SilentlyContinue
     Start-Sleep -Milliseconds 800
@@ -612,10 +616,11 @@ if (Test-Path $launcher) {{
     Start-Process -FilePath $launcher -WorkingDirectory $installRoot
 }}
 
-# 5. Pulizia file temporanei di staging e archivio zip
+# 5. Pulizia file temporanei di staging, archivio zip e auto-rimozione dello script
 Start-Sleep -Seconds 2
 if (Test-Path $stagingRoot) {{ Remove-Item -Path $stagingRoot -Recurse -Force -ErrorAction SilentlyContinue }}
 if (Test-Path $zipFile) {{ Remove-Item -Path $zipFile -Force -ErrorAction SilentlyContinue }}
+if ($PSCommandPath -and (Test-Path $PSCommandPath)) {{ Remove-Item -Path $PSCommandPath -Force -ErrorAction SilentlyContinue }}
 ";
         }
 

@@ -1,4 +1,4 @@
-# AeroSpot — Generatore di documentazione HTML offline
+﻿# AeroSpot — Generatore di documentazione HTML offline
 # Converte ISTRUZIONI.md e INSTRUCTIONS.md in HTML a file singolo con tema scuro AeroSpot (zero dipendenze esterne/CDN)
 
 param(
@@ -29,25 +29,53 @@ function Convert-MarkdownToHtml {
 
     $lines = $MarkdownText -split "`r?`n"
     $htmlBody = [System.Text.StringBuilder]::new()
-    $inList = $false
+    $listTag = $null
     $inTable = $false
     $isFirstTableRow = $true
+    $inCodeBlock = $false
+
+    $closeList = {
+        if ($listTag) {
+            [void]$htmlBody.AppendLine("</$listTag>")
+            $script:listTag = $null
+        }
+    }
 
     foreach ($line in $lines) {
         $trimmed = $line.Trim()
 
+        # Fenced code block
+        if ($trimmed -match '^```') {
+            if (-not $inCodeBlock) {
+                if ($listTag) { [void]$htmlBody.AppendLine("</$listTag>"); $listTag = $null }
+                if ($inTable) { [void]$htmlBody.AppendLine("</tbody></table></div>"); $inTable = $false; $isFirstTableRow = $true }
+                [void]$htmlBody.Append("<pre><code>")
+                $inCodeBlock = $true
+            } else {
+                [void]$htmlBody.AppendLine("</code></pre>")
+                $inCodeBlock = $false
+            }
+            continue
+        }
+
+        if ($inCodeBlock) {
+            $encodedCode = [System.Net.WebUtility]::HtmlEncode($line)
+            [void]$htmlBody.AppendLine($encodedCode)
+            continue
+        }
+
         # Separator line
         if ($trimmed -eq '---') {
-            if ($inList) { [void]$htmlBody.AppendLine("</ul>"); $inList = $false }
-            if ($inTable) { [void]$htmlBody.AppendLine("</tbody></table>"); $inTable = $false; $isFirstTableRow = $true }
+            if ($listTag) { [void]$htmlBody.AppendLine("</$listTag>"); $listTag = $null }
+            if ($inTable) { [void]$htmlBody.AppendLine("</tbody></table></div>"); $inTable = $false; $isFirstTableRow = $true }
             [void]$htmlBody.AppendLine("<hr/>")
             continue
         }
 
         # Table rows
         if ($trimmed.StartsWith('|') -and $trimmed.EndsWith('|')) {
-            if ($inList) { [void]$htmlBody.AppendLine("</ul>"); $inList = $false }
-            
+            if ($listTag) { [void]$htmlBody.AppendLine("</$listTag>"); $listTag = $null }
+
             # Check if separator row (|---|---|)
             if ($trimmed -match '^\|(\s*[-:]+\s*\|)+$') {
                 continue
@@ -88,7 +116,7 @@ function Convert-MarkdownToHtml {
 
         # Headings
         if ($trimmed -match '^(#{1,6})\s+(.*)$') {
-            if ($inList) { [void]$htmlBody.AppendLine("</ul>"); $inList = $false }
+            if ($listTag) { [void]$htmlBody.AppendLine("</$listTag>"); $listTag = $null }
             $level = $matches[1].Length
             $headingText = Format-InlineText $matches[2]
             [void]$htmlBody.AppendLine("<h$level>$headingText</h$level>")
@@ -97,7 +125,7 @@ function Convert-MarkdownToHtml {
 
         # Blockquote
         if ($trimmed.StartsWith('>')) {
-            if ($inList) { [void]$htmlBody.AppendLine("</ul>"); $inList = $false }
+            if ($listTag) { [void]$htmlBody.AppendLine("</$listTag>"); $listTag = $null }
             $quoteText = Format-InlineText ($trimmed.Substring(1).Trim())
             [void]$htmlBody.AppendLine("<blockquote>$quoteText</blockquote>")
             continue
@@ -105,13 +133,29 @@ function Convert-MarkdownToHtml {
 
         # Unordered list
         if ($trimmed -match '^[-*]\s+(.*)$') {
-            if (!$inList) { [void]$htmlBody.AppendLine("<ul>"); $inList = $true }
+            if ($listTag -ne 'ul') {
+                if ($listTag) { [void]$htmlBody.AppendLine("</$listTag>") }
+                [void]$htmlBody.AppendLine("<ul>")
+                $listTag = 'ul'
+            }
             $itemText = Format-InlineText $matches[1]
             [void]$htmlBody.AppendLine("<li>$itemText</li>")
             continue
-        } else {
-            if ($inList) { [void]$htmlBody.AppendLine("</ul>"); $inList = $false }
         }
+
+        # Ordered list
+        if ($trimmed -match '^\d+\.\s+(.*)$') {
+            if ($listTag -ne 'ol') {
+                if ($listTag) { [void]$htmlBody.AppendLine("</$listTag>") }
+                [void]$htmlBody.AppendLine("<ol>")
+                $listTag = 'ol'
+            }
+            $itemText = Format-InlineText $matches[1]
+            [void]$htmlBody.AppendLine("<li>$itemText</li>")
+            continue
+        }
+
+        if ($listTag) { [void]$htmlBody.AppendLine("</$listTag>"); $listTag = $null }
 
         # Empty line
         if ([string]::IsNullOrWhiteSpace($trimmed)) {
@@ -123,8 +167,15 @@ function Convert-MarkdownToHtml {
         [void]$htmlBody.AppendLine("<p>$pText</p>")
     }
 
-    if ($inList) { [void]$htmlBody.AppendLine("</ul>") }
+    if ($inCodeBlock) { [void]$htmlBody.AppendLine("</code></pre>") }
+    if ($listTag) { [void]$htmlBody.AppendLine("</$listTag>") }
     if ($inTable) { [void]$htmlBody.AppendLine("</tbody></table></div>") }
+
+    $footerText = if ($Language -eq "it") {
+        "AeroSpot — Motore Spotlight &amp; QuickLook per Windows 11 &bull; Documentazione Offline"
+    } else {
+        "AeroSpot — Windows 11 Spotlight &amp; QuickLook Engine &bull; Offline Documentation"
+    }
 
     $css = @"
     :root {
@@ -188,6 +239,13 @@ function Convert-MarkdownToHtml {
     strong {
         color: #FFFFFF;
     }
+    a {
+        color: var(--accent);
+        text-decoration: none;
+    }
+    a:hover {
+        text-decoration: underline;
+    }
     hr {
         border: none;
         border-top: 1px solid var(--border-color);
@@ -208,6 +266,21 @@ function Convert-MarkdownToHtml {
         border-radius: 4px;
         font-family: "Cascadia Code", Consolas, monospace;
         font-size: 0.9em;
+    }
+    pre {
+        background-color: var(--code-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 14px 16px;
+        margin: 12px 0 18px 0;
+        overflow-x: auto;
+    }
+    pre code {
+        background: transparent;
+        padding: 0;
+        border-radius: 0;
+        font-size: 0.9em;
+        line-height: 1.5;
     }
     .table-container {
         overflow-x: auto;
@@ -261,7 +334,7 @@ $css
     <div class="container">
 $($htmlBody.ToString())
         <div class="footer">
-            AeroSpot — Windows 11 Spotlight &amp; QuickLook Engine &bull; Offline Documentation
+            $footerText
         </div>
     </div>
 </body>
@@ -275,6 +348,9 @@ function Format-InlineText {
     # Encode HTML entities
     $text = [System.Net.WebUtility]::HtmlEncode($text)
 
+    # Inline links [text](url)
+    $text = [Regex]::Replace($text, '\[([^\]]+)\]\(([^)]+)\)', '<a href="$2">$1</a>')
+
     # Bold **text**
     $text = [Regex]::Replace($text, '\*\*([^*]+)\*\*', '<strong>$1</strong>')
 
@@ -287,9 +363,9 @@ function Format-InlineText {
     return $text
 }
 
-# 1. Convert IT
-$itCandidate1 = Join-Path $OutputDir "ISTRUZIONI.md"
-$itCandidate2 = Join-Path $SourceDir "Docs\ISTRUZIONI.md"
+# 1. Convert IT (preferisci sempre Docs/ISTRUZIONI.md del repository rispetto a OutputDir)
+$itCandidate1 = Join-Path $SourceDir "Docs\ISTRUZIONI.md"
+$itCandidate2 = Join-Path $OutputDir "ISTRUZIONI.md"
 $itCandidate3 = Join-Path $SourceDir "ISTRUZIONI.md"
 $itSource = if (Test-Path $itCandidate1) { $itCandidate1 } elseif (Test-Path $itCandidate2) { $itCandidate2 } else { $itCandidate3 }
 
@@ -305,9 +381,9 @@ if (Test-Path $itSource) {
     Write-Output "Generato con successo: $itOutPath ($((Get-Item $itOutPath).Length) bytes)"
 }
 
-# 2. Convert EN
-$enCandidate1 = Join-Path $OutputDir "INSTRUCTIONS.md"
-$enCandidate2 = Join-Path $SourceDir "Docs\INSTRUCTIONS.md"
+# 2. Convert EN (preferisci sempre Docs/INSTRUCTIONS.md del repository rispetto a OutputDir)
+$enCandidate1 = Join-Path $SourceDir "Docs\INSTRUCTIONS.md"
+$enCandidate2 = Join-Path $OutputDir "INSTRUCTIONS.md"
 $enCandidate3 = Join-Path $SourceDir "INSTRUCTIONS.md"
 $enSource = if (Test-Path $enCandidate1) { $enCandidate1 } elseif (Test-Path $enCandidate2) { $enCandidate2 } else { $enCandidate3 }
 

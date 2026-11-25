@@ -83,7 +83,7 @@ namespace AeroSpot.Worker.Services
             try
             {
                 string ext = Path.GetExtension(path).ToLowerInvariant();
-                string result = (ext is ".md" or ".txt" or ".docx")
+                string result = (ext is ".md" or ".txt" or ".docx" or ".docm" or ".dotx" or ".rtf" or ".odt")
                     ? await MediaConversionService.ConvertDocumentToPdfAsync(path)
                     : await MediaConversionService.ConvertImageToPdfAsync(path);
 
@@ -262,12 +262,14 @@ namespace AeroSpot.Worker.Services
             if (string.IsNullOrEmpty(exe) || !File.Exists(exe))
             {
                 var errToast = FloatingNotificationWindow.Spawn("AeroSpot Tools", "⚠️");
-                errToast.SetError("Componente AeroSpot.Tools non trovato", "AeroSpot.Tools.exe mancante.");
+                errToast.SetError(
+                    LocalizationService.Get("Notification_ToolsMissing_Title"),
+                    LocalizationService.Get("Notification_ToolsMissing_Desc"));
                 return;
             }
 
             var toast = FloatingNotificationWindow.Spawn(LocalizationService.Get("Notification_RemovingBg"), "✨");
-            toast.UpdateProgress(-1, "Avvio motore di intelligenza artificiale...");
+            toast.UpdateProgress(-1, LocalizationService.Get("Notification_AiStarting"));
 
             try
             {
@@ -304,13 +306,21 @@ namespace AeroSpot.Worker.Services
                             string detail = isDownloadingModel
                                 ? LocalizationService.Get("Notification_DownloadingModel", p.ToString("0"))
                                 : $"{LocalizationService.Get("Notification_RemovingBg")} ({p:0}%)";
-                            toast.UpdateProgress(p, detail);
+                            try
+                            {
+                                toast.UpdateProgress(p, detail);
+                            }
+                            catch { }
                         }
                     }
                     else if (line.StartsWith("DONE:"))
                     {
                         resultPath = line.Substring(5).Trim();
-                        toast.SetSuccess(LocalizationService.Get("Notification_Success", Path.GetFileName(resultPath)), resultPath, resultPath);
+                        try
+                        {
+                            toast.SetSuccess(LocalizationService.Get("Notification_Success", Path.GetFileName(resultPath)), resultPath, resultPath);
+                        }
+                        catch { }
 
                         if (config.OpenFolderAfterConversion && File.Exists(resultPath))
                         {
@@ -329,7 +339,7 @@ namespace AeroSpot.Worker.Services
 
                 if (string.IsNullOrEmpty(resultPath) || !File.Exists(resultPath))
                 {
-                    string msg = errorMsg ?? "Processo AI terminato senza produrre file.";
+                    string msg = errorMsg ?? LocalizationService.Get("Notification_AiNoOutput");
                     toast.SetError(LocalizationService.Get("Notification_Error", msg), msg);
                 }
             }

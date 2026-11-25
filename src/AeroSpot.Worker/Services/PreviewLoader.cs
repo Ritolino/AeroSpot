@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
@@ -216,7 +217,7 @@ namespace AeroSpot.Worker.Services
                             catch (Exception ex)
                             {
                                 model.Type = PreviewType.Error;
-                                model.ErrorMessage = $"Impossibile visualizzare file SVG: {ex.Message}";
+                                model.ErrorMessage = LocalizationService.Get("Preview_Error_Svg", ex.Message);
                                 return model;
                             }
                         });
@@ -249,48 +250,46 @@ namespace AeroSpot.Worker.Services
                             int origHeight = 0;
                             Rotation rotation = Rotation.Rotate0;
 
-                            // 1. Proba rapida dimensioni e orientamento EXIF dall'header (senza decodificare pixel)
+                            // Riusa un unico FileStream per sonda header EXIF e decodifica ottimizzata (max 2560px)
+                            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+
                             try
                             {
-                                using (var probeStream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                                var decoder = BitmapDecoder.Create(stream, BitmapCreateOptions.DelayCreation, BitmapCacheOption.None);
+                                if (decoder.Frames.Count > 0)
                                 {
-                                    var decoder = BitmapDecoder.Create(probeStream, BitmapCreateOptions.DelayCreation, BitmapCacheOption.None);
-                                    if (decoder.Frames.Count > 0)
+                                    var frame = decoder.Frames[0];
+                                    origWidth = frame.PixelWidth;
+                                    origHeight = frame.PixelHeight;
+
+                                    if (frame.Metadata is BitmapMetadata metadata)
                                     {
-                                        var frame = decoder.Frames[0];
-                                        origWidth = frame.PixelWidth;
-                                        origHeight = frame.PixelHeight;
-
-                                        if (frame.Metadata is BitmapMetadata metadata)
+                                        object? orientObj = null;
+                                        if (metadata.ContainsQuery("System.Photo.Orientation"))
                                         {
-                                            object? orientObj = null;
-                                            if (metadata.ContainsQuery("System.Photo.Orientation"))
-                                            {
-                                                orientObj = metadata.GetQuery("System.Photo.Orientation");
-                                            }
-                                            else if (metadata.ContainsQuery("/app1/ifd/{ushort=274}"))
-                                            {
-                                                orientObj = metadata.GetQuery("/app1/ifd/{ushort=274}");
-                                            }
+                                            orientObj = metadata.GetQuery("System.Photo.Orientation");
+                                        }
+                                        else if (metadata.ContainsQuery("/app1/ifd/{ushort=274}"))
+                                        {
+                                            orientObj = metadata.GetQuery("/app1/ifd/{ushort=274}");
+                                        }
 
-                                            if (orientObj is ushort orVal)
+                                        if (orientObj is ushort orVal)
+                                        {
+                                            rotation = orVal switch
                                             {
-                                                rotation = orVal switch
-                                                {
-                                                    3 => Rotation.Rotate180,
-                                                    6 => Rotation.Rotate90,
-                                                    8 => Rotation.Rotate270,
-                                                    _ => Rotation.Rotate0
-                                                };
-                                            }
+                                                3 => Rotation.Rotate180,
+                                                6 => Rotation.Rotate90,
+                                                8 => Rotation.Rotate270,
+                                                _ => Rotation.Rotate0
+                                            };
                                         }
                                     }
                                 }
                             }
                             catch { }
 
-                            // 2. Decodifica ottimizzata per il budget schermo (max 2560px)
-                            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                            stream.Position = 0;
                             var bitmap = new BitmapImage();
                             bitmap.BeginInit();
                             bitmap.CacheOption = BitmapCacheOption.OnLoad;
@@ -362,7 +361,7 @@ namespace AeroSpot.Worker.Services
                             }
 
                             model.Type = PreviewType.Error;
-                            model.ErrorMessage = "Impossibile decodificare l'anteprima dell'immagine. Il file potrebbe essere danneggiato o non supportato.";
+                            model.ErrorMessage = LocalizationService.Get("Preview_Error_ImageDecode");
                             model.Subtitle = $"Error • {sizeText}";
                             return model;
                         }
@@ -391,12 +390,10 @@ namespace AeroSpot.Worker.Services
                             // Renderizza la prima pagina in ~12-15 ms
                             model.Image = session.RenderPage(0);
 
-                            string pageSuffix = LocalizationService.CurrentLanguage == "it"
-                                ? $" ({session.PageCount} {(session.PageCount == 1 ? "pagina" : "pagine")})"
-                                : $" ({session.PageCount} {(session.PageCount == 1 ? "page" : "pages")})";
-                            model.Subtitle = $"PDF Document{pageSuffix} • {sizeText}";
-                            model.DetailsText = $"Format: PDF • {session.PageCount} pages • {LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
-                            model.FooterText = $"{session.PageCount} {(LocalizationService.CurrentLanguage == "it" ? "pagine" : "pages")} • {LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
+                            string pagesLabel = LocalizationService.Get("Preview_Pages_Count");
+                            model.Subtitle = $"PDF Document ({session.PageCount} {pagesLabel}) • {sizeText}";
+                            model.DetailsText = $"Format: PDF • {session.PageCount} {pagesLabel} • {LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
+                            model.FooterText = $"{session.PageCount} {pagesLabel} • {LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
                         }
                     }
                     catch (Exception ex)
@@ -485,9 +482,7 @@ namespace AeroSpot.Worker.Services
                         }
 
                         model.Type = PreviewType.Error;
-                        model.ErrorMessage = string.Equals(ext, ".3mf", StringComparison.OrdinalIgnoreCase)
-                            ? "Impossibile caricare il modello 3D 3MF (geometria non valida o assente)."
-                            : "Impossibile caricare il modello 3D STL (file vuoto o corrotto).";
+                        model.ErrorMessage = LocalizationService.Get("Preview_Error_3DModel");
                         model.Subtitle = $"Error • {sizeText}";
                         return model;
                     });
@@ -512,12 +507,12 @@ namespace AeroSpot.Worker.Services
                             using var reader = new StreamReader(path);
                             char[] buffer = new char[64 * 1024];
                             int read = await reader.ReadBlockAsync(buffer, 0, buffer.Length);
-                            model.TextContent = new string(buffer, 0, read) + "\n\n[... File HTML parziale per anteprima ...]";
+                            model.TextContent = new string(buffer, 0, read) + "\n\n" + LocalizationService.Get("Preview_Html_Truncated", 64);
                         }
                     }
                     catch (Exception ex)
                     {
-                        model.TextContent = $"<!-- Errore lettura file: {ex.Message} -->";
+                        model.TextContent = $"<!-- {LocalizationService.Get("Preview_Error_TextRead", ex.Message)} -->";
                     }
 
                     return model;
@@ -546,8 +541,8 @@ namespace AeroSpot.Worker.Services
                             model.Type = isMarkdown ? PreviewType.Markdown : PreviewType.Text;
                             model.TextContent = text;
                             model.IsTruncated = truncated;
-                            string linesLabel = LocalizationService.CurrentLanguage == "it" ? "righe" : "lines";
-                            string typeLabel = isMarkdown ? "Markdown" : (LocalizationService.CurrentLanguage == "it" ? "Testo" : "Text");
+                            string linesLabel = LocalizationService.Get("Preview_Lines_Count");
+                            string typeLabel = isMarkdown ? "Markdown" : LocalizationService.Get("Preview_Type_Text");
                             model.Subtitle = truncated
                                 ? $"{LocalizationService.Get("Preview_PartialContent", 100)} ({lineCount} {linesLabel})"
                                 : $"{sizeText} • {lineCount} {linesLabel}";
@@ -559,7 +554,7 @@ namespace AeroSpot.Worker.Services
                         {
                             AppLogger.Warn($"Lettura testo non riuscita per {path}: {ex.Message}");
                             model.Type = PreviewType.Error;
-                            model.ErrorMessage = $"Impossibile leggere il file di testo: {ex.Message}";
+                            model.ErrorMessage = LocalizationService.Get("Preview_Error_TextRead", ex.Message);
                             model.Subtitle = $"Error • {sizeText}";
                             return model;
                         }
@@ -574,7 +569,7 @@ namespace AeroSpot.Worker.Services
                     {
                         model.Type = PreviewType.Spreadsheet;
                         model.Spreadsheet = sheetModel;
-                        string sheetsLabel = LocalizationService.CurrentLanguage == "it" ? "fogli" : "sheets";
+                        string sheetsLabel = LocalizationService.Get("Preview_Sheets_Count");
                         model.Subtitle = $"Excel • {sheetModel.Sheets.Count} {sheetsLabel} • {sizeText}";
                         model.DetailsText = $"Format: XLSX • {sheetModel.Sheets.Count} {sheetsLabel} • {LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
                         model.FooterText = $"{sheetModel.Sheets.Count} {sheetsLabel} • {LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
@@ -599,8 +594,8 @@ namespace AeroSpot.Worker.Services
                         model.TextContent = !string.IsNullOrWhiteSpace(docxData.MarkdownContent)
                             ? docxData.MarkdownContent
                             : docxData.TextContent;
-                        string wordCountLabel = LocalizationService.CurrentLanguage == "it" ? "parole" : "words";
-                        string paraCountLabel = LocalizationService.CurrentLanguage == "it" ? "paragrafi" : "paragraphs";
+                        string wordCountLabel = LocalizationService.Get("Preview_Word_Count");
+                        string paraCountLabel = LocalizationService.Get("Preview_Para_Count");
                         model.Subtitle = $"Word Document • {sizeText} • {docxData.WordCount} {wordCountLabel}";
                         model.DetailsText = $"Format: {ext.ToUpperInvariant().TrimStart('.')} • {docxData.ParagraphCount} {paraCountLabel} • {LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
                         model.FooterText = $"{docxData.ParagraphCount} {paraCountLabel} • {LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
@@ -625,8 +620,8 @@ namespace AeroSpot.Worker.Services
                         model.TextContent = !string.IsNullOrWhiteSpace(rtfData.MarkdownContent)
                             ? rtfData.MarkdownContent
                             : rtfData.TextContent;
-                        string wordCountLabel = LocalizationService.CurrentLanguage == "it" ? "parole" : "words";
-                        string paraCountLabel = LocalizationService.CurrentLanguage == "it" ? "paragrafi" : "paragraphs";
+                        string wordCountLabel = LocalizationService.Get("Preview_Word_Count");
+                        string paraCountLabel = LocalizationService.Get("Preview_Para_Count");
                         model.Subtitle = $"RTF Document • {sizeText} • {rtfData.WordCount} {wordCountLabel}";
                         model.DetailsText = $"Format: RTF • {rtfData.ParagraphCount} {paraCountLabel} • {LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
                         model.FooterText = $"{rtfData.ParagraphCount} {paraCountLabel} • {LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
@@ -650,8 +645,8 @@ namespace AeroSpot.Worker.Services
                         model.TextContent = !string.IsNullOrWhiteSpace(odtData.MarkdownContent)
                             ? odtData.MarkdownContent
                             : odtData.TextContent;
-                        string wordCountLabel = LocalizationService.CurrentLanguage == "it" ? "parole" : "words";
-                        string paraCountLabel = LocalizationService.CurrentLanguage == "it" ? "paragrafi" : "paragraphs";
+                        string wordCountLabel = LocalizationService.Get("Preview_Word_Count");
+                        string paraCountLabel = LocalizationService.Get("Preview_Para_Count");
                         model.Subtitle = $"OpenDocument Text • {sizeText} • {odtData.WordCount} {wordCountLabel}";
                         model.DetailsText = $"Format: ODT • {odtData.ParagraphCount} {paraCountLabel} • {LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
                         model.FooterText = $"{odtData.ParagraphCount} {paraCountLabel} • {LocalizationService.Get("Preview_Modified_Label")}: {FormatDate(fileInfo.LastWriteTime)}";
@@ -732,7 +727,7 @@ namespace AeroSpot.Worker.Services
             catch (Exception ex)
             {
                 model.Type = PreviewType.Error;
-                model.ErrorMessage = $"Errore durante il caricamento del file: {ex.Message}";
+                model.ErrorMessage = LocalizationService.Get("Preview_Error_TextRead", ex.Message);
                 return model;
             }
         }
@@ -771,35 +766,47 @@ namespace AeroSpot.Worker.Services
             image = null;
             width = 0;
             height = 0;
+            byte[]? bytes = null;
             try
             {
                 using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
                 int bytesToRead = (int)Math.Min(stream.Length, 16 * 1024 * 1024);
-                byte[] bytes = new byte[bytesToRead];
+                if (bytesToRead < 50 * 1024) return false;
+
+                bytes = ArrayPool<byte>.Shared.Rent(bytesToRead);
                 int totalRead = stream.Read(bytes, 0, bytesToRead);
 
                 int longestStart = -1;
                 int longestLen = 0;
 
-                for (int i = 0; i < totalRead - 4; i++)
+                ReadOnlySpan<byte> soiMarker = [0xFF, 0xD8, 0xFF];
+                ReadOnlySpan<byte> eoiMarker = [0xFF, 0xD9];
+                ReadOnlySpan<byte> span = bytes.AsSpan(0, totalRead);
+
+                int pos = 0;
+                while (pos < totalRead - 4)
                 {
-                    if (bytes[i] == 0xFF && bytes[i + 1] == 0xD8 && bytes[i + 2] == 0xFF)
+                    int relSoi = span.Slice(pos).IndexOf(soiMarker);
+                    if (relSoi < 0) break;
+                    int i = pos + relSoi;
+
+                    int searchStart = i + 1024;
+                    if (searchStart < totalRead - 1)
                     {
-                        // Possibile inizio JPEG (SOI). Cerca la fine (EOI: FF D9)
-                        for (int j = i + 1024; j < totalRead - 1; j++)
+                        int relEoi = span.Slice(searchStart).IndexOf(eoiMarker);
+                        if (relEoi >= 0)
                         {
-                            if (bytes[j] == 0xFF && bytes[j + 1] == 0xD9)
+                            int j = searchStart + relEoi;
+                            int len = (j + 2) - i;
+                            if (len > longestLen && len >= 50 * 1024)
                             {
-                                int len = (j + 2) - i;
-                                if (len > longestLen && len >= 50 * 1024)
-                                {
-                                    longestStart = i;
-                                    longestLen = len;
-                                }
-                                break;
+                                longestStart = i;
+                                longestLen = len;
                             }
                         }
                     }
+
+                    pos = i + 3;
                 }
 
                 if (longestStart >= 0 && longestLen > 0)
@@ -819,7 +826,7 @@ namespace AeroSpot.Worker.Services
                         _ => Rotation.Rotate0
                     };
 
-                    using var ms = new MemoryStream(bytes, longestStart, longestLen);
+                    using var ms = new MemoryStream(bytes, longestStart, longestLen, writable: false);
                     var bmp = new BitmapImage();
                     bmp.BeginInit();
                     bmp.CacheOption = BitmapCacheOption.OnLoad;
@@ -840,6 +847,13 @@ namespace AeroSpot.Worker.Services
             catch (Exception ex)
             {
                 AppLogger.Warn($"TryExtractEmbeddedRawJpeg fallito per {path}: {ex.Message}");
+            }
+            finally
+            {
+                if (bytes != null)
+                {
+                    ArrayPool<byte>.Shared.Return(bytes);
+                }
             }
             return false;
         }

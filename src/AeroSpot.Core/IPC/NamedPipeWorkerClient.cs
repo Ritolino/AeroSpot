@@ -27,6 +27,11 @@ namespace AeroSpot.Core.IPC
 
         public async Task<bool> ConnectAsync(int timeoutMs = 5000, CancellationToken token = default)
         {
+            if (_isDisposed) return false;
+
+            // Clean up any previous stream/CTS before reconnecting
+            Disconnect();
+
             try
             {
                 _clientStream = new NamedPipeClientStream(
@@ -76,25 +81,41 @@ namespace AeroSpot.Core.IPC
 
         public async Task<bool> SendMessageAsync(IpcMessage message, int timeoutMs = 3000, CancellationToken token = default)
         {
-            if (_clientStream == null || !_clientStream.IsConnected) return false;
+            if (_isDisposed) return false;
 
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(token);
             cts.CancelAfter(timeoutMs);
 
-            await _sendLock.WaitAsync(cts.Token).ConfigureAwait(false);
+            bool lockAcquired = false;
             try
             {
-                if (_clientStream == null || !_clientStream.IsConnected) return false;
-                await IpcMessage.WriteAsync(_clientStream, message, cts.Token).ConfigureAwait(false);
+                await _sendLock.WaitAsync(cts.Token).ConfigureAwait(false);
+                lockAcquired = true;
+
+                var stream = _clientStream;
+                if (stream == null || !stream.IsConnected) return false;
+
+                await IpcMessage.WriteAsync(stream, message, cts.Token).ConfigureAwait(false);
                 return true;
             }
-            catch
+            catch (OperationCanceledException)
+            {
+                return false;
+            }
+            catch (ObjectDisposedException)
+            {
+                return false;
+            }
+            catch (IOException)
             {
                 return false;
             }
             finally
             {
-                _sendLock.Release();
+                if (lockAcquired)
+                {
+                    try { _sendLock.Release(); } catch (ObjectDisposedException) { }
+                }
             }
         }
 
